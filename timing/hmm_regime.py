@@ -108,39 +108,77 @@ class HMMRegime:
         """
         X = self._extract_matrix(features)
 
-        model, backend = self._build_model()
-        model.fit(X)
-        self.model_ = model
-        self.backend_ = backend
+        # Try each candidate backend in preference order.  A backend is only
+        # accepted if it both fits AND yields finite parameters and a usable
+        # prediction; otherwise we fall through to the next.  hmmlearn's EM can
+        # produce NaN parameters on degenerate data (e.g. a rarely-visited
+        # state with a singular covariance under covariance_type="full"), in
+        # which case the memoryless GMM is the robust fallback.  This keeps the
+        # regime gate *active* rather than silently disabling on a bad fit.
+        last_error: Optional[Exception] = None
+        for model, backend in self._candidate_models():
+            try:
+                model.fit(X)
+                if not self._params_finite(model):
+                    last_error = RuntimeError(f"{backend} fit produced non-finite params")
+                    continue
+                states = np.asarray(model.predict(X), dtype=int)
+            except Exception as exc:  # noqa: BLE001 - try next backend
+                last_error = exc
+                continue
+            self.model_ = model
+            self.backend_ = backend
+            # Relabel raw states by mean of the "returns" feature (column 0).
+            self.state_labels_ = self._label_states(states, X[:, 0])
+            return self
 
-        # Relabel raw states by mean of the "returns" feature (column 0).
-        states = self._raw_predict(X)
-        self.state_labels_ = self._label_states(states, X[:, 0])
-        return self
+        raise RuntimeError(
+            "HMMRegime: no regime backend could fit the data"
+        ) from last_error
 
-    def _build_model(self) -> tuple[Any, str]:
-        """Instantiate the preferred HMM backend, falling back to a GMM."""
+    def _candidate_models(self):
+        """Yield ``(model, backend)`` candidates in preference order.
+
+        Preferred: :class:`hmmlearn.hmm.GaussianHMM` (models regime persistence)
+        when importable.  Always-available fallback:
+        :class:`sklearn.mixture.GaussianMixture` with covariance regularisation.
+        """
         try:
             from hmmlearn.hmm import GaussianHMM  # type: ignore
 
-            model = GaussianHMM(
-                n_components=self.n_states,
-                covariance_type=self.covariance_type,
-                n_iter=self.n_iter,
-                random_state=self.seed,
+            yield (
+                GaussianHMM(
+                    n_components=self.n_states,
+                    covariance_type=self.covariance_type,
+                    n_iter=self.n_iter,
+                    random_state=self.seed,
+                ),
+                "hmm",
             )
-            return model, "hmm"
         except Exception:
-            # hmmlearn missing (or incompatible) -> memoryless GMM fallback.
-            from sklearn.mixture import GaussianMixture
+            pass  # hmmlearn unavailable/incompatible -> GMM only
 
-            model = GaussianMixture(
+        from sklearn.mixture import GaussianMixture
+
+        yield (
+            GaussianMixture(
                 n_components=self.n_states,
                 covariance_type=self.covariance_type,
                 max_iter=self.n_iter,
                 random_state=self.seed,
-            )
-            return model, "gmm"
+                reg_covar=1e-5,
+            ),
+            "gmm",
+        )
+
+    @staticmethod
+    def _params_finite(model: Any) -> bool:
+        """True if the fitted model's distribution parameters are all finite."""
+        for attr in ("means_", "covars_", "covariances_", "transmat_", "startprob_"):
+            val = getattr(model, attr, None)
+            if val is not None and not np.all(np.isfinite(np.asarray(val))):
+                return False
+        return True
 
     def _label_states(
         self, states: np.ndarray, returns_feature: np.ndarray
