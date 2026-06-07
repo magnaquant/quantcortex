@@ -152,8 +152,13 @@ class FinBERTSentiment:
                 scores = self._score_transformers(texts)
                 self.backend_ = "transformers"
                 return scores
-            except ImportError:
-                pass  # fall through to lexicon
+            except Exception:  # noqa: BLE001
+                # transformers may be absent (ImportError) OR present but
+                # unusable — most commonly the FinBERT weights cannot be
+                # downloaded offline (OSError/HTTPError from huggingface_hub),
+                # or a torch runtime error.  In every case the dependency-free
+                # finance-lexicon backend is the reliable fallback.
+                pass
         self.backend_ = "lexicon"
         return self._score_lexicon(texts)
 

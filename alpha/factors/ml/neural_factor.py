@@ -120,7 +120,10 @@ class NeuralFactor:
         try:
             self._fit_torch(X_scaled, y_arr)
             self.backend_ = "torch"
-        except ImportError:
+        except Exception:  # noqa: BLE001
+            # torch may be absent (ImportError) or present but unusable (a
+            # runtime/device error); the sklearn MLP is the reliable fallback.
+            # A genuinely bad target will then re-raise from the sklearn path.
             self._fit_sklearn(X_scaled, y_arr)
             self.backend_ = "sklearn"
         return self
