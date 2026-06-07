@@ -1,0 +1,291 @@
+"""Causal macroeconomic feature engineering.
+
+This module turns a wide, date-indexed frame of raw macro/market series
+(treasury yields, volatility indices, credit spreads, survey/labour data)
+into a panel of derived features that are useful as conditioning variables
+for cross-sectional or timing models.
+
+Design principles
+-----------------
+* **Tolerant of missing inputs.** Real macro data feeds are ragged: not
+  every series is always available. Every feature is computed only when its
+  required input columns are present; otherwise it is silently skipped.
+* **Strictly causal.** A feature reported on date ``t`` may only use data
+  observed on or before ``t``. Macro series are published at heterogeneous
+  frequencies (daily yields, monthly ISM/unemployment), so we forward-fill
+  onto a business-day index *before* differencing. Forward-filling only
+  propagates the *last known* value forward, so it never introduces
+  look-ahead. We never back-fill.
+
+The accepted (case-insensitive, alias-aware) raw columns include::
+
+    DGS10, DGS2, DGS3MO          treasury constant-maturity yields (%)
+    VIXCLS / VIX                 CBOE 1-month implied volatility
+    VIX3M                        CBOE 3-month implied volatility
+    BAMLH0A0HYM2                 ICE BofA US high-yield OAS (%)
+    BAMLC0A0CM                   ICE BofA US investment-grade OAS (%)
+    PMI / NAPM / ISM             ISM manufacturing PMI (diffusion index)
+    UNRATE                       civilian unemployment rate (%)
+    CPIYOY / T10YIE              inflation proxy for the real-rate feature
+"""
+
+from __future__ import annotations
+
+from typing import Dict, List, Optional
+
+import numpy as np
+import pandas as pd
+
+# Approximate number of business days per calendar month / year. Used for the
+# lookback windows of change features so the windows mean roughly what their
+# names say even though the working index is business-daily.
+_BDAYS_PER_MONTH = 21
+_BDAYS_PER_YEAR = 252
+
+# Canonical name -> list of accepted source aliases (compared case-folded).
+_ALIASES: Dict[str, List[str]] = {
+    "DGS10": ["DGS10", "GS10", "UST10Y", "Y10"],
+    "DGS2": ["DGS2", "GS2", "UST2Y", "Y2"],
+    "DGS3MO": ["DGS3MO", "DTB3", "GS3M", "UST3M", "Y3M"],
+    "VIX": ["VIXCLS", "VIX", "VIX1M", "VIXINDEX"],
+    "VIX3M": ["VIX3M", "VXV", "VIX3MCLS"],
+    "HY": ["BAMLH0A0HYM2", "HY_OAS", "HYSPREAD", "HY"],
+    "IG": ["BAMLC0A0CM", "IG_OAS", "IGSPREAD", "IG"],
+    "PMI": ["PMI", "NAPM", "ISM", "ISMPMI", "NAPMPMI"],
+    "UNRATE": ["UNRATE", "UNEMP", "UNEMPLOYMENT"],
+    "INFLATION": ["CPIYOY", "T10YIE", "INFLATION", "BREAKEVEN10Y", "EXPINF"],
+}
+
+
+class MacroFeatures:
+    """Derive strictly-causal macro features from a wide raw-series frame.
+
+    Parameters
+    ----------
+    vix_change_window:
+        Lookback (in business days) for the VIX change feature. Default 5
+        (one trading week).
+    credit_change_window:
+        Lookback (in business days) for the high-yield credit-spread change
+        feature. Default 21 (~one month).
+    pmi_momentum_periods:
+        Number of observations used for PMI momentum. Because PMI is
+        forward-filled to business-daily, this is expressed in business days
+        and defaults to ``3 * _BDAYS_PER_MONTH`` (~3 months of change).
+    unrate_change_window:
+        Lookback (in business days) for the unemployment-rate change feature.
+        Default ``12 * _BDAYS_PER_MONTH`` (~12 months).
+    freq:
+        Resampling frequency for the working index. Default ``"B"`` (business
+        days). Any pandas offset alias is accepted.
+    """
+
+    def __init__(
+        self,
+        vix_change_window: int = 5,
+        credit_change_window: int = 21,
+        pmi_momentum_periods: int = 3 * _BDAYS_PER_MONTH,
+        unrate_change_window: int = 12 * _BDAYS_PER_MONTH,
+        freq: str = "B",
+    ) -> None:
+        if vix_change_window < 1:
+            raise ValueError("vix_change_window must be >= 1")
+        if credit_change_window < 1:
+            raise ValueError("credit_change_window must be >= 1")
+        if pmi_momentum_periods < 1:
+            raise ValueError("pmi_momentum_periods must be >= 1")
+        if unrate_change_window < 1:
+            raise ValueError("unrate_change_window must be >= 1")
+        self.vix_change_window = int(vix_change_window)
+        self.credit_change_window = int(credit_change_window)
+        self.pmi_momentum_periods = int(pmi_momentum_periods)
+        self.unrate_change_window = int(unrate_change_window)
+        self.freq = str(freq)
+
+    # ------------------------------------------------------------------
+    # Input normalization
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _build_lookup(columns: pd.Index) -> Dict[str, str]:
+        """Map original column labels to their case-folded form."""
+        return {str(c).strip().casefold(): str(c) for c in columns}
+
+    def _resolve(self, macro: pd.DataFrame, canonical: str) -> Optional[pd.Series]:
+        """Return the series for ``canonical`` using alias matching, or None."""
+        lookup = self._build_lookup(macro.columns)
+        for alias in _ALIASES.get(canonical, [canonical]):
+            key = alias.casefold()
+            if key in lookup:
+                return macro[lookup[key]]
+        return None
+
+    def _prepare(self, macro: pd.DataFrame) -> pd.DataFrame:
+        """Validate, sort, deduplicate and forward-fill onto a business index.
+
+        Forward-filling here is the only place look-ahead could leak in, so it
+        is done with care: we reindex onto a regularly spaced index spanning
+        the observed dates and propagate the *last known* value forward only.
+        """
+        if not isinstance(macro, pd.DataFrame):
+            raise TypeError("macro must be a pandas DataFrame")
+        if macro.empty:
+            return macro.copy()
+
+        df = macro.copy()
+        df.index = pd.to_datetime(df.index)
+        df = df.sort_index()
+        # Collapse duplicate timestamps keeping the last observation.
+        df = df[~df.index.duplicated(keep="last")]
+
+        # Numeric coercion; non-numeric junk becomes NaN rather than raising.
+        df = df.apply(pd.to_numeric, errors="coerce")
+
+        # Regular business-day index spanning the observed range, then ffill.
+        full_index = pd.date_range(df.index.min(), df.index.max(), freq=self.freq)
+        df = df.reindex(df.index.union(full_index)).sort_index()
+        df = df.ffill()
+        df = df.reindex(full_index)
+        return df
+
+    # ------------------------------------------------------------------
+    # Per-feature helpers (each accepts the *prepared* frame)
+    # ------------------------------------------------------------------
+    def yield_curve_slope_10y2y(self, macro: pd.DataFrame) -> Optional[pd.Series]:
+        """10y minus 2y treasury yield (classic recession indicator)."""
+        ten = self._resolve(macro, "DGS10")
+        two = self._resolve(macro, "DGS2")
+        if ten is None or two is None:
+            return None
+        return (ten - two).rename("yield_curve_slope_10y2y")
+
+    def slope_10y3m(self, macro: pd.DataFrame) -> Optional[pd.Series]:
+        """10y minus 3-month treasury yield (Fed's preferred slope measure)."""
+        ten = self._resolve(macro, "DGS10")
+        three_mo = self._resolve(macro, "DGS3MO")
+        if ten is None or three_mo is None:
+            return None
+        return (ten - three_mo).rename("slope_10y3m")
+
+    def vix_level(self, macro: pd.DataFrame) -> Optional[pd.Series]:
+        """Spot 1-month implied volatility level."""
+        vix = self._resolve(macro, "VIX")
+        if vix is None:
+            return None
+        return vix.rename("vix_level")
+
+    def vix_change_5d(self, macro: pd.DataFrame) -> Optional[pd.Series]:
+        """Change in VIX over ``vix_change_window`` business days."""
+        vix = self._resolve(macro, "VIX")
+        if vix is None:
+            return None
+        return vix.diff(self.vix_change_window).rename("vix_change_5d")
+
+    def vix_term_structure(self, macro: pd.DataFrame) -> Optional[pd.Series]:
+        """VIX3M minus VIX (positive = contango / calm, negative = stress)."""
+        vix3m = self._resolve(macro, "VIX3M")
+        vix = self._resolve(macro, "VIX")
+        if vix3m is None or vix is None:
+            return None
+        return (vix3m - vix).rename("vix_term_structure")
+
+    def credit_spread_level(self, macro: pd.DataFrame) -> Optional[pd.Series]:
+        """High-yield option-adjusted spread level."""
+        hy = self._resolve(macro, "HY")
+        if hy is None:
+            return None
+        return hy.rename("credit_spread_level")
+
+    def credit_spread_change_21d(self, macro: pd.DataFrame) -> Optional[pd.Series]:
+        """Change in HY spread over ``credit_change_window`` business days."""
+        hy = self._resolve(macro, "HY")
+        if hy is None:
+            return None
+        return hy.diff(self.credit_change_window).rename("credit_spread_change_21d")
+
+    def ig_hy_spread(self, macro: pd.DataFrame) -> Optional[pd.Series]:
+        """HY minus IG spread (the compensation for credit-quality risk)."""
+        hy = self._resolve(macro, "HY")
+        ig = self._resolve(macro, "IG")
+        if hy is None or ig is None:
+            return None
+        return (hy - ig).rename("ig_hy_spread")
+
+    def pmi_momentum(self, macro: pd.DataFrame) -> Optional[pd.Series]:
+        """ISM PMI momentum: change over ``pmi_momentum_periods`` business days."""
+        pmi = self._resolve(macro, "PMI")
+        if pmi is None:
+            return None
+        return pmi.diff(self.pmi_momentum_periods).rename("pmi_momentum")
+
+    def unrate_change_12m(self, macro: pd.DataFrame) -> Optional[pd.Series]:
+        """Change in unemployment rate over ``unrate_change_window`` days.
+
+        The Sahm-rule intuition: a rising unemployment rate signals recession.
+        """
+        unrate = self._resolve(macro, "UNRATE")
+        if unrate is None:
+            return None
+        return unrate.diff(self.unrate_change_window).rename("unrate_change_12m")
+
+    def real_rate(self, macro: pd.DataFrame) -> Optional[pd.Series]:
+        """Real-rate proxy = nominal 10y yield minus an inflation measure.
+
+        If an explicit inflation/breakeven series is present it is used;
+        otherwise this returns ``None`` rather than guessing.
+        """
+        ten = self._resolve(macro, "DGS10")
+        infl = self._resolve(macro, "INFLATION")
+        if ten is None or infl is None:
+            return None
+        return (ten - infl).rename("real_rate")
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def compute(self, macro: pd.DataFrame) -> pd.DataFrame:
+        """Compute all available macro features.
+
+        Parameters
+        ----------
+        macro:
+            Wide, date-indexed frame of raw macro/market series. Columns may
+            be any subset of the recognised aliases; unrecognised columns are
+            ignored. Index need not be regular.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Business-day-indexed frame containing one column per computable
+            feature. If no feature can be computed an empty (but correctly
+            indexed) frame is returned.
+        """
+        prepared = self._prepare(macro)
+        if prepared.empty:
+            return pd.DataFrame(index=prepared.index)
+
+        builders = [
+            self.yield_curve_slope_10y2y,
+            self.slope_10y3m,
+            self.vix_term_structure,
+            self.vix_level,
+            self.vix_change_5d,
+            self.credit_spread_level,
+            self.credit_spread_change_21d,
+            self.ig_hy_spread,
+            self.pmi_momentum,
+            self.unrate_change_12m,
+            self.real_rate,
+        ]
+
+        features = []
+        for builder in builders:
+            series = builder(prepared)
+            if series is not None:
+                features.append(series)
+
+        if not features:
+            return pd.DataFrame(index=prepared.index)
+
+        out = pd.concat(features, axis=1)
+        out.index.name = macro.index.name or "date"
+        return out
