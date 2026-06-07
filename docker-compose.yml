@@ -1,0 +1,63 @@
+# quantcortex local stack: app + Redis (state) + TimescaleDB (market data).
+#
+#   docker compose up -d redis timescaledb   # infra only
+#   docker compose run --rm app pytest tests/ -v
+#   docker compose run --rm app python -m strategies.multi_asset_rotation
+#
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: quantcortex:latest
+    working_dir: /app
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      TIMESCALE_URL: postgresql://quant:quant@timescaledb:5432/quantcortex
+      PYTHONPATH: /app
+    depends_on:
+      redis:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    # Idle by default; override the command to run strategies / backtests.
+    command: ["python", "-c", "import portfolio, data, alpha, backtest, execution, strategies; print('quantcortex container ready')"]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: quant
+      POSTGRES_PASSWORD: quant
+      POSTGRES_DB: quantcortex
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quant -d quantcortex"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  redis_data:
+  timescale_data:
