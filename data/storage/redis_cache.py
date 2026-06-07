@@ -13,6 +13,7 @@ dtypes intact and stay compact.
 from __future__ import annotations
 
 import io
+import json
 import logging
 import time
 from typing import Any, Optional
@@ -111,15 +112,20 @@ class RedisCache:
     # -- raw bytes/scalar API ---------------------------------------------
 
     def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
-        """Store a value (``bytes``, ``str``, or numeric) under ``key``."""
+        """Store ``value`` under ``key``.
+
+        ``bytes`` are stored verbatim; any other JSON-serialisable value
+        (``str``, numbers, ``dict``, ``list``) is JSON-encoded so it
+        round-trips through :meth:`get`.  A one-byte type tag distinguishes the
+        two so DataFrame Parquet bytes (stored via :meth:`set_df`) survive
+        intact.
+        """
         full = self._key(key)
         ttl = self.default_ttl if ttl is None else ttl
         if isinstance(value, bytes):
-            blob = value
-        elif isinstance(value, str):
-            blob = value.encode("utf-8")
+            blob = b"B" + value
         else:
-            blob = repr(value).encode("utf-8")
+            blob = b"J" + json.dumps(value, default=str).encode("utf-8")
 
         if self._client is not None:
             if ttl and ttl > 0:
@@ -130,14 +136,28 @@ class RedisCache:
             expiry = time.monotonic() + ttl if ttl and ttl > 0 else None
             self._fallback[full] = (blob, expiry)
 
-    def get(self, key: str) -> Optional[bytes]:
-        """Return the raw bytes stored under ``key``, or ``None``."""
+    def get(self, key: str) -> Any:
+        """Return the value stored under ``key`` (decoded), or ``None``.
+
+        ``bytes`` values come back as ``bytes``; JSON values come back as the
+        original Python object.
+        """
         full = self._key(key)
         if self._client is not None:
-            return self._client.get(full)
-        if self._fallback_expired(full):
+            raw = self._client.get(full)
+        elif self._fallback_expired(full):
+            raw = None
+        else:
+            raw = self._fallback[full][0]
+
+        if raw is None:
             return None
-        return self._fallback[full][0]
+        tag, body = raw[:1], raw[1:]
+        if tag == b"B":
+            return body
+        if tag == b"J":
+            return json.loads(body)
+        return raw  # legacy/untagged value
 
     def delete(self, key: str) -> None:
         """Remove ``key`` from the cache (no error if absent)."""
