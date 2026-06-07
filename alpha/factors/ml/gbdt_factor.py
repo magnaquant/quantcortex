@@ -112,16 +112,22 @@ class GBDTFactor:
         for name in candidates:
             try:
                 return name, self._construct_backend(name)
-            except ImportError as exc:  # optional dependency missing
+            except Exception as exc:  # noqa: BLE001
+                # A backend can fail two ways: ImportError (package absent) or a
+                # native-load failure (e.g. OSError when libomp/OpenMP is missing
+                # for LightGBM/XGBoost on a bare host).  In "auto" mode either is
+                # a reason to fall through to the next, ultimately-reliable
+                # backend (sklearn).  An explicit request surfaces the real cause.
                 last_error = exc
                 if self.model != "auto":
-                    # Explicit request for an uninstalled backend.
-                    raise ImportError(
-                        f"Backend {name!r} requested but its package is not "
-                        f"installed. Install it or use model='auto'/'sklearn'."
-                    ) from exc
+                    if isinstance(exc, ImportError):
+                        raise ImportError(
+                            f"Backend {name!r} requested but its package is not "
+                            f"installed. Install it or use model='auto'/'sklearn'."
+                        ) from exc
+                    raise  # installed but unusable -> surface the underlying error
                 continue
-        # "auto" always ends at the sklearn fallback, which cannot ImportError.
+        # "auto" always ends at the sklearn fallback, which cannot fail to import.
         raise RuntimeError(  # pragma: no cover - defensive
             "No GBDT backend could be constructed."
         ) from last_error
