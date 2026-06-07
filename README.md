@@ -28,6 +28,63 @@ w_t = R_t( T_t( A_t( S_t( X≤t ) ) ) )
 
 ---
 
+## Getting Started
+
+quantcortex runs **fully offline out of the box**. The scientific core is all
+that's required; every heavy/optional dependency (boosting libraries, PyTorch,
+FinBERT, Stable-Baselines3, broker SDKs, Redis, TimescaleDB) is imported lazily
+with a graceful fallback, so the tests and all five notebooks run with **no API
+keys and no network**.
+
+### Install
+
+```bash
+git clone https://github.com/magnaquant/quantcortex.git
+cd quantcortex
+python3.11 -m venv .venv && source .venv/bin/activate
+
+# Core (required) — enough to run the full test suite and every notebook
+pip install numpy pandas scipy scikit-learn matplotlib pyarrow pytest
+
+# Optional accelerators / integrations (Poetry extras):
+poetry install -E all          # or, with pip:  pip install '.[all]'
+#   ml        → xgboost, lightgbm, catboost       (GBDT cross-sectional alpha)
+#   nlp       → transformers, torch               (FinBERT sentiment)
+#   rl        → stable-baselines3, gymnasium       (PPO DRL allocator)
+#   regime    → hmmlearn                           (HMM regime overlay)
+#   providers → yfinance, polygon-api-client, fredapi  (market / macro data)
+#   brokers   → alpaca-trade-api, ib_insync, ccxt  (live execution)
+#   storage   → redis, sqlalchemy, psycopg2-binary (feature cache + TimescaleDB)
+```
+
+> **macOS note:** LightGBM/XGBoost need the OpenMP runtime (`brew install
+> libomp`). Without it quantcortex transparently falls back to the
+> scikit-learn GBDT backend — nothing breaks.
+
+### Run the tests
+
+```bash
+pytest tests/ -v   # weight contract · transaction costs · look-ahead · risk overlay · order state machine
+```
+
+### Run the research notebooks
+
+```bash
+jupyter lab research/   # 01 data quality → 02 factors → 03 portfolios → 04 backtest → 05 live bridge
+```
+
+Each notebook is self-contained and falls back to deterministic synthetic data
+when offline, so they always execute cell-by-cell.
+
+### Go live (Phase 4)
+
+Copy `.env.example` to `.env`, add your Alpaca / Interactive Brokers credentials,
+then drive one rebalance cycle through `research/05_live_trading_bridge.ipynb`
+against your paper account. Or bring up the full stack (app + Redis +
+TimescaleDB) with `docker compose up`.
+
+---
+
 ## Architecture
 
 The platform is organized as seven composable layers. Each layer produces or consumes the same weight vector interface, so any component can be swapped without touching downstream code.
@@ -150,8 +207,11 @@ quantcortex/
 │   └── test_order_manager.py
 │
 ├── docker-compose.yml
+├── Dockerfile
 ├── pyproject.toml
-└── .env.example
+├── .env.example
+├── .gitignore
+└── LICENSE
 ```
 
 ---
