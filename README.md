@@ -229,11 +229,11 @@ volume_cap  = 0.10     # max 10% of 20-day ADV
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| **Phase 1** | Data layer + PIT enforcement + universe construction | Planned |
-| **Phase 2** | Alpha factor library + walk-forward validation harness | Planned |
-| **Phase 3** | Portfolio construction + backtest engines + DSR reporting | Planned |
-| **Phase 4** | Live execution layer (Alpaca paper → IB live) | Planned |
-| **Phase 5** | DRL allocator + FinBERT sentiment overlay | Planned |
+| **Phase 1** | Data layer + PIT enforcement + universe construction | ✅ Complete |
+| **Phase 2** | Alpha factor library + walk-forward validation harness | ✅ Complete |
+| **Phase 3** | Portfolio construction + backtest engines + DSR reporting | ✅ Complete |
+| **Phase 4** | Live execution layer (Alpaca paper → IB live) | ✅ Code complete, tested offline — live broker round-trip pending account credentials |
+| **Phase 5** | DRL allocator + FinBERT sentiment overlay | ✅ Complete |
 
 ---
 
