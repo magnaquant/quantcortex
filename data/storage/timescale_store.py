@@ -12,11 +12,29 @@ with an install hint.  Nothing here touches the network at import time.
 from __future__ import annotations
 
 import os
+import re
 from typing import Optional
 
 import pandas as pd
 
 __all__ = ["TimescaleStore"]
+
+# A SQL table identifier cannot be passed as a bind parameter, so wherever a
+# table name is interpolated into a statement we validate it against this
+# pattern first (optionally schema-qualified, e.g. ``market.ohlcv``).  This
+# closes the only string-interpolation surface in the module; all VALUES
+# (symbol, timestamps) are already passed as bound ``:param`` placeholders.
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
+
+
+def _safe_table(table: str) -> str:
+    """Return ``table`` if it is a valid SQL identifier, else raise ValueError."""
+    if not isinstance(table, str) or not _IDENTIFIER_RE.match(table):
+        raise ValueError(
+            f"invalid table identifier {table!r}: must match "
+            f"[schema.]name with only letters, digits and underscores"
+        )
+    return table
 
 
 class TimescaleStore:
@@ -61,6 +79,7 @@ class TimescaleStore:
         """Create the OHLCV table and register it as a TimescaleDB hypertable."""
         import sqlalchemy  # lazy optional import
 
+        table = _safe_table(table)
         engine = self.connect()
         create_sql = sqlalchemy.text(
             f"""
@@ -93,6 +112,7 @@ class TimescaleStore:
         timestamp with ``open/high/low/close/volume`` columns.  Returns the
         number of rows written.
         """
+        table = _safe_table(table)
         engine = self.connect()
         out = df.copy()
         if "time" not in out.columns:
@@ -123,6 +143,7 @@ class TimescaleStore:
         """
         import sqlalchemy  # lazy optional import
 
+        table = _safe_table(table)
         engine = self.connect()
         clauses = ["symbol = :symbol"]
         params: dict = {"symbol": symbol}
