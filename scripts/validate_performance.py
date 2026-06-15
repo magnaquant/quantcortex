@@ -21,6 +21,7 @@ meaningless synthetic numbers.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import warnings
 
@@ -29,6 +30,11 @@ import pandas as pd
 
 warnings.filterwarnings("ignore")
 logging.getLogger("hmmlearn").setLevel(logging.ERROR)
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+# joblib/loky can print a physical-core detection traceback on hosts where CPU
+# topology is unreadable; pin it so output stays clean (respects an existing
+# override and matches the single-threaded determinism elsewhere).
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 from quantcortex.backtest.costs.transaction_costs import TransactionCostModel
 from quantcortex.backtest.engines.vectorized import VectorizedBacktest
@@ -130,12 +136,19 @@ def momentum_universe(start: str, pit: bool):
 def main(argv) -> int:
     import argparse
 
+    def positive_int(value: str) -> int:
+        """argparse type: a strictly-positive integer (the DSR needs n_trials >= 1)."""
+        ivalue = int(value)
+        if ivalue < 1:
+            raise argparse.ArgumentTypeError(f"must be a positive integer (got {value!r})")
+        return ivalue
+
     ap = argparse.ArgumentParser(description="quantcortex performance validation")
     ap.add_argument("start_year", nargs="?", default="2018")
     ap.add_argument("end_year", nargs="?", default="2025")
     ap.add_argument("--pit", action="store_true",
                     help="define the momentum_ml universe from point-in-time S&P 500 membership")
-    ap.add_argument("--n-trials", type=int, default=10,
+    ap.add_argument("--n-trials", type=positive_int, default=10,
                     help="number of strategy trials assumed for the Deflated Sharpe Ratio; "
                          "set this to the true count of configurations you searched")
     args = ap.parse_args(argv[1:])

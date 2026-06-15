@@ -39,6 +39,10 @@ logging.getLogger("hmmlearn").setLevel(logging.ERROR)
 # yfinance logs network failures (DNS/HTTP) at error level; the offline fallback
 # is expected, so quiet its logger to keep the dry-run output clean.
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+# joblib/loky can print a physical-core detection traceback on hosts where CPU
+# topology is unreadable; pin it so the --offline dry-run stays clean (respects
+# an existing override and matches the single-threaded determinism elsewhere).
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 from quantcortex.execution.order_manager import OrderManager, OrderSide
 from quantcortex.execution.position_manager import PositionManager

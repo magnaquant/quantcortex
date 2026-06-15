@@ -11,9 +11,10 @@ in docs):
 * a **monthly returns** markdown table (printed to stdout)
 
 Every number printed is computed from the run, so docs can quote it verbatim.
-The backtest is deterministic (see timing/hmm_regime), so the figures reproduce
-given the same price-data window. Honest by construction - no tuning toward the
-design targets. Needs network + yfinance + matplotlib.
+The backtest is deterministic (see quantcortex/timing/hmm_regime), so the figures
+reproduce given the same price-data window. Honest by construction - no tuning
+toward the design targets. Requires matplotlib; the default reads the bundled
+snapshot, so network + yfinance are only needed for --live (or a missing snapshot).
 
     python scripts/generate_report.py
     python scripts/generate_report.py --start 2015 --end 2024
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import warnings
 from pathlib import Path
@@ -33,6 +35,10 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 logging.getLogger("hmmlearn").setLevel(logging.ERROR)
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+# joblib/loky can print a physical-core detection traceback on hosts where CPU
+# topology is unreadable; pin it so offline/CI output stays clean (respects an
+# existing override and matches the single-threaded determinism elsewhere).
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 import matplotlib
 
@@ -173,6 +179,14 @@ def markdown_monthly(d: dict) -> str:
     return "\n".join(lines)
 
 
+def positive_int(value: str) -> int:
+    """argparse type: a strictly-positive integer (the DSR needs n_trials >= 1)."""
+    ivalue = int(value)
+    if ivalue < 1:
+        raise argparse.ArgumentTypeError(f"must be a positive integer (got {value!r})")
+    return ivalue
+
+
 def main(argv) -> int:
     ap = argparse.ArgumentParser(description="generate separate tearsheet charts + tables")
     ap.add_argument("--start", default="2018")
@@ -180,7 +194,7 @@ def main(argv) -> int:
     ap.add_argument("--imgdir", default="docs/img")
     ap.add_argument("--live", action="store_true",
                     help="refetch from yfinance instead of the bundled snapshot")
-    ap.add_argument("--n-trials", type=int, default=10,
+    ap.add_argument("--n-trials", type=positive_int, default=10,
                     help="trials assumed for the Deflated Sharpe Ratio (default 10; the "
                          "committed README report uses this default)")
     args = ap.parse_args(argv[1:])
