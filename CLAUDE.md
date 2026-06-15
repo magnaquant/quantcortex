@@ -20,6 +20,24 @@ and lint. Run everything from the repo root.
 - CI (`.github/workflows/ci.yml`) runs ruff + pytest on Python 3.11/3.12 with
   core deps only; optional extras are deliberately not installed there.
 
+## Working norms
+
+This repo is in a verified, audited state; keep it that way.
+- Keep the gates green: `ruff check .` and `pytest tests/ -q` must pass before a
+  change is done (CI enforces both). When fixing a bug, add a regression test
+  under `tests/` (see `tests/test_regression_guards.py` for the style: assert a
+  hand-derived/canonical value, not a snapshot of current behaviour).
+- Make surgical changes: touch only what the task needs; do not reformat,
+  re-sort imports, or "improve" unrelated code. The regressions found here
+  (regime non-determinism, the pre-trade contract, factor-cap ordering, the
+  engine's executed-vs-target accounting) came from subtle interactions, so
+  incidental edits to the money path are high-risk.
+- Resist over-engineering: this codebase already leans thorough. Do not add
+  config, abstractions, or flexibility beyond what was asked.
+- Confirm high-blast-radius changes before doing them: the top-level-package ->
+  `quantcortex` namespacing (see "Known structural issue") rewrites every import
+  and belongs in its own reviewed change, not bundled into unrelated work.
+
 ## The weight contract (keystone: portfolio/base.py)
 
 Every component that emits weights validates them through one of two functions;
