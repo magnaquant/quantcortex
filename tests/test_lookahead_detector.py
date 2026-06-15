@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data.processors.lookahead_detector import (
+from quantcortex.data.processors.lookahead_detector import (
     LookaheadDetector,
     LookaheadViolationError,
 )

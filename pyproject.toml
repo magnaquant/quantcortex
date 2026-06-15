@@ -6,14 +6,7 @@ authors = ["magnaquant"]
 readme = "README.md"
 license = "MIT"
 packages = [
-    { include = "data" },
-    { include = "alpha" },
-    { include = "portfolio" },
-    { include = "timing" },
-    { include = "risk" },
-    { include = "backtest" },
-    { include = "execution" },
-    { include = "strategies" },
+    { include = "quantcortex" },
 ]
 
 [tool.poetry.dependencies]
@@ -89,8 +82,8 @@ requires = ["poetry-core>=1.8.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.pytest.ini_options]
-# The repository root *is* the package root (no src/ layout), so put it on the
-# import path: `import portfolio`, `import data`, etc. resolve from the root.
+# The repository root holds the `quantcortex` package (no src/ layout), so put
+# it on the import path: `import quantcortex.portfolio`, etc. resolve from root.
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "--tb=short -ra"

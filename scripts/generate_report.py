@@ -39,19 +39,22 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from backtest.costs.transaction_costs import TransactionCostModel
-from backtest.engines.vectorized import VectorizedBacktest
-from backtest.metrics.tearsheet import Tearsheet
-from backtest.validation.deflated_sharpe import compute_dsr
+import quantcortex
+from quantcortex.backtest.costs.transaction_costs import TransactionCostModel
+from quantcortex.backtest.engines.vectorized import VectorizedBacktest
+from quantcortex.backtest.metrics.tearsheet import Tearsheet
+from quantcortex.backtest.validation.deflated_sharpe import compute_dsr
 
 ROTATION_UNIVERSE = ["QQQ", "VGT", "GLD", "TLT", "SPY", "VIG"]
-SNAPSHOT = Path(__file__).resolve().parent.parent / "data" / "sample" / "rotation_prices.csv"
+# The snapshot is package data; resolve it via the package so the path stays
+# correct regardless of where this script lives or future directory moves.
+SNAPSHOT = Path(quantcortex.__file__).resolve().parent / "data" / "sample" / "rotation_prices.csv"
 
 
 def load_prices(start: str, end: str, live: bool) -> pd.DataFrame:
     """Load prices for the report.
 
-    Default: the bundled fixed snapshot (``data/sample/rotation_prices.csv``) so
+    Default: the bundled fixed snapshot (``quantcortex/data/sample/rotation_prices.csv``) so
     the committed charts/tables are exactly reproducible.  ``--live`` refetches
     from yfinance instead - note that yfinance re-adjusts historical closes over
     time, so a live fetch will differ slightly from the snapshot (the strategy
@@ -60,7 +63,7 @@ def load_prices(start: str, end: str, live: bool) -> pd.DataFrame:
     if not live and SNAPSHOT.exists():
         px = pd.read_csv(SNAPSHOT, index_col="date", parse_dates=True)
         return px.loc[start:end].dropna(how="all").ffill().dropna()
-    from data.providers.yfinance_provider import YFinanceProvider
+    from quantcortex.data.providers.yfinance_provider import YFinanceProvider
 
     px = YFinanceProvider().get_prices(ROTATION_UNIVERSE, start=start, end=end)
     if px is None or px.empty:
@@ -79,7 +82,7 @@ def _ann_sharpe(r: pd.Series) -> float:
 
 
 def compute(start: str, end: str, live: bool = False) -> dict:
-    from strategies.multi_asset_rotation import MultiAssetRotation
+    from quantcortex.strategies.multi_asset_rotation import MultiAssetRotation
 
     px = load_prices(start, end, live)
     weekly = px.index[px.index.weekday == 0]

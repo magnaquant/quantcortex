@@ -5,7 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from backtest.costs.transaction_costs import TransactionCostModel, apply_costs
+from quantcortex.backtest.costs.transaction_costs import (
+    TransactionCostModel,
+    apply_costs,
+)
 
 
 def test_buy_only_applies_commission_plus_slippage():

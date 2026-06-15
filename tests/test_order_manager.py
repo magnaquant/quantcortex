@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from execution.order_manager import (
+from quantcortex.execution.order_manager import (
     DuplicateOrderError,
     InvalidOrderTransitionError,
     OrderManager,

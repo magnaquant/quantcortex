@@ -37,11 +37,11 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 logging.getLogger("hmmlearn").setLevel(logging.ERROR)
 
-from execution.order_manager import OrderManager, OrderSide
-from execution.position_manager import PositionManager
-from execution.pre_trade_risk import PreTradeRiskCheck, PreTradeRiskError
-from portfolio.base import PortfolioMode
-from strategies.multi_asset_rotation import MultiAssetRotation
+from quantcortex.execution.order_manager import OrderManager, OrderSide
+from quantcortex.execution.position_manager import PositionManager
+from quantcortex.execution.pre_trade_risk import PreTradeRiskCheck, PreTradeRiskError
+from quantcortex.portfolio.base import PortfolioMode
+from quantcortex.strategies.multi_asset_rotation import MultiAssetRotation
 
 UNIVERSE = ["QQQ", "VGT", "GLD", "TLT", "SPY", "VIG"]
 DEFAULT_CAPITAL = 100_000.0
@@ -50,7 +50,7 @@ DEFAULT_CAPITAL = 100_000.0
 def load_prices() -> pd.DataFrame:
     """Recent daily prices for the universe; synthetic fallback if offline."""
     try:
-        from data.providers.yfinance_provider import YFinanceProvider
+        from quantcortex.data.providers.yfinance_provider import YFinanceProvider
 
         px = YFinanceProvider().get_prices(UNIVERSE, start="2022-01-01")
         if px is not None and not px.empty and px.shape[0] > 200:
@@ -119,7 +119,7 @@ def run_offline(prices, target) -> int:
 
 
 def run_paper(prices, target, submit: bool) -> int:
-    from execution.brokers.alpaca_broker import AlpacaBroker, BrokerError
+    from quantcortex.execution.brokers.alpaca_broker import AlpacaBroker, BrokerError
 
     base = os.environ.get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
     if "paper" not in base:

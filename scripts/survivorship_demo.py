@@ -27,7 +27,7 @@ logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 def main(argv) -> int:
     as_of = argv[1] if len(argv) > 1 else "2018-06-01"
     try:
-        from data.universe.sp500_universe import SP500Universe
+        from quantcortex.data.universe.sp500_universe import SP500Universe
     except Exception as exc:  # pragma: no cover
         print(f"import error: {exc}")
         return 1
@@ -54,7 +54,7 @@ def main(argv) -> int:
     # never see the `dropped` names. Show how many are now un-priceable on a
     # survivor-only feed - those are the silently-deleted bankruptcies/delistings.
     try:
-        from data.providers.yfinance_provider import YFinanceProvider
+        from quantcortex.data.providers.yfinance_provider import YFinanceProvider
 
         provider = YFinanceProvider()
         px = provider.get_prices(dropped, start=as_of, end="2024-12-31")

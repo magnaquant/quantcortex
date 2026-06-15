@@ -5,12 +5,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from portfolio.base import (
+from quantcortex.portfolio.base import (
     PortfolioMode,
     WeightContractViolationError,
     enforce_weight_contract,
 )
-from portfolio.equal_weight import EqualWeight
+from quantcortex.portfolio.equal_weight import EqualWeight
 
 
 def test_equal_weight_sums_to_one(returns):
