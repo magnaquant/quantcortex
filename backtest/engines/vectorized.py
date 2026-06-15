@@ -197,6 +197,11 @@ class VectorizedBacktest:
         # Dates past the last price bar are dropped; duplicate snaps keep the
         # LAST target stated for that bar.
         w = weights.sort_index().reindex(columns=symbols)
+        if len(w.index) == 0:
+            # Empty weights -> a fully flat (all-cash) backtest. Coerce the
+            # index to the price dtype so searchsorted does not choke on an
+            # empty int64 RangeIndex.
+            w.index = prices.index[:0]
         pos = prices.index.searchsorted(w.index, side="left")
         keep = pos < n
         w = w.iloc[keep]
