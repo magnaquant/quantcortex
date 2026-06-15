@@ -20,8 +20,8 @@ vintage and will move as data is revised.
 |---|---|---|---|---|---|---|---|
 | SPY buy & hold | 0.78 | +14.3% | - | - | - | - | benchmark |
 | Equal-weight 6-ETF buy & hold | 1.00 | - | - | - | - | - | benchmark |
-| **multi_asset_rotation** | **0.05** | +0.1% | 0.07 | 0.01 | -15.4% | 0.08 | Sharpe > 1.10 — **not met** |
-| **momentum_ml** (survivorship-biased) | **0.64** | +13.0% | 0.90 | 0.41 | -31.5% | 0.59 | Sharpe > 0.9 — **not met** |
+| **multi_asset_rotation** | **0.05** | +0.1% | 0.07 | 0.01 | -15.4% | 0.08 | Sharpe > 1.10 - **not met** |
+| **momentum_ml** (survivorship-biased) | **0.64** | +13.0% | 0.90 | 0.41 | -31.5% | 0.59 | Sharpe > 0.9 - **not met** |
 
 ## Honest interpretation
 
@@ -39,7 +39,7 @@ vintage and will move as data is revised.
   causal residual momentum, contract-valid weights all verified) but offers no
   edge over buy-and-hold in this regime.
 - **momentum_ml shows real positive alpha** (13% CAGR, DSR 0.59) but its read is
-  **survivorship-biased** — the universe is today's large-caps, which excludes
+  **survivorship-biased** - the universe is today's large-caps, which excludes
   firms that were delisted or merged over the window, inflating the result.
 - **A clean evaluation needs a licensed point-in-time feed** with
   delisted-name coverage and historical index constituents (see
