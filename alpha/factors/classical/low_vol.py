@@ -11,13 +11,23 @@ returns observed strictly before ``t`` (the most recent return entering the
 window is the one from ``t-1`` to ``t``... shifted out), so it can be acted
 upon at ``t`` without look-ahead.
 
-This module is self-contained and does not depend on the other factor modules.
+Cross-sectional normalization and price/return helpers are shared with the
+other classical factor modules via the private
+:mod:`alpha.factors.classical._cross_section` module.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+
+from alpha.factors.classical._cross_section import (
+    cross_sectional_rank,
+    cross_sectional_zscore,
+    rolling_cov,
+    to_returns,
+    validate_prices,
+)
 
 # Trading days per year, used to annualize realized volatility.
 _TRADING_DAYS = 252.0
@@ -87,6 +97,7 @@ class LowVolFactor:
         prices: pd.DataFrame,
         market: pd.Series,
         window: int | None = None,
+        market_is_returns: bool | None = None,
     ) -> pd.DataFrame:
         """Rolling CAPM beta of each symbol versus the market.
 
@@ -102,6 +113,9 @@ class LowVolFactor:
             Market price level (or return series) indexed by the same dates.
         window:
             Rolling window in trading days. Defaults to ``beta_window``.
+        market_is_returns:
+            Explicitly declare whether ``market`` is a return series (``True``)
+            or a price level (``False``). ``None`` (default) uses a heuristic.
 
         Returns
         -------
@@ -116,7 +130,7 @@ class LowVolFactor:
             raise ValueError("window must be greater than 1")
 
         stock_ret = prices.pct_change()
-        market_ret = self._to_returns(market.reindex(prices.index))
+        market_ret = self._to_returns(market.reindex(prices.index), market_is_returns)
         market_var = market_ret.rolling(window, min_periods=window).var(ddof=0)
 
         betas = pd.DataFrame(index=prices.index, columns=prices.columns, dtype=float)
@@ -128,7 +142,12 @@ class LowVolFactor:
         # Strict causality: exclude the contemporaneous bar.
         return betas.shift(1)
 
-    def composite(self, prices: pd.DataFrame, market: pd.Series) -> pd.DataFrame:
+    def composite(
+        self,
+        prices: pd.DataFrame,
+        market: pd.Series,
+        market_is_returns: bool | None = None,
+    ) -> pd.DataFrame:
         """Composite low-risk score combining negative vol and negative beta.
 
         Both ``-realized_volatility`` and ``-beta`` are converted to
@@ -141,6 +160,9 @@ class LowVolFactor:
             Adjusted close prices indexed by date, columns are symbols.
         market:
             Market price level (or return series) indexed by the same dates.
+        market_is_returns:
+            Explicitly declare whether ``market`` is a return series (``True``)
+            or a price level (``False``). ``None`` (default) uses a heuristic.
 
         Returns
         -------
@@ -149,7 +171,7 @@ class LowVolFactor:
         """
         prices = self._validate_prices(prices)
         neg_vol = -self.realized_volatility(prices)
-        neg_beta = -self.beta(prices, market)
+        neg_beta = -self.beta(prices, market, market_is_returns=market_is_returns)
 
         z_vol = self.cross_sectional_zscore(neg_vol)
         z_beta = self.cross_sectional_zscore(neg_beta)
@@ -159,44 +181,14 @@ class LowVolFactor:
         return composite
 
     # ------------------------------------------------------------------
-    # Cross-sectional normalization (self-contained)
+    # Cross-sectional normalization (shared via _cross_section)
     # ------------------------------------------------------------------
-    @staticmethod
-    def cross_sectional_zscore(panel: pd.DataFrame) -> pd.DataFrame:
-        """Row-wise (cross-sectional) z-score, robust to missing values."""
-        mean = panel.mean(axis=1, skipna=True)
-        std = panel.std(axis=1, skipna=True, ddof=0)
-        std = std.replace(0.0, np.nan)
-        return panel.sub(mean, axis=0).div(std, axis=0)
-
-    @staticmethod
-    def rank(panel: pd.DataFrame) -> pd.DataFrame:
-        """Row-wise cross-sectional rank scaled to ``[0, 1]``."""
-        return panel.rank(axis=1, method="average", pct=True, na_option="keep")
+    cross_sectional_zscore = staticmethod(cross_sectional_zscore)
+    rank = staticmethod(cross_sectional_rank)
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Internal helpers (shared via _cross_section)
     # ------------------------------------------------------------------
-    @staticmethod
-    def _validate_prices(prices: pd.DataFrame) -> pd.DataFrame:
-        if not isinstance(prices, pd.DataFrame):
-            raise TypeError("prices must be a pandas DataFrame")
-        if not prices.index.is_monotonic_increasing:
-            prices = prices.sort_index()
-        return prices.astype(float)
-
-    @staticmethod
-    def _to_returns(series: pd.Series) -> pd.Series:
-        """Convert a price level to simple returns; pass through if already returns."""
-        s = series.astype(float)
-        positive = s.dropna()
-        if not positive.empty and (positive > 0).all() and positive.median() > 1.0:
-            return s.pct_change()
-        return s
-
-    @staticmethod
-    def _rolling_cov(x: pd.Series, y: pd.Series, window: int) -> pd.Series:
-        """Strictly-trailing rolling covariance of two aligned series."""
-        xm = x.rolling(window, min_periods=window).mean()
-        ym = y.rolling(window, min_periods=window).mean()
-        return (x * y).rolling(window, min_periods=window).mean() - xm * ym
+    _validate_prices = staticmethod(validate_prices)
+    _to_returns = staticmethod(to_returns)
+    _rolling_cov = staticmethod(rolling_cov)

@@ -93,7 +93,7 @@ class HMMRegime:
     # Fitting
     # ------------------------------------------------------------------ #
     def fit(self, features: pd.DataFrame) -> "HMMRegime":
-        """Fit the regime model on ``features`` and build the state→label map.
+        """Fit the regime model on ``features`` and build the state->label map.
 
         Parameters
         ----------
@@ -185,30 +185,37 @@ class HMMRegime:
     ) -> Dict[int, int]:
         """Map raw model-state indices to canonical {bear, sideways, bull}.
 
-        States are ranked by the mean of the ``returns`` feature within each
-        state: rank 0 (lowest mean) -> bear, top rank -> bull, middle -> sideways.
-        """
-        present = np.unique(states)
-        # Mean return per state; states never observed default to -inf so they
-        # rank as the most bearish (they will not be predicted anyway).
-        means = {}
-        for s in range(self.n_states):
-            mask = states == s
-            means[s] = float(returns_feature[mask].mean()) if mask.any() else -np.inf
+        Only states actually *observed* in the fit-time predictions are ranked,
+        by the mean of the ``returns`` feature within each state: rank 0
+        (lowest mean) -> bear, top rank -> bull, middle -> sideways.  States the
+        model never predicted carry no return evidence, so they are mapped to
+        the neutral SIDEWAYS label *after* the ranking (seeding them with a
+        sentinel mean such as ``-inf`` would always win the bear rank and
+        displace the genuinely lowest-mean observed state).
 
-        ranked = sorted(range(self.n_states), key=lambda s: means[s])
+        If only a single state is observed it maps to SIDEWAYS: with one
+        cluster there is no cross-sectional spread to provide evidence that
+        the regime is bearish or bullish, so we stay neutral.
+        """
+        present = [int(s) for s in np.unique(states)]
+        # Mean return per OBSERVED state; rank only what the model predicted.
+        means = {s: float(returns_feature[states == s].mean()) for s in present}
+        ranked = sorted(present, key=lambda s: means[s])
+
         labels: Dict[int, int] = {}
-        last = len(ranked) - 1
-        for rank, s in enumerate(ranked):
-            if rank == 0:
-                labels[s] = BEAR
-            elif rank == last:
-                labels[s] = BULL
-            else:
-                labels[s] = SIDEWAYS
-        # Guard: if every observed state collapsed to one rank position.
-        for s in present:
-            labels.setdefault(int(s), SIDEWAYS)
+        if len(ranked) >= 2:
+            last = len(ranked) - 1
+            for rank, s in enumerate(ranked):
+                if rank == 0:
+                    labels[s] = BEAR
+                elif rank == last:
+                    labels[s] = BULL
+                else:
+                    labels[s] = SIDEWAYS
+        # Single observed state (no spread evidence) and any never-observed
+        # states default to the neutral SIDEWAYS label.
+        for s in range(self.n_states):
+            labels.setdefault(s, SIDEWAYS)
         return labels
 
     # ------------------------------------------------------------------ #

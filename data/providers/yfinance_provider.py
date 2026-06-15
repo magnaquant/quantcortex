@@ -2,7 +2,7 @@
 
 Serves OHLCV bars and a best-effort tidy view of quarterly fundamentals.
 ``yfinance`` does not expose exact SEC filing dates, so the point-in-time
-``announcement_date`` is approximated as ``period_end + 45 calendar days`` — a
+``announcement_date`` is approximated as ``period_end + 45 calendar days`` - a
 conservative reporting-lag proxy (the SEC 10-Q deadline for large accelerated
 filers is 40 days; smaller filers get 45).  Macro series are not available
 here; use :class:`FREDProvider`.
@@ -180,5 +180,5 @@ class YFinanceProvider(DataProvider):
         start: Optional[str] = None,
         end: Optional[str] = None,
     ) -> pd.DataFrame:
-        """Not supported — yfinance does not serve macro series."""
+        """Not supported - yfinance does not serve macro series."""
         raise NotImplementedError("Use FREDProvider for macro series")

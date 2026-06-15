@@ -9,12 +9,15 @@ those headline-level scores to a daily panel.
 
 Causality
 ---------
-The daily aggregation is strictly causal: the signal reported on date ``t`` for
-a symbol uses only headlines published *on or before* ``t``. An optional
-exponential time-decay weighting lets recent headlines dominate while older
-news fades, with a configurable half-life. No future headlines ever influence a
-past or present score, so the resulting panel is safe to trade on at the close
-of each date without look-ahead bias.
+The daily aggregation is causal at *daily* granularity: the signal reported on
+date ``t`` uses only headlines dated on or before ``t`` (timestamps are
+normalized to calendar dates). An optional exponential time-decay weighting
+lets recent headlines dominate while older news fades, with a configurable
+half-life. One caveat: intraday cutoffs are not modeled, so a headline
+published after the close of ``t`` still lands in day ``t``'s signal. A
+close-of-day trading rule should treat day ``t``'s score as actionable at the
+close of ``t + 1`` (or pre-filter the news table to a publication-time
+cutoff) to be strictly conservative.
 """
 
 from __future__ import annotations
@@ -177,7 +180,9 @@ class NewsScorer:
 
         df = news_df[[date_col, symbol_col, headline_col]].copy()
         df.columns = ["date", "symbol", "headline"]
-        df["date"] = pd.to_datetime(df["date"])
+        # Normalize to calendar dates: intraday timestamps would otherwise
+        # produce one "daily" row per distinct timestamp instead of per day.
+        df["date"] = pd.to_datetime(df["date"]).dt.normalize()
         df = df.dropna(subset=["symbol", "headline"])
         if df.empty:
             return pd.DataFrame(dtype=float)

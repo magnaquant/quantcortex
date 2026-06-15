@@ -1,7 +1,7 @@
 """FRED (Federal Reserve Economic Data) macro provider.
 
 Fetches one or more economic time series from the St. Louis Fed via the
-``fredapi`` library and assembles them into a wide, date-indexed DataFrame —
+``fredapi`` library and assembles them into a wide, date-indexed DataFrame  - 
 the platform's canonical macro shape.  OHLCV and fundamentals are not served
 here.
 
@@ -123,7 +123,7 @@ class FREDProvider(DataProvider):
         end: Optional[str] = None,
         timeframe: str = "1d",
     ) -> Dict[str, pd.DataFrame]:
-        """Not supported — FRED serves macro series only."""
+        """Not supported - FRED serves macro series only."""
         raise NotImplementedError(
             "FRED does not serve OHLCV; use a market-data provider "
             "(yfinance/Polygon/Alpaca/ccxt/FMP)."
@@ -136,7 +136,7 @@ class FREDProvider(DataProvider):
         start: Optional[str] = None,
         end: Optional[str] = None,
     ) -> pd.DataFrame:
-        """Not supported — FRED serves macro series only."""
+        """Not supported - FRED serves macro series only."""
         raise NotImplementedError(
             "FRED does not serve fundamentals; use FMP/Polygon."
         )

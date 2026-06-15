@@ -3,7 +3,7 @@
 Routes quantcortex orders to the `Alpaca <https://alpaca.markets>`_ commission-free
 US-equities API for both paper and live trading.  The Alpaca SDK
 (``alpaca-trade-api``) is an *optional* dependency and is imported lazily inside
-:meth:`AlpacaBroker.connect` — importing this module never requires it.
+:meth:`AlpacaBroker.connect` - importing this module never requires it.
 
 Credentials are read from the constructor arguments, falling back to the
 ``ALPACA_API_KEY`` / ``ALPACA_SECRET_KEY`` / ``ALPACA_BASE_URL`` environment

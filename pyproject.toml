@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "quantcortex"
 version = "0.1.0"
-description = "State-of-the-art modular quant trading platform: Data → Alpha → Portfolio → Timing → Risk → Backtest → Execution"
+description = "State-of-the-art modular quant trading platform: Data -> Alpha -> Portfolio -> Timing -> Risk -> Backtest -> Execution"
 authors = ["magnaquant"]
 readme = "README.md"
 license = "MIT"

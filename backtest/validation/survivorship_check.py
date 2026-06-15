@@ -4,7 +4,7 @@ Survivorship bias arises when a backtest is run on the set of symbols that
 *survived* to today (e.g. today's S&P 500) rather than the symbols that were
 actually investable on each historical date.  Companies that went bankrupt,
 were delisted, or fell out of the index simply vanish from the data, so the
-backtest never holds the losers — systematically inflating returns and
+backtest never holds the losers - systematically inflating returns and
 understating risk.
 
 The defence is **point-in-time (PIT) membership**: every symbol traded as of a

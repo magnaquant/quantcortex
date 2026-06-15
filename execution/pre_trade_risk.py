@@ -1,4 +1,4 @@
-"""Pre-trade risk checks — the last gate before live execution.
+"""Pre-trade risk checks - the last gate before live execution.
 
 Every order intent and every target-weight vector produced by quantcortex must
 clear :class:`PreTradeRiskCheck` *before* it is handed to a broker adapter.  This
@@ -6,7 +6,7 @@ is the final, authoritative safety gate: it re-validates the canonical weight
 contract, enforces position-concentration and gross-exposure caps, and bounds
 per-order and aggregate notional against the allowed symbol universe.
 
-The design philosophy mirrors the weight contract — fail loud and early.  Use
+The design philosophy mirrors the weight contract - fail loud and early.  Use
 :meth:`PreTradeRiskCheck.assert_safe` on the hot path so that any violation
 raises :class:`PreTradeRiskError` and the order(s) never reach the venue.
 """

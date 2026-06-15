@@ -1,18 +1,18 @@
-"""Transaction cost model — mandatory in every backtest engine.
+"""Transaction cost model - mandatory in every backtest engine.
 
 quantcortex treats transaction costs as a *first-class*, non-optional input:
 backtest engines refuse to run without a cost model (see ``backtest/engines``).
 The model below implements the three frictions that dominate realistic equity
 execution:
 
-* **commission** — broker/exchange fee, default 3 bps.
-* **slippage** — adverse price movement between decision and fill, default 10
+* **commission** - broker/exchange fee, default 3 bps.
+* **slippage** - adverse price movement between decision and fill, default 10
   bps.
-* **transfer tax** — sell-side levy (e.g. SEC fee, stamp duty), default 0.
+* **transfer tax** - sell-side levy (e.g. SEC fee, stamp duty), default 0.
 
 and one *liquidity* constraint:
 
-* **volume cap** — a single rebalance may not trade more than ``volume_cap`` of
+* **volume cap** - a single rebalance may not trade more than ``volume_cap`` of
   a symbol's 20-day average daily (dollar) volume.  Oversized orders are
   truncated to the cap.
 
@@ -59,7 +59,7 @@ class CostResult:
 
     @property
     def turnover(self) -> float:
-        """One-way turnover actually executed (sum of |Δw|)/2."""
+        """One-way turnover actually executed (sum of |Deltaw|)/2."""
         return float(np.abs(self.executed_change).sum() / 2.0)
 
 

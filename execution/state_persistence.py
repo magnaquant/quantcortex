@@ -3,7 +3,7 @@
 A trading process must survive crashes and restarts without losing track of its
 open orders and positions.  :class:`StatePersistence` provides a small key/value
 store for exactly that, backed by **Redis** when it is available and reachable,
-and transparently falling back to an on-disk **JSON file** store otherwise — so
+and transparently falling back to an on-disk **JSON file** store otherwise - so
 the execution layer always has somewhere durable to write, even offline or in
 local development where Redis is not installed.
 

@@ -16,29 +16,37 @@ The result is well-behaved, intuitive allocations.
 
 The math
 --------
-Let ``Σ`` be the asset covariance matrix (estimated here with Ledoit-Wolf
-shrinkage), ``δ`` the risk-aversion coefficient and ``w_mkt`` the market-cap
+Let ``Sigma`` be the asset covariance matrix (estimated here with Ledoit-Wolf
+shrinkage), ``delta`` the risk-aversion coefficient and ``w_mkt`` the market-cap
 (or equal) weights.
 
 * **Equilibrium / prior returns (reverse optimization)**::
 
-      Π = δ · Σ · w_mkt
+      Pi = delta * Sigma * w_mkt
 
-* **Views** are expressed as ``P · E[R] = Q + ε``, ``ε ~ N(0, Ω)`` where
+* **Views** are expressed as ``P * E[R] = Q + eps``, ``eps ~ N(0, Omega)`` where
 
     - ``P`` is a ``(K x N)`` pick matrix (each row a view over the assets),
     - ``Q`` is the ``(K,)`` vector of expected returns for those views,
-    - ``Ω`` is the ``(K x K)`` diagonal uncertainty of the views.
+    - ``Omega`` is the ``(K x K)`` diagonal uncertainty of the views, expressed in
+      the *same variance units* as the prior.  With per-view confidences
+      ``c  in  (0, 1)`` we use the Idzorek-style scaling::
+
+          Omega = diag( ((1 - c) / c) * diag(P (tau*Sigma) P') )
+
+      so ``c -> 1`` makes a view (almost) certain and ``c -> 0`` makes it
+      irrelevant.  Without confidences we default to the He-Litterman choice
+      ``Omega = diag(diag(P (tau*Sigma) P'))``.
 
 * **Posterior expected returns** (the Black-Litterman "master formula")::
 
-      E[R] = [(τΣ)⁻¹ + Pᵀ Ω⁻¹ P]⁻¹ · [(τΣ)⁻¹ Π + Pᵀ Ω⁻¹ Q]
+      E[R] = [(tau*Sigma)^-1 + P' Omega^-1 P]^-1 * [(tau*Sigma)^-1 Pi + P' Omega^-1 Q]
 
-  With no views this collapses to the prior, ``E[R] = Π``.
+  With no views this collapses to the prior, ``E[R] = Pi``.
 
 * **Mean-variance optimal weights**::
 
-      w ∝ (δ Σ)⁻¹ · E[R]
+      w is proportional to (delta*Sigma)^-1 * E[R]
 
   which is finally projected onto the long-only simplex (clip at zero,
   renormalize) or made dollar-neutral, per the configured mode.
@@ -70,10 +78,10 @@ class BlackLitterman(PortfolioOptimizer):
         :data:`PortfolioMode.LONG_ONLY` (default) or
         :data:`PortfolioMode.MARKET_NEUTRAL`.
     risk_aversion:
-        The risk-aversion coefficient ``δ`` used both for reverse optimization
+        The risk-aversion coefficient ``delta`` used both for reverse optimization
         of the equilibrium prior and for the final mean-variance step.
     tau:
-        Scalar ``τ`` weighting the uncertainty of the equilibrium prior relative
+        Scalar ``tau`` weighting the uncertainty of the equilibrium prior relative
         to the views.  Typically small (0.01-0.05).
     **kw:
         Forwarded to :class:`~portfolio.base.PortfolioOptimizer`.
@@ -144,6 +152,7 @@ class BlackLitterman(PortfolioOptimizer):
         view_confidences,
         q,
         columns: list,
+        tau_sigma: np.ndarray,
     ) -> Optional[tuple[np.ndarray, np.ndarray, np.ndarray]]:
         """Normalize the views payload into ``(P, Q, Omega)`` arrays.
 
@@ -151,12 +160,19 @@ class BlackLitterman(PortfolioOptimizer):
 
         * a ``(K x N)`` pick matrix ``P`` (DataFrame columns aligned to assets,
           or a raw array), in which case ``q`` supplies the ``Q`` vector, or
-        * ``None`` — meaning no views (the function returns ``None``).
+        * ``None`` - meaning no views (the function returns ``None``).
 
         ``view_confidences`` is the per-view confidence used to build a diagonal
-        ``Ω``; lower confidence -> larger variance.  ``Ω = diag((1 - c) / c)``
-        with ``c`` clipped away from 0 and 1.  If omitted, ``Ω`` defaults to the
-        identity (equal, moderate uncertainty per view).
+        ``Omega`` in the *same variance units as the prior* (Idzorek)::
+
+            Omega = diag( ((1 - c) / c) * diag(P (tau*Sigma) P') )
+
+        with ``c`` clipped away from 0 and 1; lower confidence -> larger view
+        variance.  A dimensionless ``diag((1 - c) / c)`` would be O(1) against
+        O(1e-5)-scale daily return variances, leaving views nearly inert.  If
+        ``view_confidences`` is omitted, ``Omega`` defaults to the He-Litterman
+        choice ``diag(diag(P (tau*Sigma) P'))`` (moderate, prior-scaled uncertainty
+        per view).
         """
         if views is None:
             return None
@@ -181,8 +197,15 @@ class BlackLitterman(PortfolioOptimizer):
                 f"Q must have one entry per view ({k}), got {q_arr.shape[0]}"
             )
 
+        # Prior variance of each view portfolio: diag(P (tau*Sigma) P').  This puts
+        # Omega on the same scale as the prior uncertainty, whatever the return
+        # frequency of the inputs.
+        view_prior_var = np.diag(p @ tau_sigma @ p.T).copy()
+        # Guard against degenerate (zero-variance) view portfolios.
+        view_prior_var = np.where(view_prior_var > 0.0, view_prior_var, 1e-12)
         if view_confidences is None:
-            omega = np.eye(k, dtype=np.float64)
+            # He-Litterman default: Omega = diag(diag(P (tau*Sigma) P')).
+            omega = np.diag(view_prior_var)
         else:
             c = np.asarray(view_confidences, dtype=np.float64).ravel()
             if c.shape[0] != k:
@@ -190,7 +213,8 @@ class BlackLitterman(PortfolioOptimizer):
                     f"view_confidences must have one entry per view ({k})"
                 )
             c = np.clip(c, 1e-6, 1.0 - 1e-6)
-            omega = np.diag((1.0 - c) / c)
+            # Idzorek-style scaling: Omega = diag(((1 - c) / c) * diag(P (tau*Sigma) P')).
+            omega = np.diag(((1.0 - c) / c) * view_prior_var)
         return p, q_arr, omega
 
     # ------------------------------------------------------------------ #
@@ -227,7 +251,7 @@ class BlackLitterman(PortfolioOptimizer):
             ``None`` the posterior equals the equilibrium prior.
         view_confidences:
             Optional ``(K,)`` per-view confidences in ``(0, 1)`` used to build
-            the diagonal view-uncertainty matrix ``Ω``.
+            the diagonal view-uncertainty matrix ``Omega``.
         q:
             Optional ``(K,)`` vector of expected view returns ``Q``.  Required
             when ``views`` is provided.
@@ -255,27 +279,29 @@ class BlackLitterman(PortfolioOptimizer):
         sigma = self._ledoit_wolf_cov(returns)
         w_mkt = self._market_weights(market_weights, columns)
 
-        # Equilibrium (prior) returns via reverse optimization: Π = δ Σ w_mkt.
+        # Equilibrium (prior) returns via reverse optimization: Pi = delta Sigma w_mkt.
         pi = self.risk_aversion * sigma @ w_mkt
 
         # Posterior expected returns.
-        resolved = self._resolve_views(views, view_confidences, q, columns)
+        resolved = self._resolve_views(
+            views, view_confidences, q, columns, self.tau * sigma
+        )
         if resolved is None:
             posterior = pi
         else:
             p, q_arr, omega = resolved
             tau_sigma_inv = self._safe_inv(self.tau * sigma)
             omega_inv = self._safe_inv(omega)
-            # A = (τΣ)⁻¹ + Pᵀ Ω⁻¹ P ;  b = (τΣ)⁻¹ Π + Pᵀ Ω⁻¹ Q
+            # A = (tau*Sigma)^-1 + P' Omega^-1 P ;  b = (tau*Sigma)^-1 Pi + P' Omega^-1 Q
             a_mat = tau_sigma_inv + p.T @ omega_inv @ p
             b_vec = tau_sigma_inv @ pi + p.T @ omega_inv @ q_arr
             posterior = self._safe_inv(a_mat) @ b_vec
 
-        # Mean-variance optimal weights: w ∝ (δ Σ)⁻¹ E[R].
+        # Mean-variance optimal weights: w proportional to (delta*Sigma)^-1 E[R].
         raw = self._safe_inv(self.risk_aversion * sigma) @ posterior
 
         if not np.all(np.isfinite(raw)):
-            # Degenerate solve — fall back to the market prior.
+            # Degenerate solve - fall back to the market prior.
             raw = w_mkt.copy()
 
         # Project onto the configured mode's feasible set.

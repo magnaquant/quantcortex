@@ -3,7 +3,7 @@
 Concrete adapters (Alpaca, Interactive Brokers, CCXT) implement this ABC so the
 execution layer can route the same order objects to paper, live equities, or
 crypto venues unchanged.  Heavy/optional broker SDKs are imported lazily inside
-each adapter — importing this module never requires them.
+each adapter - importing this module never requires them.
 """
 
 from __future__ import annotations

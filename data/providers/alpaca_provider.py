@@ -113,7 +113,7 @@ class AlpacaProvider(DataProvider):
         start: Optional[str] = None,
         end: Optional[str] = None,
     ) -> pd.DataFrame:
-        """Not supported — Alpaca does not serve fundamentals."""
+        """Not supported - Alpaca does not serve fundamentals."""
         raise NotImplementedError(
             "Alpaca does not serve fundamentals; use FMP/Polygon"
         )
@@ -124,5 +124,5 @@ class AlpacaProvider(DataProvider):
         start: Optional[str] = None,
         end: Optional[str] = None,
     ) -> pd.DataFrame:
-        """Not supported — use FREDProvider for macro series."""
+        """Not supported - use FREDProvider for macro series."""
         raise NotImplementedError("Use FREDProvider for macro series")

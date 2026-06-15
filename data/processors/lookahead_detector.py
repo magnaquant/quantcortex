@@ -1,4 +1,4 @@
-"""Look-ahead bias detector — scans a feature matrix for future-data leakage.
+"""Look-ahead bias detector - scans a feature matrix for future-data leakage.
 
 Look-ahead bias is the single most damaging backtesting pitfall: a feature that
 secretly encodes information from ``t+k`` will produce a beautiful in-sample
@@ -6,7 +6,7 @@ Sharpe that evaporates live.  This module provides *static* (no-model) scans of
 a feature ``DataFrame`` that flag the structural fingerprints of leakage:
 
 1. **Trailing-NaN fingerprint.**  A strictly-causal feature (rolling means,
-   lagged returns, …) can only be undefined at the *start* of a series while
+   lagged returns, ...) can only be undefined at the *start* of a series while
    the window warms up.  A feature built with ``series.shift(-k)`` instead runs
    out of *future* data and is undefined at the *end*.  A column with NaNs
    concentrated at its tail is therefore a prime leakage suspect.
@@ -20,7 +20,7 @@ a feature ``DataFrame`` that flag the structural fingerprints of leakage:
    whose correlation with that target is implausibly close to 1.0 almost
    certainly *is* (a transform of) the target.
 
-The detector *flags* — it errs toward surfacing suspects.  The companion
+The detector *flags* - it errs toward surfacing suspects.  The companion
 ``backtest/validation/lookahead_audit.py`` performs the dynamic, model-based
 audit (re-run with shifted features).
 """
@@ -140,7 +140,7 @@ class LookaheadDetector:
                         reason="trailing NaNs exceed leading NaNs",
                         severity="high",
                         detail=(
-                            f"{trailing} trailing vs {leading} leading NaN(s) — "
+                            f"{trailing} trailing vs {leading} leading NaN(s) - "
                             "fingerprint of a forward shift(-k)"
                         ),
                     )

@@ -81,12 +81,23 @@ class CCXTProvider(DataProvider):
         end: Optional[str] = None,
         timeframe: str = "1d",
     ) -> Dict[str, pd.DataFrame]:
-        """Fetch paginated OHLCV candles per symbol and standardise them."""
+        """Fetch paginated OHLCV candles per symbol and standardise them.
+
+        When both ``start`` and ``end`` are ``None`` the exchange returns its
+        most recent ``_PAGE_LIMIT`` candles per symbol.  Supplying ``end``
+        without ``start`` is rejected: ccxt pagination needs a ``since``
+        cursor to walk a historical range.
+        """
         tf = self._TIMEFRAME_MAP.get(timeframe)
         if tf is None:
             raise ValueError(
                 f"Unsupported timeframe {timeframe!r} for ccxt; "
                 f"choose one of {sorted(self._TIMEFRAME_MAP)}."
+            )
+        if start is None and end is not None:
+            raise ValueError(
+                "historical queries require `start`; omit both start and end "
+                "to fetch the most recent candles"
             )
         client = self._exchange()
 
@@ -153,7 +164,7 @@ class CCXTProvider(DataProvider):
         start: Optional[str] = None,
         end: Optional[str] = None,
     ) -> pd.DataFrame:
-        """Not applicable — crypto assets have no company fundamentals."""
+        """Not applicable - crypto assets have no company fundamentals."""
         raise NotImplementedError(
             "Fundamentals are not applicable to crypto markets; "
             "use FMP/Polygon for equities."
@@ -165,5 +176,5 @@ class CCXTProvider(DataProvider):
         start: Optional[str] = None,
         end: Optional[str] = None,
     ) -> pd.DataFrame:
-        """Not applicable — use FREDProvider for macro series."""
+        """Not applicable - use FREDProvider for macro series."""
         raise NotImplementedError("Use FREDProvider for macro series")

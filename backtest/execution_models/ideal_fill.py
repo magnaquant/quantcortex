@@ -1,4 +1,4 @@
-"""Execution models — the abstract base and the optimistic ``IdealFill``.
+"""Execution models - the abstract base and the optimistic ``IdealFill``.
 
 An *execution model* maps a desired trade (``target_qty`` shares of a symbol on
 a given bar) to a realised **fill price**.  It is the bridge between the

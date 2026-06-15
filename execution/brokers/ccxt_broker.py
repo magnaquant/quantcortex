@@ -3,7 +3,7 @@
 Routes quantcortex orders to any of the 100+ crypto exchanges supported by the
 `ccxt <https://github.com/ccxt/ccxt>`_ library (Binance, Coinbase, Kraken, ...).
 ``ccxt`` is an *optional* dependency, imported lazily inside
-:meth:`CCXTBroker.connect` — importing this module never requires it.
+:meth:`CCXTBroker.connect` - importing this module never requires it.
 
 When ``paper=True`` (the default) the adapter calls ``set_sandbox_mode(True)`` if
 the chosen exchange exposes a testnet/sandbox, so paper trading routes to the

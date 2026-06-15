@@ -83,6 +83,20 @@ class VolTargeting:
         Provide either a ``returns`` history (per-asset matrix or portfolio
         series) from which realised vol is estimated, or an explicit
         ``realized_vol`` (already annualised).
+
+        Notes
+        -----
+        * A non-finite realised vol (NaN/inf, e.g. from NaN-containing
+          returns) is treated as "no information": the overlay passes the
+          weights through unchanged (``scale = 1.0``) rather than raising a
+          misleading non-finite-weights contract error.
+        * The requested scalar scale is capped so that no element of the
+          scaled book exceeds the ``[-1, 1]`` per-asset contract:
+          ``effective_scale = min(scale, 1 / max|w_i|)``.  The capped scale is
+          then applied *unclipped*, preserving the allocation proportions
+          (per-asset clipping would silently distort them and make the
+          realized gross differ from the prescribed scale).  ``last_scale``
+          records the EFFECTIVE (possibly capped) scale.
         """
         w = np.asarray(weights, dtype=np.float64).ravel()
 
@@ -95,20 +109,32 @@ class VolTargeting:
                 w, returns, periods_per_year=self.periods_per_year
             )
 
-        if realized_vol <= self.vol_floor:
+        realized_vol = float(realized_vol)
+        if not np.isfinite(realized_vol):
+            # No usable risk estimate -> pass-through (scale 1.0); see Notes.
+            scale = 1.0
+        elif realized_vol <= self.vol_floor:
             # No measurable risk -> hold target exposure unchanged (no lever-up
             # into a degenerate estimate).
             scale = 1.0
         else:
             scale = self.scale_factor(realized_vol)
 
-        self.last_realized_vol = float(realized_vol)
+        # Cap the scalar so no element leaves the [-1, 1] per-asset contract;
+        # the capped scale is applied unclipped to preserve proportions.
+        max_abs = float(np.max(np.abs(w))) if w.size else 0.0
+        if max_abs > 0.0:
+            scale = min(scale, 1.0 / max_abs)
+
+        self.last_realized_vol = realized_vol
         self.last_scale = float(scale)
 
-        scaled = np.clip(w * scale, -1.0, 1.0)
+        scaled = w * scale
         # Gross exposure may legitimately exceed 1.0 when levering up; size the
-        # cap to the configured leverage so the contract still guards typos.
-        max_gross = max(self.max_leverage, float(np.abs(w).sum())) + 1e-9
+        # cap to the configured leverage / scaled gross so the contract still
+        # guards typos.
+        in_gross = float(np.abs(w).sum())
+        max_gross = max(self.max_leverage, in_gross, in_gross * scale) + 1e-9
         return enforce_exposure_contract(
             scaled, max_gross=max_gross, name="VolTargeting"
         )

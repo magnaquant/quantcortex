@@ -2,7 +2,7 @@
 
 Routes quantcortex orders to Interactive Brokers through a running TWS or IB
 Gateway instance.  The ``ib_insync`` package is an *optional* dependency,
-imported lazily inside :meth:`IBBroker.connect` — importing this module never
+imported lazily inside :meth:`IBBroker.connect` - importing this module never
 requires it.
 
 Connection parameters are read from the constructor, falling back to the

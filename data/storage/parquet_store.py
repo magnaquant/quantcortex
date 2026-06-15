@@ -57,6 +57,13 @@ class ParquetStore:
         mode:
             ``"overwrite"`` replaces the whole dataset directory; ``"append"``
             adds new Parquet files alongside the existing ones.
+
+        Notes
+        -----
+        A meaningful index (named, or any non-``RangeIndex``) is materialized
+        as an ordinary column before writing.  :meth:`read` does *not* restore
+        it as the index: it comes back as a plain column, and callers must
+        ``set_index`` themselves if they want the index back.
         """
         if mode not in ("overwrite", "append"):
             raise ValueError(f"unknown mode {mode!r}; use 'overwrite' or 'append'")
@@ -73,7 +80,7 @@ class ParquetStore:
             table_df = df
         table = pa.Table.from_pandas(table_df, preserve_index=False)
 
-        existing = "overwrite_or_ignore" if mode == "append" else "overwrite_or_ignore"
+        existing = "overwrite_or_ignore"
         pq.write_to_dataset(
             table,
             root_path=str(path),
@@ -98,6 +105,12 @@ class ParquetStore:
             Optional predicate, either a PyArrow :class:`Expression` or the
             disjunctive-normal-form list-of-tuples accepted by
             :func:`pyarrow.parquet.read_table`.
+
+        Notes
+        -----
+        An index materialized as a column by :meth:`write` is returned as a
+        plain column (with a default ``RangeIndex``); it is *not* restored as
+        the DataFrame index.  Call ``set_index`` on the result if needed.
         """
         path = self._dataset_path(dataset)
         if not path.exists():

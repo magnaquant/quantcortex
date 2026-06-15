@@ -1,7 +1,7 @@
 """Look-ahead / data-leakage audit via feature time-shifting.
 
 Look-ahead bias is the use of information that would not have been available at
-decision time — the most pernicious backtest pitfall because it is invisible in
+decision time - the most pernicious backtest pitfall because it is invisible in
 the equity curve (it just looks like a great strategy).  This module provides a
 *behavioural* test for it that treats the backtest as a black box.
 
@@ -10,13 +10,13 @@ The audit logic
 A legitimate strategy extracts its edge from the **timing** of its features: it
 acts on information that is fresh *as of* the decision date.  If we deliberately
 feed it **stale** features (``features.shift(shift)``, i.e. yesterday's values
-presented as today's), a genuine strategy must do meaningfully *worse* — its
+presented as today's), a genuine strategy must do meaningfully *worse* - its
 information advantage has been blunted.
 
 A *leaky* strategy, by contrast, is not really using the timing of the
 features; it is exploiting some artefact (e.g. a feature that already encodes
 the future, or an index that secretly aligns with the target).  Shifting such
-features does **not** degrade performance — the score holds up or even improves.
+features does **not** degrade performance - the score holds up or even improves.
 That non-degradation is the red flag:
 
     suspicious := shifted_score >= base_score - tol
@@ -144,7 +144,7 @@ class LookaheadAudit:
     ) -> Dict[str, object]:
         """Run the future-leakage audit (shift features into the *future*).
 
-        Feeds the strategy ``features.shift(-shift)`` — values it could not
+        Feeds the strategy ``features.shift(-shift)`` - values it could not
         have observed at decision time.  No honest strategy benefits from the
         future, so a performance **jump** is a direct leakage signal:
 

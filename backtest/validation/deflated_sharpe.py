@@ -4,8 +4,8 @@ When a researcher tries *many* strategy configurations and reports the best,
 the maximum in-sample Sharpe ratio is upward-biased by selection: even pure
 noise produces an impressive-looking winner if you draw enough candidates.
 The **Deflated Sharpe Ratio (DSR)** corrects for this by asking the right
-question — *given that I selected the best of ``n_trials`` candidates, what is
-the probability that the true Sharpe is greater than a benchmark?* — and by
+question - *given that I selected the best of ``n_trials`` candidates, what is
+the probability that the true Sharpe is greater than a benchmark?* - and by
 accounting for the non-normality (skewness and kurtosis) of the return stream.
 
 The core statistic is the **Probabilistic Sharpe Ratio (PSR)**
@@ -20,14 +20,14 @@ The core statistic is the **Probabilistic Sharpe Ratio (PSR)**
 
 where
 
-* :math:`\\widehat{\\mathrm{SR}}` — the observed, **per-observation** Sharpe
+* :math:`\\widehat{\\mathrm{SR}}` - the observed, **per-observation** Sharpe
   ratio (NOT annualized);
-* :math:`\\mathrm{SR}_0` — the benchmark Sharpe to beat;
-* :math:`T` — the number of return observations;
-* :math:`\\gamma_3` — the skewness of the returns;
-* :math:`\\gamma_4` — the **non-excess** kurtosis of the returns (so a normal
+* :math:`\\mathrm{SR}_0` - the benchmark Sharpe to beat;
+* :math:`T` - the number of return observations;
+* :math:`\\gamma_3` - the skewness of the returns;
+* :math:`\\gamma_4` - the **non-excess** kurtosis of the returns (so a normal
   distribution has :math:`\\gamma_4 = 3`); and
-* :math:`\\Phi` — the standard-normal CDF.
+* :math:`\\Phi` - the standard-normal CDF.
 
 The DSR is the PSR evaluated at the benchmark
 :math:`\\mathrm{SR}_0 = \\mathrm{SR}_{\\text{benchmark}} +
@@ -91,7 +91,7 @@ def sharpe_ratio(
     periods_per_year:
         If given, the per-observation Sharpe is multiplied by
         ``sqrt(periods_per_year)`` to annualize it.  If ``None`` (the default),
-        the **raw per-observation** Sharpe is returned — this is the quantity
+        the **raw per-observation** Sharpe is returned - this is the quantity
         required by the PSR/DSR formulas.
 
     Returns
@@ -171,7 +171,7 @@ def _sr_estimate_variance(sr: float, skew: float, kurt: float, n_obs: int) -> fl
 def probabilistic_sharpe_ratio(
     returns: pd.Series, sr_benchmark: float = 0.0
 ) -> float:
-    """Probabilistic Sharpe Ratio — the DSR with a single trial.
+    """Probabilistic Sharpe Ratio - the DSR with a single trial.
 
     The PSR is the probability that the true (population) Sharpe exceeds
     ``sr_benchmark``, given the observed per-observation Sharpe and the higher

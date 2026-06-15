@@ -3,11 +3,11 @@
 This module bundles the classic tail-risk metrics the platform reports for
 every book.  Three estimation families are provided:
 
-* **Historical / empirical** — read VaR straight off the empirical loss
+* **Historical / empirical** - read VaR straight off the empirical loss
   distribution; no distributional assumption.
-* **Parametric (Gaussian)** — assume returns are normal and use closed-form
+* **Parametric (Gaussian)** - assume returns are normal and use closed-form
   quantiles / expected-shortfall formulae.
-* **Cornish-Fisher** — a parametric estimate that corrects the Gaussian
+* **Cornish-Fisher** - a parametric estimate that corrects the Gaussian
   quantile for sample skewness and excess kurtosis (fatter, asymmetric tails).
 
 Sign convention

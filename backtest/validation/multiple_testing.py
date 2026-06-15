@@ -7,19 +7,19 @@ chosen significance level ``alpha`` (e.g. 5%).  But quantitative research
 rarely tests one hypothesis: a factor zoo is built by screening hundreds or
 thousands of candidate signals against the same price history.  If you run
 ``m`` independent tests at ``alpha = 0.05``, the expected number of *spurious*
-"discoveries" is ``0.05 * m`` — test 200 useless factors and you expect ~10 to
+"discoveries" is ``0.05 * m`` - test 200 useless factors and you expect ~10 to
 look significant by pure chance.  Reporting the best of many backtests without
 correction is the statistical equivalent of p-hacking, and it is the single
 biggest driver of backtest overfitting in published factor research.
 
 Multiple-testing procedures restore a meaningful error guarantee:
 
-* **Bonferroni** controls the *family-wise error rate* (FWER) — the
-  probability of *any* false positive — by testing each hypothesis at
+* **Bonferroni** controls the *family-wise error rate* (FWER) - the
+  probability of *any* false positive - by testing each hypothesis at
   ``alpha / m``.  Simple and valid under any dependence, but very
   conservative.
-* **Benjamini-Hochberg (BH)** controls the *false discovery rate* (FDR) — the
-  expected fraction of false positives *among the rejections* — and is far
+* **Benjamini-Hochberg (BH)** controls the *false discovery rate* (FDR) - the
+  expected fraction of false positives *among the rejections* - and is far
   more powerful.  Valid under independence or positive dependence (PRDS).
 * **Benjamini-Hochberg-Yekutieli (BHY)** controls the FDR under *arbitrary*
   dependence by inflating the threshold with the harmonic penalty

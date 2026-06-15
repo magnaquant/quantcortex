@@ -6,7 +6,7 @@ rate, etc.), produces a monthly-returns table, and renders a four-panel
 matplotlib figure (equity curve, drawdown, rolling Sharpe, monthly heatmap).
 
 ``matplotlib.pyplot`` is imported lazily inside :meth:`Tearsheet.plot` so that
-merely importing this module — or computing metrics in a headless pipeline —
+merely importing this module - or computing metrics in a headless pipeline  - 
 does not pull in a GUI backend.
 """
 
@@ -139,10 +139,15 @@ class Tearsheet:
         return float(excess.mean() / dd * math.sqrt(self.periods_per_year))
 
     def _calmar(self) -> float:
+        """Calmar ratio: CAGR / |max drawdown|.
+
+        Uses the canonical convention of a geometric (CAGR) numerator rather
+        than the arithmetic annualized return.
+        """
         mdd = self._max_drawdown()
         if not np.isfinite(mdd) or mdd == 0.0:
             return float("nan")
-        return float(self._annualized_return() / abs(mdd))
+        return float(self._cagr() / abs(mdd))
 
     def _var_cvar(self, level: float = 0.95) -> tuple[float, float]:
         """Historical VaR and CVaR (expected shortfall) at ``level``.

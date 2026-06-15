@@ -16,7 +16,7 @@ A valid weight vector ``w`` satisfies:
 * ``w.sum()`` equals ``1.0`` for a long-only book or ``0.0`` for a
   market-neutral book (within a small numerical tolerance).
 
-Any violation raises :class:`WeightContractViolationError` *immediately* — we
+Any violation raises :class:`WeightContractViolationError` *immediately* - we
 fail loud and early rather than letting a malformed allocation propagate into a
 backtest or, worse, a live order.
 """
@@ -161,7 +161,7 @@ def enforce_exposure_contract(
 
     Unlike :func:`enforce_weight_contract`, this does **not** require the weights
     to sum to exactly 1.0 (or 0.0): timing and risk overlays legitimately scale
-    gross exposure down — a fully de-risked book is flat (sum 0) and a
+    gross exposure down - a fully de-risked book is flat (sum 0) and a
     half-scaled long-only book sums to 0.5, with the remainder held in cash.
 
     It still guarantees the structural invariants every downstream consumer
@@ -241,7 +241,7 @@ class PortfolioOptimizer(abc.ABC):
 
     Subclasses implement :meth:`_compute_weights`, returning a raw weight
     vector.  The public :meth:`optimize` wraps that call and *guarantees* the
-    output satisfies the weight contract — subclasses never have to remember to
+    output satisfies the weight contract - subclasses never have to remember to
     validate.
     """
 

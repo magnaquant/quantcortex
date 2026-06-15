@@ -8,8 +8,8 @@ entirely:
 
     \\min_{w}\\; w^{\\top}\\Sigma w \\quad\\text{s.t.}\\quad \\mathbf{1}^{\\top}w = 1.
 
-Because it depends only on the covariance matrix — the most *estimable* moment
-of a return series — the GMV portfolio is a workhorse benchmark and a robust
+Because it depends only on the covariance matrix - the most *estimable* moment
+of a return series - the GMV portfolio is a workhorse benchmark and a robust
 default allocation.  This implementation supports Ledoit-Wolf shrinkage, ridge
 regularisation of :math:`\\Sigma`, a constrained long-only solver and the
 closed-form long/short solution, with an equal-weight fallback.  All paths
@@ -18,6 +18,7 @@ return weights that satisfy the canonical *weight contract*.
 
 from __future__ import annotations
 
+import warnings
 from typing import Union
 
 import numpy as np
@@ -148,7 +149,46 @@ class MinimumVariance(PortfolioOptimizer):
     # PortfolioOptimizer API
     # ------------------------------------------------------------------
     def _compute_weights(self, returns: pd.DataFrame, **kwargs) -> np.ndarray:
-        """Compute raw minimum-variance weights satisfying the contract."""
+        """Compute raw minimum-variance weights satisfying the contract.
+
+        Columns with fewer than 2 finite observations (dead assets) carry no
+        usable risk information; forward/backward/zero-filling them would
+        create zero-variance pseudo-assets that absorb most of the book.  They
+        are excluded from the optimization and re-inserted with weight 0.0 at
+        their original positions.  If *all* columns are dead the optimizer
+        falls back to the mode's neutral allocation with a warning.
+        """
+        df = pd.DataFrame(returns).apply(pd.to_numeric, errors="coerce")
+        df = df.replace([np.inf, -np.inf], np.nan)
+        n_total = df.shape[1]
+        alive = (df.notna().sum(axis=0) >= 2).to_numpy()
+
+        if not alive.any():
+            warnings.warn(
+                "MinimumVariance: every column has fewer than 2 finite "
+                "observations; falling back to the mode's neutral allocation.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            if self.mode is PortfolioMode.MARKET_NEUTRAL:
+                return np.zeros(n_total, dtype=np.float64)
+            return np.full(n_total, 1.0 / n_total, dtype=np.float64)
+
+        sub = df.loc[:, df.columns[alive]]
+        w_sub = self._optimize_subset(sub)
+
+        # Renormalise the optimized sub-vector to the mode's target sum, then
+        # re-insert weight 0.0 at the dead-column positions.
+        if self.mode is PortfolioMode.LONG_ONLY:
+            s = float(w_sub.sum())
+            if s > 0.0 and np.isfinite(s):
+                w_sub = w_sub / s
+        out = np.zeros(n_total, dtype=np.float64)
+        out[alive] = w_sub
+        return out
+
+    def _optimize_subset(self, returns: pd.DataFrame) -> np.ndarray:
+        """Run the minimum-variance machinery on the live-asset subset."""
         sigma = self._covariance(returns)
         n = sigma.shape[0]
 

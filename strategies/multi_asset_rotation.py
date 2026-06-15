@@ -9,8 +9,9 @@ Signal construction
 1. **Group information ratio (IR).**  For each group we form an equal-weight
    return series of its members and measure its information ratio against the
    benchmark over ``ir_lookback`` days:
-   ``IR = mean(group_return - benchmark_return) / std(group_return - benchmark_return)``.
-   The ``top_n_groups`` groups with the highest IR are selected.
+   ``IR = mean(group_return - benchmark_return) / std(group_return - benchmark_return)``
+   (sample std, ``ddof=1``).  The ``top_n_groups`` groups with the highest IR
+   are selected.
 
 2. **Residual momentum within groups.**  For each member of a selected group we
    regress its returns on the benchmark (a trailing CAPM) and measure the
@@ -74,6 +75,18 @@ class MultiAssetRotation(Strategy):
         Enable the VIX risk overlay.
     **kw:
         Forwarded to :class:`~strategies.base_strategy.Strategy`.
+
+    Notes
+    -----
+    The benchmark (QQQ) is *also* a member of the growth group (this
+    composition is the product spec).  Because the QQQ leg of the group's
+    active return is identically zero, the growth group's information ratio
+    reduces to the IR of ``(VGT - QQQ) / 2`` -- a relative-to-benchmark
+    spread that is different in character from the other groups' full active
+    spreads.  Group selection is therefore, by design, relative to growth.
+
+    The group IR uses the *sample* standard deviation (``ddof=1``) in its
+    denominator.
     """
 
     #: Asset-class groups mapped to their member proxy ETFs.
@@ -148,7 +161,8 @@ class MultiAssetRotation(Strategy):
             active = (grp_ret - bench_ret).iloc[-ir_lb:].dropna()
             if active.empty:
                 continue
-            sd = float(active.std(ddof=0))
+            # Sample standard deviation (ddof=1): this is a sample IR.
+            sd = float(active.std(ddof=1))
             ir = float(active.mean()) / sd if sd > 0 and np.isfinite(sd) else 0.0
             group_ir[name] = ir if np.isfinite(ir) else 0.0
 

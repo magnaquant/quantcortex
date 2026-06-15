@@ -1,7 +1,7 @@
 # quantcortex
 
 > **State-of-the-art modular quant trading platform**
-> Data → Alpha → Portfolio → Timing → Risk → Backtest → Execution
+> Data -> Alpha -> Portfolio -> Timing -> Risk -> Backtest -> Execution
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -11,17 +11,17 @@
 
 ## Overview
 
-**quantcortex** is a research-grade, production-consistent quant trading platform built around a strict **weight-centric interface contract** (inspired by FinRL-X). Every layer — from alpha signal to live broker — speaks the same language: a normalized weight vector `w_t ∈ ℝⁿ`.
+**quantcortex** is a research-grade, production-consistent quant trading platform built around a strict **weight-centric interface contract** (inspired by FinRL-X). Every layer - from alpha signal to live broker - speaks the same language: a normalized weight vector `w_t in R^n`.
 
 This eliminates the most common gap in quant stacks: strategies that backtest cleanly but behave differently in paper and live trading because the architecture changes between environments.
 
 ```
-w_t = R_t( T_t( A_t( S_t( X≤t ) ) ) )
-       ↑       ↑       ↑       ↑
+w_t = R_t( T_t( A_t( S_t( X<=t ) ) ) )
+       ^       ^       ^       ^
      Risk   Timing  Alloc  Selection
 ```
 
-**Target performance (2018–2025 backtest):**
+**Target performance (2018-2025 backtest):**
 - Multi-asset rotation: Sharpe > 1.10
 - Momentum ML: Sharpe > 0.9
 - Max drawdown < 15% with vol-targeting risk overlay
@@ -43,34 +43,34 @@ git clone https://github.com/magnaquant/quantcortex.git
 cd quantcortex
 python3.11 -m venv .venv && source .venv/bin/activate
 
-# Core (required) — enough to run the full test suite and every notebook
+# Core (required) - enough to run the full test suite and every notebook
 pip install numpy pandas scipy scikit-learn matplotlib pyarrow pytest
 
 # Optional accelerators / integrations (Poetry extras):
 poetry install -E all          # or, with pip:  pip install '.[all]'
-#   ml        → xgboost, lightgbm, catboost       (GBDT cross-sectional alpha)
-#   nlp       → transformers, torch               (FinBERT sentiment)
-#   rl        → stable-baselines3, gymnasium       (PPO DRL allocator)
-#   regime    → hmmlearn                           (HMM regime overlay)
-#   providers → yfinance, polygon-api-client, fredapi  (market / macro data)
-#   brokers   → alpaca-trade-api, ib_insync, ccxt  (live execution)
-#   storage   → redis, sqlalchemy, psycopg2-binary (feature cache + TimescaleDB)
+#   ml        -> xgboost, lightgbm, catboost       (GBDT cross-sectional alpha)
+#   nlp       -> transformers, torch               (FinBERT sentiment)
+#   rl        -> stable-baselines3, gymnasium       (PPO DRL allocator)
+#   regime    -> hmmlearn                           (HMM regime overlay)
+#   providers -> yfinance, polygon-api-client, fredapi  (market / macro data)
+#   brokers   -> alpaca-trade-api, ib_insync, ccxt  (live execution)
+#   storage   -> redis, sqlalchemy, psycopg2-binary (feature cache + TimescaleDB)
 ```
 
 > **macOS note:** LightGBM/XGBoost need the OpenMP runtime (`brew install
 > libomp`). Without it quantcortex transparently falls back to the
-> scikit-learn GBDT backend — nothing breaks.
+> scikit-learn GBDT backend - nothing breaks.
 
 ### Run the tests
 
 ```bash
-pytest tests/ -v   # weight contract · transaction costs · look-ahead · risk overlay · order state machine
+pytest tests/ -v   # weight contract, transaction costs, look-ahead, risk overlay, order state machine
 ```
 
 ### Run the research notebooks
 
 ```bash
-jupyter lab research/   # 01 data quality → 02 factors → 03 portfolios → 04 backtest → 05 live bridge
+jupyter lab research/   # 01 data quality -> 02 factors -> 03 portfolios -> 04 backtest -> 05 live bridge
 ```
 
 Each notebook is self-contained and falls back to deterministic synthetic data
@@ -107,7 +107,7 @@ All portfolio and strategy components must satisfy this contract (enforced at ru
 # output: np.ndarray, shape (n_assets,)
 # dtype:  float64
 # sum:    1.0  (long-only) or 0.0 (market-neutral)
-# range:  each weight ∈ [-1.0, 1.0]
+# range:  each weight  in  [-1.0, 1.0]
 # violation raises: WeightContractViolationError
 ```
 
@@ -228,19 +228,19 @@ All strategy evaluation uses expanding or rolling walk-forward optimization. An 
 All strategy results are reported with DSR (Bailey & López de Prado, 2014) to account for multiple testing and non-normal return distributions:
 
 ```
-DSR = Φ[ (SR* − SR₀)·√(T−1) / √(1 − γ₃·SR* + (γ₄−1)/4·SR*²) ]
+DSR = Phi[ (SR* - SR0)*sqrt(T-1) / sqrt(1 - gamma3*SR* + (gamma4-1)/4*SR*^2) ]
 ```
 
-Where `SR*` = observed max Sharpe, `SR₀` = expected max under the null, `γ₃` = skewness, `γ₄` = excess kurtosis.
+Where `SR*` = observed max Sharpe, `SR0` = expected max under the null, `gamma3` = skewness, `gamma4` = excess kurtosis.
 
 ### 4. Seven Backtesting Pitfall Categories (enforced programmatically)
-1. **Look-ahead bias** — `lookahead_audit.py` detects future data leakage
-2. **Overfitting** — DSR + BHY multiple-testing correction
-3. **Survivorship bias** — `survivorship_check.py` validates universe construction
-4. **Data adjustment errors** — split/dividend-adjusted price validation
-5. **Multiple testing bias** — BHY correction on all factor IC tests
-6. **Transaction cost neglect** — costs mandatory in all backtest engines
-7. **Liquidity assumptions** — volume limit: ≤ 10% of 20-day ADV per symbol
+1. **Look-ahead bias** - `lookahead_audit.py` detects future data leakage
+2. **Overfitting** - DSR + BHY multiple-testing correction
+3. **Survivorship bias** - `survivorship_check.py` validates universe construction
+4. **Data adjustment errors** - split/dividend-adjusted price validation
+5. **Multiple testing bias** - BHY correction on all factor IC tests
+6. **Transaction cost neglect** - costs mandatory in all backtest engines
+7. **Liquidity assumptions** - volume limit: <= 10% of 20-day ADV per symbol
 
 ### 5. Transaction Cost Model
 ```python
@@ -271,7 +271,7 @@ volume_cap  = 0.10     # max 10% of 20-day ADV
 - **Selection:** Information Ratio relative to QQQ
 - **Allocation:** Residual momentum within selected asset groups
 - **Risk gate:** HMM regime + VIX scaling
-- **Target:** Sharpe > 1.10 (2018–2025)
+- **Target:** Sharpe > 1.10 (2018-2025)
 
 ### Momentum ML (`strategies/momentum_ml.py`)
 - GBDT cross-sectional momentum with alpha158 features
@@ -289,11 +289,11 @@ volume_cap  = 0.10     # max 10% of 20-day ADV
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| **Phase 1** | Data layer + PIT enforcement + universe construction | ✅ Complete |
-| **Phase 2** | Alpha factor library + walk-forward validation harness | ✅ Complete |
-| **Phase 3** | Portfolio construction + backtest engines + DSR reporting | ✅ Complete |
-| **Phase 4** | Live execution layer (Alpaca paper → IB live) | ✅ Code complete, tested offline — live broker round-trip pending account credentials |
-| **Phase 5** | DRL allocator + FinBERT sentiment overlay | ✅ Complete |
+| **Phase 1** | Data layer + PIT enforcement + universe construction | Complete |
+| **Phase 2** | Alpha factor library + walk-forward validation harness | Complete |
+| **Phase 3** | Portfolio construction + backtest engines + DSR reporting | Complete |
+| **Phase 4** | Live execution layer (Alpaca paper -> IB live) | Code complete, tested offline - live broker round-trip pending account credentials |
+| **Phase 5** | DRL allocator + FinBERT sentiment overlay | Complete |
 
 ---
 
@@ -317,4 +317,4 @@ volume_cap  = 0.10     # max 10% of 20-day ADV
 
 ---
 
-*Private repository — magnaquant*
+*Private repository - magnaquant*

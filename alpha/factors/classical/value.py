@@ -17,13 +17,21 @@ becomes usable on its ``announcement_date``, and on any given date we use the
 most recently announced (forward-filled) value. This prevents look-ahead bias
 from period-end values that were not yet public.
 
-This module is self-contained and does not depend on the other factor modules.
+Cross-sectional normalization helpers are shared with the other classical
+factor modules via the private :mod:`alpha.factors.classical._cross_section`
+module.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+
+from alpha.factors.classical._cross_section import (
+    cross_sectional_rank,
+    cross_sectional_zscore,
+    validate_prices,
+)
 
 _REQUIRED_COLUMNS = ("symbol", "period_end", "announcement_date", "field", "value")
 
@@ -104,31 +112,15 @@ class ValueFactor:
         return self._safe_ratio(ebitda, ev)
 
     # ------------------------------------------------------------------
-    # Cross-sectional normalization (self-contained)
+    # Cross-sectional normalization (shared via _cross_section)
     # ------------------------------------------------------------------
-    @staticmethod
-    def cross_sectional_zscore(panel: pd.DataFrame) -> pd.DataFrame:
-        """Row-wise (cross-sectional) z-score, robust to missing values."""
-        mean = panel.mean(axis=1, skipna=True)
-        std = panel.std(axis=1, skipna=True, ddof=0)
-        std = std.replace(0.0, np.nan)
-        return panel.sub(mean, axis=0).div(std, axis=0)
-
-    @staticmethod
-    def rank(panel: pd.DataFrame) -> pd.DataFrame:
-        """Row-wise cross-sectional rank scaled to ``[0, 1]``."""
-        return panel.rank(axis=1, method="average", pct=True, na_option="keep")
+    cross_sectional_zscore = staticmethod(cross_sectional_zscore)
+    rank = staticmethod(cross_sectional_rank)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    @staticmethod
-    def _validate_prices(prices: pd.DataFrame) -> pd.DataFrame:
-        if not isinstance(prices, pd.DataFrame):
-            raise TypeError("prices must be a pandas DataFrame")
-        if not prices.index.is_monotonic_increasing:
-            prices = prices.sort_index()
-        return prices.astype(float)
+    _validate_prices = staticmethod(validate_prices)
 
     @staticmethod
     def _safe_ratio(numerator: pd.DataFrame, denominator: pd.DataFrame) -> pd.DataFrame:
@@ -155,7 +147,9 @@ class ValueFactor:
             return pd.DataFrame(index=prices.index, columns=prices.columns, dtype=float)
 
         sub["announcement_date"] = pd.to_datetime(sub["announcement_date"])
-        sub = sub.sort_values("announcement_date")
+        # Stable sort so that announcements tied on date keep their input
+        # order and drop_duplicates(keep="last") retains the latest row.
+        sub = sub.sort_values("announcement_date", kind="stable")
         # If multiple announcements share a date for one symbol, keep the last.
         sub = sub.drop_duplicates(subset=["announcement_date", "symbol"], keep="last")
 
