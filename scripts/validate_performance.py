@@ -104,10 +104,42 @@ def fmt_row(name: str, m: dict, target: str = "") -> str:
     )
 
 
+def momentum_universe(start: str, pit: bool):
+    """Resolve the momentum_ml universe.
+
+    With ``--pit`` the universe is the S&P 500 *as of the backtest start*
+    (reconstructed from Wikipedia), which removes look-ahead in the universe
+    definition.  Pricing is still survivor-only (yfinance lacks delisted-name
+    prices), so the read is survivorship-*aware*, not fully survivorship-*safe*;
+    the coverage gap is reported.  Without ``--pit`` a small static large-cap
+    list is used (fast, but survivorship-biased on both selection and pricing).
+    """
+    if not pit:
+        return MOMENTUM_UNIVERSE, "static large-caps (survivorship-biased)"
+    try:
+        from data.universe.sp500_universe import SP500Universe
+
+        members = SP500Universe.from_wikipedia().constituents(start)
+        return members, f"S&P 500 point-in-time members as of {start}"
+    except Exception as exc:
+        print(f"[pit] could not build PIT universe ({type(exc).__name__}); "
+              "falling back to static large-caps.")
+        return MOMENTUM_UNIVERSE, "static large-caps (PIT fetch failed)"
+
+
 def main(argv) -> int:
-    start = f"{argv[1]}-01-01" if len(argv) > 1 else "2018-01-01"
-    end = f"{argv[2]}-12-31" if len(argv) > 2 else "2025-12-31"
-    print(f"quantcortex performance validation | window {start} -> {end}")
+    import argparse
+
+    ap = argparse.ArgumentParser(description="quantcortex performance validation")
+    ap.add_argument("start_year", nargs="?", default="2018")
+    ap.add_argument("end_year", nargs="?", default="2025")
+    ap.add_argument("--pit", action="store_true",
+                    help="define the momentum_ml universe from point-in-time S&P 500 membership")
+    args = ap.parse_args(argv[1:])
+    start = f"{args.start_year}-01-01"
+    end = f"{args.end_year}-12-31"
+    print(f"quantcortex performance validation | window {start} -> {end}"
+          + ("  [PIT universe]" if args.pit else ""))
     print("=" * 78)
 
     rot_px = fetch_prices(ROTATION_UNIVERSE, start, end)
@@ -129,10 +161,16 @@ def main(argv) -> int:
     rot = metrics(run_rotation(rot_px), n_trials=10)
     print(fmt_row("multi_asset_rotation", rot, "[target Sharpe > 1.10]"))
 
-    mom_px = fetch_prices(MOMENTUM_UNIVERSE, start, end)
+    mom_syms, mom_label = momentum_universe(start, args.pit)
+    mom_px = fetch_prices(mom_syms, start, end)
     if mom_px is not None and mom_px.shape[1] >= 10:
-        print(f"\nmomentum_ml data: {mom_px.shape[0]} days x {mom_px.shape[1]} names "
-              "(survivorship-biased; current large-caps only)")
+        coverage = ""
+        if args.pit:
+            priceable = mom_px.shape[1]
+            coverage = (f"; {priceable}/{len(mom_syms)} PIT members priceable on "
+                        f"yfinance ({len(mom_syms) - priceable} delisted/unpriceable)")
+        print(f"\nmomentum_ml universe: {mom_label}{coverage}")
+        print(f"momentum_ml data: {mom_px.shape[0]} days x {mom_px.shape[1]} names")
         mom = metrics(run_momentum_ml(mom_px), n_trials=10)
         print(fmt_row("momentum_ml", mom, "[target Sharpe > 0.9]"))
 
