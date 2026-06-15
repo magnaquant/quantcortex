@@ -91,15 +91,21 @@ when offline, so they always execute cell-by-cell.
 ### Validation & operations scripts
 
 ```bash
-python scripts/validate_performance.py     # measured backtest vs design targets (real data)
-python scripts/survivorship_demo.py        # quantify S&P 500 survivorship bias (PIT membership)
-python scripts/paper_trade_cycle.py        # one rebalance cycle: offline dry-run, or Alpaca paper
+python scripts/validate_performance.py        # measured backtest vs design targets (real data)
+python scripts/validate_performance.py --pit  # momentum_ml on point-in-time S&P 500 membership
+python scripts/survivorship_demo.py           # quantify S&P 500 survivorship bias (PIT membership)
+python scripts/verify_brokers.py              # broker adapters vs faithful SDK mocks (no account)
+python scripts/paper_trade_cycle.py           # one rebalance cycle: offline dry-run, or Alpaca paper
 ```
 
 `validate_performance.py` reports honest measured Sharpe/CAGR/DSR vs buy-and-hold
-(see [PERFORMANCE.md](PERFORMANCE.md)); `survivorship_demo.py` shows how many
-past index members a survivor-only feed drops; `paper_trade_cycle.py` runs the
-full execution path (add `--submit` with `ALPACA_*` set to place paper orders).
+(see [PERFORMANCE.md](PERFORMANCE.md)); `--pit` defines the single-name universe
+from historical index membership. `survivorship_demo.py` shows how many past
+index members a survivor-only feed drops. `verify_brokers.py` exercises the
+Alpaca/IB/CCXT adapters end-to-end against SDK-shaped mocks (request build +
+response parsing) - the live API surface is separately confirmed against the
+real SDKs. `paper_trade_cycle.py` runs the full execution path (add `--submit`
+with `ALPACA_*` set to place paper orders).
 
 ### Go live (Phase 4)
 
@@ -234,9 +240,10 @@ quantcortex/
 │   └── 05_live_trading_bridge.ipynb
 │
 ├── scripts/
-│   ├── validate_performance.py  # measured out-of-sample backtest vs targets
+│   ├── validate_performance.py  # measured backtest vs targets (--pit: PIT universe)
 │   ├── paper_trade_cycle.py     # one rebalance cycle (offline / Alpaca paper)
-│   └── survivorship_demo.py     # quantify S&P 500 survivorship bias (PIT)
+│   ├── survivorship_demo.py     # quantify S&P 500 survivorship bias (PIT)
+│   └── verify_brokers.py        # broker adapters vs faithful SDK mocks
 │
 ├── tests/
 │   ├── conftest.py             # shared synthetic-data fixtures
@@ -336,7 +343,7 @@ volume_cap  = 0.10     # max 10% of 20-day ADV
 | **Phase 1** | Data layer + PIT enforcement + universe construction | Complete |
 | **Phase 2** | Alpha factor library + walk-forward validation harness | Complete |
 | **Phase 3** | Portfolio construction + backtest engines + DSR reporting | Complete |
-| **Phase 4** | Live execution layer (Alpaca paper -> IB live) | Adapters verified API-conformant vs real SDKs (alpaca-trade-api, ib_insync, ccxt); `scripts/paper_trade_cycle.py` runs the full cycle. Actual order round-trip pending your paper credentials. |
+| **Phase 4** | Live execution layer (Alpaca paper -> IB live) | Adapters verified twice: API-conformant vs the real SDKs (alpaca-trade-api, ib_insync, ccxt) and behaviorally against SDK mocks (`scripts/verify_brokers.py`, 15/15); `scripts/paper_trade_cycle.py` runs the full cycle. Only the live TCP/auth round-trip remains, pending your paper credentials. |
 | **Phase 5** | DRL allocator + FinBERT sentiment overlay | Complete |
 
 ---
