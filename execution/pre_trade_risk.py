@@ -18,11 +18,7 @@ from typing import Iterable, List, Mapping, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
-from portfolio.base import (
-    PortfolioMode,
-    WeightContractViolationError,
-    enforce_weight_contract,
-)
+from portfolio.base import PortfolioMode
 
 __all__ = ["PreTradeRiskCheck", "PreTradeRiskError"]
 
@@ -89,35 +85,68 @@ class PreTradeRiskCheck:
         weights: np.ndarray,
         mode: Union[PortfolioMode, str] = PortfolioMode.LONG_ONLY,
     ) -> Tuple[bool, List[str]]:
-        """Validate a weight vector. Returns ``(ok, violations)``.
+        """Validate a *post-overlay* target book. Returns ``(ok, violations)``.
 
-        Runs the canonical :func:`enforce_weight_contract` first (its failure is
-        recorded as a violation rather than raised), then checks that no single
-        absolute weight exceeds ``max_position_weight`` and that gross exposure
-        does not exceed ``max_gross``.
+        The pre-trade gate sits at the end of the pipeline, so it receives the
+        weights *after* timing/risk overlays have scaled exposure.  It therefore
+        validates the relaxed **exposure contract** (the same one
+        :func:`portfolio.base.enforce_exposure_contract` enforces), not the
+        strict ``sum == 1.0`` allocation contract: a de-risked or regime-gated
+        long-only book legitimately sums to less than 1.0 with the remainder in
+        cash, and a fully flat book (circuit breaker tripped) sums to 0.0.
+
+        Checks: finite weights, each in ``[-1, 1]``, no short legs in a
+        long-only book, dollar-neutrality for a market-neutral book, no single
+        ``|weight|`` above ``max_position_weight``, and gross exposure
+        (``sum |w|``) within ``max_gross``.
         """
         violations: List[str] = []
+        mode = PortfolioMode.coerce(mode)
 
         try:
-            arr = enforce_weight_contract(weights, mode=mode)
-        except WeightContractViolationError as exc:
-            violations.append(f"weight contract: {exc}")
-            # Best-effort coercion so the cap checks below still run when
-            # possible; if even that fails, return early.
-            try:
-                arr = np.asarray(weights, dtype=np.float64).ravel()
-            except (TypeError, ValueError):
-                return False, violations
+            arr = np.asarray(weights, dtype=np.float64).ravel()
+        except (TypeError, ValueError):
+            return False, ["weights not coercible to a float64 array"]
+        if arr.size == 0:
+            return False, ["empty weight vector"]
+        if not np.all(np.isfinite(arr)):
+            bad = np.where(~np.isfinite(arr))[0].tolist()
+            return False, [f"non-finite weights at indices {bad}"]
 
-        abs_w = np.abs(arr)
-        over = np.where(abs_w > self.max_position_weight + self.tolerance)[0]
+        # Per-asset box [-1, 1].
+        box = np.where(np.abs(arr) > 1.0 + self.tolerance)[0]
+        if box.size:
+            violations.append(
+                f"weights outside [-1, 1]: {{{', '.join(f'{int(i)}: {arr[i]:.4f}' for i in box)}}}"
+            )
+
+        # Long-only books must have no short legs; market-neutral must be ~flat.
+        if mode is PortfolioMode.LONG_ONLY:
+            shorts = np.where(arr < -self.tolerance)[0]
+            if shorts.size:
+                violations.append(
+                    f"long-only book has short legs at indices {shorts.tolist()}"
+                )
+            total = float(arr.sum())
+            if total > self.max_gross + self.tolerance:
+                violations.append(
+                    f"invested fraction {total:.6f} exceeds gross cap {self.max_gross}"
+                )
+        else:  # MARKET_NEUTRAL
+            total = float(arr.sum())
+            if abs(total) > 1e-3:
+                violations.append(
+                    f"market-neutral book is not dollar-neutral (sum {total:+.6f})"
+                )
+
+        over = np.where(np.abs(arr) > self.max_position_weight + self.tolerance)[0]
         if over.size:
             offenders = {int(i): float(arr[i]) for i in over}
             violations.append(
                 f"position weight cap {self.max_position_weight}: {offenders}"
             )
 
-        gross = float(abs_w.sum())
+        gross = float(np.abs(arr).sum())
         if gross > self.max_gross + self.tolerance:
             violations.append(
                 f"gross exposure {gross:.6f} exceeds cap {self.max_gross}"

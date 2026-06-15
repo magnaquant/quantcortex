@@ -9,6 +9,13 @@ Connection parameters are read from the constructor, falling back to the
 ``IB_HOST`` / ``IB_PORT`` / ``IB_CLIENT_ID`` environment variables.  Typical
 defaults are host ``127.0.0.1``, port ``7497`` (TWS paper) / ``7496`` (TWS live)
 / ``4002`` (Gateway paper) / ``4001`` (Gateway live), and client id ``1``.
+
+The adapter's API usage has been verified against ``ib_insync`` 0.9.86
+(IB.connect / positions / accountSummary / qualifyContracts / placeOrder and the
+Stock / MarketOrder / LimitOrder constructors).  Caveat: ``ib_insync`` (via
+``eventkit``) grabs an implicit asyncio event loop at import, which Python 3.14
+removed; use it under Python 3.11-3.13, or create a loop first with
+``asyncio.set_event_loop(asyncio.new_event_loop())``.
 """
 
 from __future__ import annotations
