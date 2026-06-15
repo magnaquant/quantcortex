@@ -13,8 +13,6 @@ handshake, which genuinely requires real credentials.
 
 from __future__ import annotations
 
-import sys
-
 from execution.brokers.alpaca_broker import AlpacaBroker
 from execution.brokers.ccxt_broker import CCXTBroker
 from execution.brokers.ib_broker import IBBroker

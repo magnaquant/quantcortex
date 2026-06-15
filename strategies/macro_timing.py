@@ -25,7 +25,7 @@ import pandas as pd
 from portfolio.base import PortfolioMode
 from portfolio.risk_parity import RiskParity
 from strategies.base_strategy import Strategy, StrategyContext
-from timing.hmm_regime import BEAR, BULL, SIDEWAYS, HMMRegime
+from timing.hmm_regime import BEAR, SIDEWAYS, HMMRegime
 
 __all__ = ["MacroTimingStrategy"]
 

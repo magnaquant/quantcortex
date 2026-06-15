@@ -6,14 +6,14 @@ rate, etc.), produces a monthly-returns table, and renders a four-panel
 matplotlib figure (equity curve, drawdown, rolling Sharpe, monthly heatmap).
 
 ``matplotlib.pyplot`` is imported lazily inside :meth:`Tearsheet.plot` so that
-merely importing this module - or computing metrics in a headless pipeline  - 
+merely importing this module - or computing metrics in a headless pipeline  -
 does not pull in a GUI backend.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Dict, Optional
+from typing import Dict
 
 import numpy as np
 import pandas as pd
