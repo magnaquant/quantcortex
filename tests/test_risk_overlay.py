@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from risk.circuit_breaker import CircuitBreaker, compute_drawdown
-from risk.vol_targeting import VolTargeting, realized_portfolio_vol
+from quantcortex.risk.circuit_breaker import CircuitBreaker, compute_drawdown
+from quantcortex.risk.vol_targeting import VolTargeting, realized_portfolio_vol
 
 
 # --------------------------------------------------------------------------- #

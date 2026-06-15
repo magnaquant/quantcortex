@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. It is the authoritative agent guide; `AGENTS.md` is a short orientation for other agents and must stay consistent with this file.
 
 ## Commands
 
@@ -9,11 +9,11 @@ A `.venv` holds the scientific core plus the optional stack; the core alone
 and lint. Run everything from the repo root.
 
 - Tests: `.venv/bin/python -m pytest tests/ -q` (pytest config sets
-  `pythonpath = ["."]`, so the top-level packages resolve from the root).
+  `pythonpath = ["."]`, so the `quantcortex` package resolves from the root).
 - Single test: `.venv/bin/python -m pytest tests/test_weight_interface.py::test_equal_weight_sums_to_one -v`
 - Lint: `.venv/bin/ruff check .` (CI enforces this; must stay clean). Auto-fix: `ruff check . --fix`.
-- Operational scripts import the top-level packages directly, so run them with
-  the root on the path: `PYTHONPATH=. .venv/bin/python scripts/<name>.py`
+- Operational scripts import `quantcortex.*`, so run them with the root on the
+  path: `PYTHONPATH=. .venv/bin/python scripts/<name>.py`
   (validate_performance, generate_report, survivorship_demo, verify_brokers,
   paper_trade_cycle). `generate_report.py` and `validate_performance.py --pit`
   print results; `--live` refetches data instead of using the bundled snapshot.
@@ -34,11 +34,11 @@ This repo is in a verified, audited state; keep it that way.
   incidental edits to the money path are high-risk.
 - Resist over-engineering: this codebase already leans thorough. Do not add
   config, abstractions, or flexibility beyond what was asked.
-- Confirm high-blast-radius changes before doing them: the top-level-package ->
-  `quantcortex` namespacing (see "Known structural issue") rewrites every import
-  and belongs in its own reviewed change, not bundled into unrelated work.
+- Confirm high-blast-radius changes before doing them: anything that rewrites
+  every import, moves the package layout, or touches the money path belongs in
+  its own reviewed change, not bundled into unrelated work.
 
-## The weight contract (keystone: portfolio/base.py)
+## The weight contract (keystone: quantcortex/portfolio/base.py)
 
 Every component that emits weights validates them through one of two functions;
 which one depends on where it sits in the pipeline:
@@ -58,7 +58,7 @@ Getting this distinction wrong is the most common mistake here: a regime-gated
 or vol-scaled book is NOT required to sum to 1. Violations raise
 `WeightContractViolationError` immediately.
 
-## The pipeline (strategies/base_strategy.py)
+## The pipeline (quantcortex/strategies/base_strategy.py)
 
 `w_t = R_t( T_t( A_t( S_t( X<=t ) ) ) )`: Select -> Allocate -> Timing -> Risk.
 - Subclass `Strategy` and implement `select(ctx) -> pd.Series` (alpha scores
@@ -78,39 +78,43 @@ or vol-scaled book is NOT required to sum to 1. Violations raise
   imported *inside* the method that uses it, with an offline fallback or a clear
   ImportError. Modules must import with only the scientific core. Do not add a
   heavy import at module top level.
-- **Mandatory costs.** Backtest engines (`backtest/engines/`) raise if
-  constructed without a `TransactionCostModel`. Slippage in that model is a flat
-  per-trade rate; size/impact-aware costs live in `execution_models/market_impact.py`.
+- **Mandatory costs.** Backtest engines (`quantcortex/backtest/engines/`) raise
+  if constructed without a `TransactionCostModel`. Slippage in that model is a
+  flat per-trade rate; size/impact-aware costs live in
+  `quantcortex/backtest/execution_models/market_impact.py`.
 - **Strict causality / PIT.** Factors and features use only past data;
-  `pit_enforcer.py` keys fundamentals off `announcement_date`,
-  `lookahead_detector.py` scans for leakage, and `walk_forward.py` applies a
-  purge + embargo gap.
-- **Determinism.** `timing/hmm_regime.py` pins BLAS to one thread (threadpoolctl)
-  around the HMM fit so backtests are bit-for-bit reproducible; a non-converged
-  EM near a regime boundary otherwise flips under multithreaded float ordering.
-  Keep model fits seeded and deterministic.
+  `quantcortex/data/processors/pit_enforcer.py` keys fundamentals off
+  `announcement_date`, `quantcortex/data/processors/lookahead_detector.py` scans
+  for leakage, and `quantcortex/backtest/engines/walk_forward.py` applies a purge
+  + embargo gap.
+- **Determinism.** `quantcortex/timing/hmm_regime.py` pins BLAS to one thread
+  (threadpoolctl) around the HMM fit so backtests are bit-for-bit reproducible; a
+  non-converged EM near a regime boundary otherwise flips under multithreaded
+  float ordering. Keep model fits seeded and deterministic.
 - **Reproducible results.** `generate_report.py` and the README "Results" read
-  the fixed snapshot `data/sample/rotation_prices.csv`, because live yfinance
-  re-adjusts historical closes on every fetch. Quote numbers from the generator
-  verbatim rather than hand-typing them.
+  the fixed snapshot `quantcortex/data/sample/rotation_prices.csv`, because live
+  yfinance re-adjusts historical closes on every fetch. Quote numbers from the
+  generator verbatim rather than hand-typing them.
 
 ## Layer ABCs to subclass
 
-`DataProvider` (data/providers/base.py): `fetch_ohlcv/fetch_fundamentals/
-fetch_macro`, canonical UTC-naive OHLCV schema. `Universe` (data/universe/
-base.py): point-in-time membership; `SP500Universe.from_wikipedia()`
-reconstructs real historical constituents (survivorship-safe membership).
-`Broker` (execution/brokers/base.py): `submit_order/get_positions/get_account`,
-adapters lazy-load their SDK. `OrderManager`: a NEW -> SUBMITTED -> FILLED state
-machine that validates the transition before mutating the order.
+`DataProvider` (quantcortex/data/providers/base.py): `fetch_ohlcv/
+fetch_fundamentals/fetch_macro`, canonical UTC-naive OHLCV schema. `Universe`
+(quantcortex/data/universe/base.py): point-in-time membership;
+`SP500Universe.from_wikipedia()` reconstructs real historical constituents
+(survivorship-safe membership). `Broker` (quantcortex/execution/brokers/
+base.py): `submit_order/get_positions/get_account`, adapters lazy-load their SDK.
+`OrderManager`: a NEW -> SUBMITTED -> FILLED state machine that validates the
+transition before mutating the order.
 
-## Known structural issue
+## Packaging
 
-The eight packages are TOP-LEVEL (`from portfolio.base import ...`,
-`import data`), not namespaced under a `quantcortex/` package. This works via
-`pythonpath = ["."]` but squats generic names and is hostile to `pip install`.
-Do not paper over it by reordering imports; the proper fix is a deliberate,
-repo-wide move into a `quantcortex/` package (its own reviewed change).
+All importable code lives under one top-level package, `quantcortex` (e.g.
+`from quantcortex.portfolio.base import enforce_weight_contract`). `tests/`,
+`scripts/`, `research/`, and `docs/` sit at the repo root, outside the package.
+Keep new modules inside `quantcortex/` and import them absolutely as
+`quantcortex.<subpkg>...`; there are no relative imports and no top-level
+package squatting.
 
 ## Honesty norms
 

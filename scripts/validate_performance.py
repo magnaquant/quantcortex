@@ -30,10 +30,10 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 logging.getLogger("hmmlearn").setLevel(logging.ERROR)
 
-from backtest.costs.transaction_costs import TransactionCostModel
-from backtest.engines.vectorized import VectorizedBacktest
-from backtest.metrics.tearsheet import Tearsheet
-from backtest.validation.deflated_sharpe import compute_dsr
+from quantcortex.backtest.costs.transaction_costs import TransactionCostModel
+from quantcortex.backtest.engines.vectorized import VectorizedBacktest
+from quantcortex.backtest.metrics.tearsheet import Tearsheet
+from quantcortex.backtest.validation.deflated_sharpe import compute_dsr
 
 ROTATION_UNIVERSE = ["QQQ", "VGT", "GLD", "TLT", "SPY", "VIG"]
 # Liquid large-caps that traded across 2018-2025. NOTE: using today's names is
@@ -50,7 +50,7 @@ CAPITAL = 1_000_000.0
 def fetch_prices(symbols, start, end):
     """Real adjusted prices via yfinance, or None if unavailable."""
     try:
-        from data.providers.yfinance_provider import YFinanceProvider
+        from quantcortex.data.providers.yfinance_provider import YFinanceProvider
     except Exception:
         return None
     px = YFinanceProvider().get_prices(symbols, start=start, end=end)
@@ -80,7 +80,7 @@ def backtest_weights(weights: pd.DataFrame, prices: pd.DataFrame) -> pd.Series:
 
 
 def run_rotation(prices: pd.DataFrame) -> pd.Series:
-    from strategies.multi_asset_rotation import MultiAssetRotation
+    from quantcortex.strategies.multi_asset_rotation import MultiAssetRotation
 
     weekly = prices.index[prices.index.weekday == 0]
     weights = MultiAssetRotation().generate_weights(prices, weekly)
@@ -88,7 +88,7 @@ def run_rotation(prices: pd.DataFrame) -> pd.Series:
 
 
 def run_momentum_ml(prices: pd.DataFrame) -> pd.Series:
-    from strategies.momentum_ml import MomentumMLStrategy
+    from quantcortex.strategies.momentum_ml import MomentumMLStrategy
 
     monthly = prices.resample("MS").first().index
     monthly = monthly[(monthly >= prices.index[0]) & (monthly <= prices.index[-1])]
@@ -117,7 +117,7 @@ def momentum_universe(start: str, pit: bool):
     if not pit:
         return MOMENTUM_UNIVERSE, "static large-caps (survivorship-biased)"
     try:
-        from data.universe.sp500_universe import SP500Universe
+        from quantcortex.data.universe.sp500_universe import SP500Universe
 
         members = SP500Universe.from_wikipedia().constituents(start)
         return members, f"S&P 500 point-in-time members as of {start}"

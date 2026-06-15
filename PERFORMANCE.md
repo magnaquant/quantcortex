@@ -17,7 +17,7 @@ vintage and will move as data is revised.
 ## Results (2018-2025)
 
 The rotation row is **reproducible** from the bundled snapshot
-(`data/sample/rotation_prices.csv`); the backtest is deterministic, so
+(`quantcortex/data/sample/rotation_prices.csv`); the backtest is deterministic, so
 `python scripts/generate_report.py` reproduces it exactly. The momentum_ml row
 is a live-fetch reading and is vintage-dependent (and survivorship-biased).
 

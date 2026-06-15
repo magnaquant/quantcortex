@@ -35,7 +35,7 @@ real 2018-2025 prices the baselines do **not** meet them (see
 The targets are reported honestly rather than tuned toward; clearing them on a
 single backtest is precisely the overfitting the platform's Deflated Sharpe
 Ratio and BHY multiple-testing tooling exist to catch. The rotation figures are
-**reproducible** from a bundled price snapshot (`data/sample/rotation_prices.csv`);
+**reproducible** from a bundled price snapshot (`quantcortex/data/sample/rotation_prices.csv`);
 see the [Results](#results) section below and [PERFORMANCE.md](PERFORMANCE.md).
 
 ---
@@ -132,7 +132,7 @@ TimescaleDB) with `docker compose up`.
 
 Multi-asset rotation, 2018-01-02 to 2025-12-30, weekly rebalance, net of 3 bps
 commission + 10 bps slippage. These figures are **reproducible**: they are
-computed from a bundled fixed price snapshot (`data/sample/rotation_prices.csv`)
+computed from a bundled fixed price snapshot (`quantcortex/data/sample/rotation_prices.csv`)
 by `python scripts/generate_report.py`, and the backtest is deterministic. Run
 with `--live` to refetch from yfinance (note: yfinance re-adjusts historical
 closes over time, so a live fetch drifts slightly from the snapshot).
@@ -221,84 +221,90 @@ after timing and risk scaling.
 
 ## Repository Structure
 
+All importable code lives under the single top-level `quantcortex` package, so
+it installs and imports without colliding with any other project's modules:
+`from quantcortex.portfolio.base import enforce_weight_contract`.
+
 ```
-quantcortex/
-├── data/
-│   ├── providers/          # base.py ABC + yfinance, Polygon, Alpaca, CCXT, FRED, FMP
-│   ├── processors/         # calendar.py, adjustments.py, pit_enforcer.py, lookahead_detector.py
-│   ├── storage/            # parquet_store.py, timescale_store.py, redis_cache.py
-│   └── universe/           # base ABC, sp500/nasdaq100 + sp500_wikipedia.py (PIT)
+quantcortex/                     # repo root
+├── quantcortex/                 # the importable package (import quantcortex.*)
+│   ├── data/
+│   │   ├── providers/          # base.py ABC + yfinance, Polygon, Alpaca, CCXT, FRED, FMP
+│   │   ├── processors/         # calendar.py, adjustments.py, pit_enforcer.py, lookahead_detector.py
+│   │   ├── storage/            # parquet_store.py, timescale_store.py, redis_cache.py
+│   │   ├── universe/           # base ABC, sp500/nasdaq100 + sp500_wikipedia.py (PIT)
+│   │   └── sample/             # bundled price snapshot for reproducible results
+│   │
+│   ├── alpha/
+│   │   ├── factors/
+│   │   │   ├── classical/      # momentum, value, quality, low-vol (+ _cross_section helpers)
+│   │   │   ├── ml/             # GBDT (XGBoost/LightGBM/CatBoost), neural
+│   │   │   └── nlp/            # finbert_sentiment.py, news_scorer.py
+│   │   ├── validation/         # alphalens_report.py, factor_decay.py
+│   │   └── feature_engineering/ # alpha158.py, macro_features.py
+│   │
+│   ├── portfolio/
+│   │   ├── base.py             # Abstract ABC with weight contract enforcement
+│   │   ├── equal_weight.py
+│   │   ├── mean_variance.py
+│   │   ├── minimum_variance.py
+│   │   ├── risk_parity.py
+│   │   ├── hrp.py              # Hierarchical Risk Parity (López de Prado)
+│   │   ├── black_litterman.py
+│   │   └── drl_allocator.py    # PPO-based RL allocator
+│   │
+│   ├── timing/
+│   │   ├── hmm_regime.py       # Hidden Markov Model regime detection
+│   │   ├── vix_scaler.py       # VIX-based vol scaling
+│   │   ├── tsmom.py            # Time-series momentum
+│   │   └── kama.py             # Kaufman Adaptive Moving Average
+│   │
+│   ├── risk/
+│   │   ├── circuit_breaker.py  # Hard stop on drawdown threshold
+│   │   ├── var_cvar.py         # Historical & parametric VaR/CVaR
+│   │   ├── vol_targeting.py    # Annualized vol targeting
+│   │   ├── factor_exposure.py  # Barra-style factor exposure limits
+│   │   └── kelly.py            # Fractional Kelly sizing
+│   │
+│   ├── backtest/
+│   │   ├── engines/
+│   │   │   ├── vectorized.py   # Fast NumPy/pandas vectorized engine
+│   │   │   ├── event_driven.py # Tick-level event loop
+│   │   │   └── walk_forward.py # Expanding/rolling WFO with embargo
+│   │   ├── execution_models/
+│   │   │   ├── ideal_fill.py
+│   │   │   ├── vwap_fill.py
+│   │   │   └── market_impact.py  # Almgren-Chriss market impact
+│   │   ├── costs/
+│   │   │   └── transaction_costs.py  # 3bps commission + 10bps slippage
+│   │   ├── validation/
+│   │   │   ├── deflated_sharpe.py    # Bailey & López de Prado DSR
+│   │   │   ├── multiple_testing.py   # BHY correction
+│   │   │   ├── lookahead_audit.py    # Automated look-ahead bias detection
+│   │   │   └── survivorship_check.py
+│   │   └── metrics/
+│   │       └── tearsheet.py    # Full pyfolio-compatible tearsheet
+│   │
+│   ├── execution/
+│   │   ├── brokers/
+│   │   │   ├── base.py
+│   │   │   ├── alpaca_broker.py
+│   │   │   ├── ib_broker.py        # Interactive Brokers via ib_insync
+│   │   │   └── ccxt_broker.py      # 100+ crypto exchanges
+│   │   ├── order_manager.py
+│   │   ├── position_manager.py
+│   │   ├── state_persistence.py    # Redis-backed state across restarts
+│   │   └── pre_trade_risk.py       # Pre-flight weight contract check
+│   │
+│   └── strategies/
+│       ├── base_strategy.py
+│       ├── momentum_ml.py          # GBDT cross-sectional momentum
+│       ├── macro_timing.py         # Macro regime + asset rotation
+│       ├── drl_portfolio.py        # PPO end-to-end RL portfolio
+│       ├── sentiment_nlp.py        # FinBERT earnings sentiment overlay
+│       └── multi_asset_rotation.py # Growth/Real Assets/Defensive rotation
 │
-├── alpha/
-│   ├── factors/
-│   │   ├── classical/      # momentum, value, quality, low-vol (+ _cross_section helpers)
-│   │   ├── ml/             # GBDT (XGBoost/LightGBM/CatBoost), neural
-│   │   └── nlp/            # finbert_sentiment.py, news_scorer.py
-│   ├── validation/         # alphalens_report.py, factor_decay.py
-│   └── feature_engineering/ # alpha158.py, macro_features.py
-│
-├── portfolio/
-│   ├── base.py             # Abstract ABC with weight contract enforcement
-│   ├── equal_weight.py
-│   ├── mean_variance.py
-│   ├── minimum_variance.py
-│   ├── risk_parity.py
-│   ├── hrp.py              # Hierarchical Risk Parity (López de Prado)
-│   ├── black_litterman.py
-│   └── drl_allocator.py    # PPO-based RL allocator
-│
-├── timing/
-│   ├── hmm_regime.py       # Hidden Markov Model regime detection
-│   ├── vix_scaler.py       # VIX-based vol scaling
-│   ├── tsmom.py            # Time-series momentum
-│   └── kama.py             # Kaufman Adaptive Moving Average
-│
-├── risk/
-│   ├── circuit_breaker.py  # Hard stop on drawdown threshold
-│   ├── var_cvar.py         # Historical & parametric VaR/CVaR
-│   ├── vol_targeting.py    # Annualized vol targeting
-│   ├── factor_exposure.py  # Barra-style factor exposure limits
-│   └── kelly.py            # Fractional Kelly sizing
-│
-├── backtest/
-│   ├── engines/
-│   │   ├── vectorized.py   # Fast NumPy/pandas vectorized engine
-│   │   ├── event_driven.py # Tick-level event loop
-│   │   └── walk_forward.py # Expanding/rolling WFO with embargo
-│   ├── execution_models/
-│   │   ├── ideal_fill.py
-│   │   ├── vwap_fill.py
-│   │   └── market_impact.py  # Almgren-Chriss market impact
-│   ├── costs/
-│   │   └── transaction_costs.py  # 3bps commission + 10bps slippage
-│   ├── validation/
-│   │   ├── deflated_sharpe.py    # Bailey & López de Prado DSR
-│   │   ├── multiple_testing.py   # BHY correction
-│   │   ├── lookahead_audit.py    # Automated look-ahead bias detection
-│   │   └── survivorship_check.py
-│   └── metrics/
-│       └── tearsheet.py    # Full pyfolio-compatible tearsheet
-│
-├── execution/
-│   ├── brokers/
-│   │   ├── base.py
-│   │   ├── alpaca_broker.py
-│   │   ├── ib_broker.py        # Interactive Brokers via ib_insync
-│   │   └── ccxt_broker.py      # 100+ crypto exchanges
-│   ├── order_manager.py
-│   ├── position_manager.py
-│   ├── state_persistence.py    # Redis-backed state across restarts
-│   └── pre_trade_risk.py       # Pre-flight weight contract check
-│
-├── strategies/
-│   ├── base_strategy.py
-│   ├── momentum_ml.py          # GBDT cross-sectional momentum
-│   ├── macro_timing.py         # Macro regime + asset rotation
-│   ├── drl_portfolio.py        # PPO end-to-end RL portfolio
-│   ├── sentiment_nlp.py        # FinBERT earnings sentiment overlay
-│   └── multi_asset_rotation.py # Growth/Real Assets/Defensive rotation
-│
-├── research/
+├── research/                       # Jupyter notebooks (add repo root to sys.path)
 │   ├── 01_data_quality.ipynb
 │   ├── 02_factor_research.ipynb
 │   ├── 03_portfolio_construction.ipynb
@@ -312,17 +318,16 @@ quantcortex/
 │   ├── survivorship_demo.py     # quantify S&P 500 survivorship bias (PIT)
 │   └── verify_brokers.py        # broker adapters vs faithful SDK mocks
 │
-├── docs/img/                    # committed showcase charts (equity/drawdown/rolling-Sharpe)
-├── data/sample/                 # bundled price snapshot for reproducible results
-│
 ├── tests/
 │   ├── conftest.py             # shared synthetic-data fixtures
 │   ├── test_lookahead_detector.py
 │   ├── test_transaction_costs.py
 │   ├── test_weight_interface.py
 │   ├── test_risk_overlay.py
-│   └── test_order_manager.py
+│   ├── test_order_manager.py
+│   └── test_regression_guards.py  # core-dep regression guards (audit fixes)
 │
+├── docs/img/                    # committed showcase charts (equity/drawdown/rolling-Sharpe)
 ├── docker-compose.yml
 ├── Dockerfile
 ├── pyproject.toml
@@ -354,7 +359,7 @@ Where `SR*` = observed max Sharpe, `SR0` = expected max under the null, `gamma3`
 ### 4. Seven Backtesting Pitfall Categories (enforced programmatically)
 1. **Look-ahead bias** - `lookahead_audit.py` detects future data leakage
 2. **Overfitting** - DSR + BHY multiple-testing correction
-3. **Survivorship bias** - universes are queried *as of* a date via point-in-time membership (`data/universe/`); `SP500Universe.from_wikipedia()` reconstructs real historical constituents (verified: of the 501 names in the index on 2018-06-01, 122 are gone today and 55 are no longer priceable - the rows a survivor-only backtest silently omits, quantified by `scripts/survivorship_demo.py`). `survivorship_check.py` validates that a backtest only used PIT-valid members.
+3. **Survivorship bias** - universes are queried *as of* a date via point-in-time membership (`quantcortex/data/universe/`); `SP500Universe.from_wikipedia()` reconstructs real historical constituents (verified: of the 501 names in the index on 2018-06-01, 122 are gone today and 55 are no longer priceable - the rows a survivor-only backtest silently omits, quantified by `scripts/survivorship_demo.py`). `survivorship_check.py` validates that a backtest only used PIT-valid members.
 4. **Data adjustment errors** - split/dividend-adjusted price validation
 5. **Multiple testing bias** - BHY correction on all factor IC tests
 6. **Transaction cost neglect** - costs mandatory in all backtest engines
@@ -373,17 +378,17 @@ volume_cap  = 0.10     # max 10% of 20-day ADV
 
 | Technique | Use case | Module |
 |-----------|----------|--------|
-| XGBoost / LightGBM / CatBoost | Cross-sectional alpha (GBDT dominates tabular financial data) | `alpha/factors/ml/` |
-| PPO (Stable-Baselines3) | End-to-end RL portfolio allocation | `portfolio/drl_allocator.py` |
-| Hidden Markov Model | Regime detection (bull/bear/sideways) | `timing/hmm_regime.py` |
-| FinBERT | Earnings call & news sentiment scoring | `alpha/factors/nlp/` |
-| Hierarchical Clustering (HRP) | Robust portfolio construction without inverting covariance | `portfolio/hrp.py` |
+| XGBoost / LightGBM / CatBoost | Cross-sectional alpha (GBDT dominates tabular financial data) | `quantcortex/alpha/factors/ml/` |
+| PPO (Stable-Baselines3) | End-to-end RL portfolio allocation | `quantcortex/portfolio/drl_allocator.py` |
+| Hidden Markov Model | Regime detection (bull/bear/sideways) | `quantcortex/timing/hmm_regime.py` |
+| FinBERT | Earnings call & news sentiment scoring | `quantcortex/alpha/factors/nlp/` |
+| Hierarchical Clustering (HRP) | Robust portfolio construction without inverting covariance | `quantcortex/portfolio/hrp.py` |
 
 ---
 
 ## Strategies
 
-### Multi-Asset Rotation (`strategies/multi_asset_rotation.py`)
+### Multi-Asset Rotation (`quantcortex/strategies/multi_asset_rotation.py`)
 - **Universe:** Growth (QQQ, VGT), Real Assets (GLD, TLT), Defensive (SPY, VIG)
 - **Rebalance:** Weekly
 - **Selection:** Information Ratio relative to QQQ
@@ -393,13 +398,13 @@ volume_cap  = 0.10     # max 10% of 20-day ADV
   from the bundled snapshot; defensive rotation trails buy-and-hold in a bull
   window). See the [Results](#results) section and [PERFORMANCE.md](PERFORMANCE.md).
 
-### Momentum ML (`strategies/momentum_ml.py`)
+### Momentum ML (`quantcortex/strategies/momentum_ml.py`)
 - GBDT cross-sectional momentum with alpha158 features
 - Walk-forward refit every quarter
 - **Design target:** Sharpe > 0.9. **Measured: ~0.63** (survivorship-biased
   single-name read; live-fetch, vintage-dependent). See [PERFORMANCE.md](PERFORMANCE.md).
 
-### DRL Portfolio (`strategies/drl_portfolio.py`)
+### DRL Portfolio (`quantcortex/strategies/drl_portfolio.py`)
 - PPO agent trained on rolling 3-year windows
 - Action space: continuous weight vector over universe
 - Reward: risk-adjusted return minus transaction costs

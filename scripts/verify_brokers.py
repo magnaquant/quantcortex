@@ -13,10 +13,10 @@ handshake, which genuinely requires real credentials.
 
 from __future__ import annotations
 
-from execution.brokers.alpaca_broker import AlpacaBroker
-from execution.brokers.ccxt_broker import CCXTBroker
-from execution.brokers.ib_broker import IBBroker
-from execution.order_manager import OrderSide, OrderStatus, OrderType
+from quantcortex.execution.brokers.alpaca_broker import AlpacaBroker
+from quantcortex.execution.brokers.ccxt_broker import CCXTBroker
+from quantcortex.execution.brokers.ib_broker import IBBroker
+from quantcortex.execution.order_manager import OrderSide, OrderStatus, OrderType
 
 _results = []
 

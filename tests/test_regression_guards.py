@@ -12,16 +12,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backtest.costs.transaction_costs import TransactionCostModel
-from backtest.engines.vectorized import VectorizedBacktest
-from backtest.engines.walk_forward import WalkForwardOptimizer
-from backtest.validation.deflated_sharpe import (
+from quantcortex.backtest.costs.transaction_costs import TransactionCostModel
+from quantcortex.backtest.engines.vectorized import VectorizedBacktest
+from quantcortex.backtest.engines.walk_forward import WalkForwardOptimizer
+from quantcortex.backtest.validation.deflated_sharpe import (
     compute_dsr,
     probabilistic_sharpe_ratio,
 )
-from execution.pre_trade_risk import PreTradeRiskCheck
-from portfolio.base import PortfolioMode
-from portfolio.hrp import HierarchicalRiskParity
+from quantcortex.execution.pre_trade_risk import PreTradeRiskCheck
+from quantcortex.portfolio.base import PortfolioMode
+from quantcortex.portfolio.hrp import HierarchicalRiskParity
 
 
 # --------------------------------------------------------------------------- #
