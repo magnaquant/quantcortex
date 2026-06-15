@@ -34,6 +34,25 @@ from scipy import stats
 # ----------------------------------------------------------------------
 # Free functions
 # ----------------------------------------------------------------------
+def _check_unique_dates(*panels: pd.DataFrame) -> None:
+    """Raise a clear error when a panel's date index contains duplicates.
+
+    The per-date loops below use ``.loc[date]``, which returns a DataFrame
+    (not a row) for a duplicated label and would otherwise fail deep inside
+    the loop with an opaque "truth value of a Series is ambiguous" error.
+    Duplicate dates are a data problem the caller should fix (e.g. via
+    ``df[~df.index.duplicated(keep="last")]``).
+    """
+    for panel in panels:
+        if panel.index.has_duplicates:
+            dupes = panel.index[panel.index.duplicated()].unique()[:5]
+            raise ValueError(
+                "factor/forward_returns index contains duplicate dates "
+                f"(e.g. {list(dupes)}); deduplicate before computing "
+                "cross-sectional statistics"
+            )
+
+
 def compute_information_coefficient(
     factor: pd.DataFrame,
     forward_returns: pd.DataFrame,
@@ -62,6 +81,7 @@ def compute_information_coefficient(
     method = method.lower()
     if method not in ("spearman", "pearson"):
         raise ValueError("method must be 'spearman' or 'pearson'")
+    _check_unique_dates(factor, forward_returns)
 
     fac, fwd = factor.align(forward_returns, join="inner")
     ics = pd.Series(index=fac.index, dtype=float)
@@ -137,6 +157,7 @@ def quantile_returns(
     """
     if quantiles < 2:
         raise ValueError("quantiles must be >= 2")
+    _check_unique_dates(factor, forward_returns)
 
     fac, fwd = factor.align(forward_returns, join="inner")
     per_date = []  # list of Series indexed by quantile label, one per date
@@ -192,6 +213,7 @@ def factor_turnover(factor: pd.DataFrame, quantiles: int = 5) -> pd.Series:
     """
     if quantiles < 2:
         raise ValueError("quantiles must be >= 2")
+    _check_unique_dates(factor)
 
     top_sets: Dict[pd.Timestamp, set] = {}
     for date in factor.index:

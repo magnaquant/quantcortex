@@ -112,9 +112,15 @@ class SentimentNLPStrategy(Strategy):
         chosen = clean.sort_values(ascending=False).head(n_keep).index
 
         # Weight by positive (shifted) score within the kept names.
-        kept = scores.reindex(scores.index)
         masked = pd.Series(0.0, index=scores.index, dtype=float)
         masked.loc[chosen] = scores.loc[chosen]
+        if float(scores.loc[chosen].clip(lower=0).sum()) == 0.0:
+            # Every chosen score is non-positive: equal-weight the CHOSEN set
+            # only.  (Otherwise normalize_long_only's all-non-positive
+            # fallback would equal-weight the whole vector, re-including the
+            # explicitly excluded names.)
+            masked[:] = 0.0
+            masked.loc[chosen] = 1.0
         return self.scores_to_weights(masked)
 
     # ------------------------------------------------------------------ #

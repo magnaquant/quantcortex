@@ -154,6 +154,11 @@ class AlmgrenChriss(ExecutionModel):
         Uses ``sigma`` and ``adv`` from (in priority order) the keyword
         arguments, the bar (``volatility`` / ``volume`` columns), and finally
         the model's configured defaults.
+
+        The model charges the FULL permanent + temporary impact on this
+        one-shot fill -- a deliberately conservative convention (the canonical
+        Almgren-Chriss accounting embeds only ~half the permanent impact in
+        the average execution price of a schedule).
         """
         close = float(bar["close"])
         if target_qty == 0:
@@ -221,8 +226,10 @@ class AlmgrenChriss(ExecutionModel):
         -------
         pandas.DataFrame
             Columns ``time`` (interval endpoints), ``holdings`` ``x_j`` and
-            ``trade`` ``n_j = x_{j-1} - x_j`` (shares executed in each
-            interval).  ``holdings`` runs from ``X`` down to ``0``.
+            ``trade`` -- the shares executed during the interval *starting* at
+            ``t_j`` (row ``j`` holds ``x_j - x_{j+1}``); the final row's
+            ``trade`` is ``0`` since no interval starts at ``T``.
+            ``holdings`` runs from ``X`` down to ``0``.
         """
         if T <= 0 or n < 1:
             raise ValueError("T must be > 0 and n >= 1.")

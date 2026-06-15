@@ -22,6 +22,7 @@ default execution model is the optimistic :class:`IdealFill`.
 
 from __future__ import annotations
 
+import warnings
 from typing import Optional
 
 import numpy as np
@@ -49,6 +50,24 @@ class EventDrivenBacktest:
         Starting cash NAV.  Default ``1e6``.
     periods_per_year:
         Annualisation factor for summary statistics.  Default ``252``.
+
+    Notes
+    -----
+    **Slippage double-count.**  Slippage can be modelled in two places: the
+    cost model's ``slippage`` rate (an aggregate per-notional charge) and the
+    execution model's fill-price perturbation.  If a non-:class:`IdealFill`
+    execution model is supplied while ``cost_model.slippage > 0``, slippage is
+    charged *twice*.  The engine emits a :class:`UserWarning` at construction
+    in that case; set ``slippage=0`` in the cost model when using an explicit
+    fill model.
+
+    **Cost-aware sizing.**  Target share counts are sized off the investable
+    NAV net of the *estimated* rebalance cost so the post-trade cash balance
+    cannot go (materially) negative.  The estimate uses the cost model's
+    charge for the full target trade, while the scaled-down trades actually
+    executed cost slightly less, so a few dollars of residual cash typically
+    remain; execution-model price impact on the fills is not part of the
+    estimate and can still nudge cash slightly negative when impact is large.
     """
 
     def __init__(
@@ -68,6 +87,23 @@ class EventDrivenBacktest:
         self.execution_model = execution_model if execution_model is not None else IdealFill()
         self.capital = float(capital)
         self.periods_per_year = int(periods_per_year)
+
+        # Warn (once, at construction) about the slippage double-count: a
+        # fill-perturbing execution model AND a positive cost-model slippage
+        # rate both charge slippage on the same trades.
+        if (
+            not isinstance(self.execution_model, IdealFill)
+            and getattr(self.cost_model, "slippage", 0.0) > 0
+        ):
+            warnings.warn(
+                "EventDrivenBacktest: the supplied execution model perturbs "
+                "fill prices AND the cost model charges slippage of "
+                f"{self.cost_model.slippage} per unit notional -- slippage "
+                "will be double-counted. Set slippage=0 in the cost model "
+                "when using an explicit fill model.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     def run(
         self,
@@ -103,16 +139,21 @@ class EventDrivenBacktest:
         n_sym = len(symbols)
         index = prices.index
 
-        # Snap each rebalance date to the first price bar on/after it.
-        rebalance_bars: set[int] = set()
-        for d in weights.index:
-            pos = index.searchsorted(d, side="left")
-            if pos < len(index):
-                rebalance_bars.add(int(pos))
+        # SNAP each weight-panel date to the first price bar on/after it so
+        # off-grid (e.g. weekend) rebalances execute on the next bar instead
+        # of being silently dropped by reindex+ffill.  Dates past the last
+        # bar are dropped; duplicate snaps keep the LAST target for that bar.
+        snapped = weights.sort_index().reindex(columns=symbols)
+        pos = index.searchsorted(snapped.index, side="left")
+        keep = pos < len(index)
+        snapped = snapped.iloc[keep]
+        snapped.index = index[pos[keep]]
+        snapped = snapped[~snapped.index.duplicated(keep="last")]
+        rebalance_bars: set[int] = {
+            int(p) for p in index.get_indexer(snapped.index)
+        }
 
-        target = (
-            weights.reindex(columns=symbols).reindex(index).ffill().fillna(0.0)
-        )
+        target = snapped.reindex(index).ffill().fillna(0.0)
         target_vals = target.to_numpy(dtype=np.float64)
         price_vals = prices.to_numpy(dtype=np.float64)
         adv_aligned = None
@@ -147,8 +188,16 @@ class EventDrivenBacktest:
                     adv=row_adv,
                     capital=nav,
                 )
+                # Size targets off the investable NAV net of the estimated
+                # rebalance cost so the post-trade cash cannot go negative
+                # (no free implicit financing of the cost charge).  Residual
+                # approximation: the estimate prices the full target trade,
+                # while the scaled (slightly smaller) trades cost marginally
+                # less, leaving a small positive cash remainder.
+                est_cost_cash = cost_res.total_cost * nav
+                investable = max(nav - est_cost_cash, 0.0)
                 target_shares = np.where(
-                    px > 0, cost_res.executed_weights * nav / px, shares
+                    px > 0, cost_res.executed_weights * investable / px, shares
                 )
                 delta_shares = target_shares - shares
 

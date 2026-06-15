@@ -17,13 +17,20 @@ Fundamental data are handled point-in-time (PIT): a value is only usable from
 its ``announcement_date`` onward, forward-filled to the most recently announced
 figure, which avoids look-ahead bias.
 
-This module is self-contained and does not depend on the other factor modules.
+Cross-sectional normalization helpers are shared with the other classical
+factor modules via the private :mod:`alpha.factors.classical._cross_section`
+module.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+
+from alpha.factors.classical._cross_section import (
+    cross_sectional_rank,
+    cross_sectional_zscore,
+)
 
 _REQUIRED_COLUMNS = ("symbol", "period_end", "announcement_date", "field", "value")
 
@@ -119,20 +126,10 @@ class QualityFactor:
         return -raw_accruals
 
     # ------------------------------------------------------------------
-    # Cross-sectional normalization (self-contained)
+    # Cross-sectional normalization (shared via _cross_section)
     # ------------------------------------------------------------------
-    @staticmethod
-    def cross_sectional_zscore(panel: pd.DataFrame) -> pd.DataFrame:
-        """Row-wise (cross-sectional) z-score, robust to missing values."""
-        mean = panel.mean(axis=1, skipna=True)
-        std = panel.std(axis=1, skipna=True, ddof=0)
-        std = std.replace(0.0, np.nan)
-        return panel.sub(mean, axis=0).div(std, axis=0)
-
-    @staticmethod
-    def rank(panel: pd.DataFrame) -> pd.DataFrame:
-        """Row-wise cross-sectional rank scaled to ``[0, 1]``."""
-        return panel.rank(axis=1, method="average", pct=True, na_option="keep")
+    cross_sectional_zscore = staticmethod(cross_sectional_zscore)
+    rank = staticmethod(cross_sectional_rank)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -191,7 +188,9 @@ class QualityFactor:
             return pd.DataFrame(index=index, columns=columns, dtype=float)
 
         sub["announcement_date"] = pd.to_datetime(sub["announcement_date"])
-        sub = sub.sort_values("announcement_date")
+        # Stable sort so that announcements tied on date keep their input
+        # order and drop_duplicates(keep="last") retains the latest row.
+        sub = sub.sort_values("announcement_date", kind="stable")
         sub = sub.drop_duplicates(subset=["announcement_date", "symbol"], keep="last")
 
         wide = sub.pivot(index="announcement_date", columns="symbol", values="value")

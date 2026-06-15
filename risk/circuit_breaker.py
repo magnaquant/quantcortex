@@ -1,4 +1,4 @@
-"""Drawdown circuit breaker — the platform's hard kill-switch.
+"""Drawdown circuit breaker - the platform's hard kill-switch.
 
 When the strategy's equity curve falls more than ``max_drawdown`` below its
 running peak, the breaker *trips* and forces the book flat (all weights zero)
@@ -107,4 +107,10 @@ class CircuitBreaker:
 
         tripped = self._update_state(float(current_drawdown))
         out = np.zeros_like(w) if tripped else w
-        return enforce_exposure_contract(out, name="CircuitBreaker")
+        # Size the gross cap to the incoming book (like the sibling overlays):
+        # an untripped pass-through of a levered / long-short book (gross > 1)
+        # must not be rejected by the kill-switch's own validation.
+        max_gross = max(1.0, float(np.abs(w).sum())) + 1e-9
+        return enforce_exposure_contract(
+            out, max_gross=max_gross, name="CircuitBreaker"
+        )

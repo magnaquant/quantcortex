@@ -1,15 +1,15 @@
-"""Strategy base class — wires the full quantcortex pipeline.
+"""Strategy base class - wires the full quantcortex pipeline.
 
 A strategy realises the platform's core equation::
 
     w_t = R_t( T_t( A_t( S_t( X_{<=t} ) ) ) )
-          └risk┘ └time┘ └alloc┘ └select┘
+          +risk+ +time+ +alloc+ +select+
 
-* **S — select**:   turn point-in-time data into alpha *scores* per symbol.
-* **A — allocate**: turn scores into a contract-valid weight vector via a
+* **S - select**:   turn point-in-time data into alpha *scores* per symbol.
+* **A - allocate**: turn scores into a contract-valid weight vector via a
   :class:`~portfolio.base.PortfolioOptimizer`.
-* **T — timing**:   scale exposure by regime / trend overlays.
-* **R — risk**:     apply drawdown / vol / VaR overlays.
+* **T - timing**:   scale exposure by regime / trend overlays.
+* **R - risk**:     apply drawdown / vol / VaR overlays.
 
 Timing and risk overlays are supplied as ``callable(weights, ctx) -> weights``
 so the pipeline stays decoupled from each overlay's individual signature; a
@@ -68,7 +68,7 @@ class RebalanceResult:
 
 
 class Strategy(abc.ABC):
-    """Abstract base class wiring the Select → Allocate → Time → Risk pipeline."""
+    """Abstract base class wiring the Select -> Allocate -> Time -> Risk pipeline."""
 
     def __init__(
         self,
@@ -92,7 +92,7 @@ class Strategy(abc.ABC):
         return self._name
 
     # ------------------------------------------------------------------ #
-    # S — selection (must be implemented by concrete strategies)
+    # S - selection (must be implemented by concrete strategies)
     # ------------------------------------------------------------------ #
     @abc.abstractmethod
     def select(self, ctx: StrategyContext) -> pd.Series:
@@ -105,7 +105,7 @@ class Strategy(abc.ABC):
         raise NotImplementedError
 
     # ------------------------------------------------------------------ #
-    # A — allocation
+    # A - allocation
     # ------------------------------------------------------------------ #
     def allocate(self, scores: pd.Series, ctx: StrategyContext) -> np.ndarray:
         """Map alpha scores to contract-valid weights.
@@ -131,7 +131,7 @@ class Strategy(abc.ABC):
         return normalize_long_only(scores.to_numpy())
 
     # ------------------------------------------------------------------ #
-    # T + R — overlays
+    # T + R - overlays
     # ------------------------------------------------------------------ #
     def apply_overlays(self, weights: np.ndarray, ctx: StrategyContext) -> np.ndarray:
         w = np.asarray(weights, dtype=np.float64)

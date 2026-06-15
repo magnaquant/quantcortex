@@ -1,4 +1,4 @@
-"""Point-in-time (PIT) enforcement for fundamentals — anti-lookahead guardrail.
+"""Point-in-time (PIT) enforcement for fundamentals - anti-lookahead guardrail.
 
 Look-ahead bias via fundamentals is one of the most common and most damaging
 research pitfalls.  A naive join attaches a company's Q1 financials to dates
@@ -99,7 +99,7 @@ class PITEnforcer:
     ) -> pd.DataFrame:
         """Return a point-in-time slice known on ``as_of_date``.
 
-        Keeps only rows whose ``announcement_date <= as_of_date`` — i.e. exactly
+        Keeps only rows whose ``announcement_date <= as_of_date`` - i.e. exactly
         the fundamentals a researcher could have observed at that moment.
         """
         if announcement_col not in fundamentals.columns:
@@ -121,7 +121,7 @@ class PITEnforcer:
         For each row of ``features`` (keyed by ``on`` and dated by
         ``feature_date_col``) this attaches the most recent fundamentals record
         whose ``announcement_date <= feature_date``.  The match uses
-        ``announcement_date`` — the public-availability date — and **never**
+        ``announcement_date`` - the public-availability date - and **never**
         ``period_end``, which is why the result is free of look-ahead bias.
 
         Implemented with :func:`pandas.merge_asof` (backward direction) grouped by

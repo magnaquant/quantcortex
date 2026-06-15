@@ -10,12 +10,17 @@ Design principles
 * **Tolerant of missing inputs.** Real macro data feeds are ragged: not
   every series is always available. Every feature is computed only when its
   required input columns are present; otherwise it is silently skipped.
-* **Strictly causal.** A feature reported on date ``t`` may only use data
-  observed on or before ``t``. Macro series are published at heterogeneous
-  frequencies (daily yields, monthly ISM/unemployment), so we forward-fill
-  onto a business-day index *before* differencing. Forward-filling only
-  propagates the *last known* value forward, so it never introduces
-  look-ahead. We never back-fill.
+* **Causal, with approximate publication lags.** A feature reported on date
+  ``t`` may only use data *available* on or before ``t``. Daily market series
+  (treasury yields, VIX, credit spreads) are observable in real time and carry
+  no lag. Monthly survey/labour series, however, are *published* well after
+  their observation date (e.g. May's UNRATE arrives around the first Friday of
+  June), so each lagged series' index is shifted forward by a configurable
+  number of calendar days (``publication_lags``) *before* forward-filling onto
+  the business-day index. The default lags (UNRATE: 35 days, PMI/NAPM: 5 days)
+  are approximations of typical release schedules, not exact release-calendar
+  dates. Forward-filling only propagates the last *published* value forward;
+  we never back-fill.
 
 The accepted (case-insensitive, alias-aware) raw columns include::
 
@@ -41,6 +46,13 @@ import pandas as pd
 # names say even though the working index is business-daily.
 _BDAYS_PER_MONTH = 21
 _BDAYS_PER_YEAR = 252
+
+# Default publication lags (calendar days) applied to series that are released
+# well after their observation date. Approximations of typical schedules: the
+# unemployment rate for month M is published around the first Friday of M+1
+# (~35 days after the observation date the series is stamped with); ISM PMI is
+# released on the first business day(s) of the following month.
+_DEFAULT_PUBLICATION_LAGS: Dict[str, int] = {"UNRATE": 35, "PMI": 5, "NAPM": 5}
 
 # Canonical name -> list of accepted source aliases (compared case-folded).
 _ALIASES: Dict[str, List[str]] = {
@@ -78,6 +90,14 @@ class MacroFeatures:
     freq:
         Resampling frequency for the working index. Default ``"B"`` (business
         days). Any pandas offset alias is accepted.
+    publication_lags:
+        Mapping of raw series name -> publication lag in *calendar days*. Each
+        named series' index is shifted forward by its lag before forward
+        filling, approximating the date the value actually became public.
+        Entries are merged over the defaults
+        ``{"UNRATE": 35, "PMI": 5, "NAPM": 5}`` (pass ``{"UNRATE": 0}`` etc.
+        to disable a default). Names are matched case-insensitively against
+        the raw input columns.
     """
 
     def __init__(
@@ -87,6 +107,7 @@ class MacroFeatures:
         pmi_momentum_periods: int = 3 * _BDAYS_PER_MONTH,
         unrate_change_window: int = 12 * _BDAYS_PER_MONTH,
         freq: str = "B",
+        publication_lags: Optional[Dict[str, int]] = None,
     ) -> None:
         if vix_change_window < 1:
             raise ValueError("vix_change_window must be >= 1")
@@ -101,6 +122,10 @@ class MacroFeatures:
         self.pmi_momentum_periods = int(pmi_momentum_periods)
         self.unrate_change_window = int(unrate_change_window)
         self.freq = str(freq)
+        self.publication_lags: Dict[str, int] = {
+            **_DEFAULT_PUBLICATION_LAGS,
+            **(publication_lags or {}),
+        }
 
     # ------------------------------------------------------------------
     # Input normalization
@@ -120,11 +145,13 @@ class MacroFeatures:
         return None
 
     def _prepare(self, macro: pd.DataFrame) -> pd.DataFrame:
-        """Validate, sort, deduplicate and forward-fill onto a business index.
+        """Validate, sort, deduplicate, lag-shift and forward-fill onto a business index.
 
         Forward-filling here is the only place look-ahead could leak in, so it
-        is done with care: we reindex onto a regularly spaced index spanning
-        the observed dates and propagate the *last known* value forward only.
+        is done with care: series with a configured publication lag first have
+        their observation dates shifted forward by that many calendar days
+        (approximating the publication date), then we reindex onto a regularly
+        spaced index and propagate the *last published* value forward only.
         """
         if not isinstance(macro, pd.DataFrame):
             raise TypeError("macro must be a pandas DataFrame")
@@ -139,6 +166,20 @@ class MacroFeatures:
 
         # Numeric coercion; non-numeric junk becomes NaN rather than raising.
         df = df.apply(pd.to_numeric, errors="coerce")
+
+        # Shift lagged series' observation dates forward to their approximate
+        # publication dates *before* forward-filling, so a monthly value never
+        # becomes usable until it would actually have been released.
+        lags = {k.strip().casefold(): int(v) for k, v in self.publication_lags.items()}
+        cols = []
+        for col in df.columns:
+            series = df[col]
+            lag = lags.get(str(col).strip().casefold(), 0)
+            if lag:
+                series = series.copy()
+                series.index = series.index + pd.Timedelta(days=lag)
+            cols.append(series)
+        df = pd.concat(cols, axis=1).sort_index()
 
         # Regular business-day index spanning the observed range, then ffill.
         full_index = pd.date_range(df.index.min(), df.index.max(), freq=self.freq)
@@ -178,7 +219,9 @@ class MacroFeatures:
         vix = self._resolve(macro, "VIX")
         if vix is None:
             return None
-        return vix.diff(self.vix_change_window).rename("vix_change_5d")
+        return vix.diff(self.vix_change_window).rename(
+            f"vix_change_{self.vix_change_window}d"
+        )
 
     def vix_term_structure(self, macro: pd.DataFrame) -> Optional[pd.Series]:
         """VIX3M minus VIX (positive = contango / calm, negative = stress)."""
@@ -200,7 +243,9 @@ class MacroFeatures:
         hy = self._resolve(macro, "HY")
         if hy is None:
             return None
-        return hy.diff(self.credit_change_window).rename("credit_spread_change_21d")
+        return hy.diff(self.credit_change_window).rename(
+            f"credit_spread_change_{self.credit_change_window}d"
+        )
 
     def ig_hy_spread(self, macro: pd.DataFrame) -> Optional[pd.Series]:
         """HY minus IG spread (the compensation for credit-quality risk)."""
@@ -225,7 +270,9 @@ class MacroFeatures:
         unrate = self._resolve(macro, "UNRATE")
         if unrate is None:
             return None
-        return unrate.diff(self.unrate_change_window).rename("unrate_change_12m")
+        return unrate.diff(self.unrate_change_window).rename(
+            f"unrate_change_{self.unrate_change_window // _BDAYS_PER_MONTH}m"
+        )
 
     def real_rate(self, macro: pd.DataFrame) -> Optional[pd.Series]:
         """Real-rate proxy = nominal 10y yield minus an inflation measure.

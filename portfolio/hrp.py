@@ -9,12 +9,12 @@ HRP sidesteps the instability of Markowitz mean-variance optimization (which
 requires inverting an often ill-conditioned covariance matrix) by replacing the
 single global optimization with three robust, sequential steps:
 
-1. **Tree clustering** — assets are clustered hierarchically using a distance
+1. **Tree clustering** - assets are clustered hierarchically using a distance
    derived from their correlation matrix.
-2. **Quasi-diagonalization** — the rows/columns of the covariance matrix are
+2. **Quasi-diagonalization** - the rows/columns of the covariance matrix are
    reordered so that the largest covariances lie along the diagonal, placing
    similar assets next to one another.
-3. **Recursive bisection** — capital is split top-down through the reordered
+3. **Recursive bisection** - capital is split top-down through the reordered
    tree, allocating between the two halves inversely to their cluster variance.
 
 The result is a long-only, fully-invested portfolio that requires neither
@@ -55,9 +55,11 @@ class HierarchicalRiskParity(PortfolioOptimizer):
 
     Notes
     -----
-    For ``N <= 2`` assets, or whenever the covariance matrix is degenerate
-    (non-finite entries or zero variances everywhere), HRP gracefully falls
-    back to an equal-weight portfolio.
+    For ``N == 1``, or whenever the covariance matrix is degenerate
+    (non-finite entries or zero variances), HRP gracefully falls back to an
+    equal-weight portfolio.  ``N == 2`` is handled exactly as a single
+    recursive-bisection step (López de Prado's allocation is well-defined
+    there): capital is split inversely to the two cluster variances.
     """
 
     def __init__(
@@ -126,7 +128,7 @@ class HierarchicalRiskParity(PortfolioOptimizer):
         """Variance of a cluster under its inverse-variance weighting.
 
         The cluster is collapsed to a single synthetic asset whose variance is
-        ``w' Σ w`` with ``w`` the inverse-variance weights of its members.
+        ``w' Sigma w`` with ``w`` the inverse-variance weights of its members.
         """
         cov_slice = cov.loc[items, items].values
         w = cls._get_ivp(cov_slice).reshape(-1, 1)
@@ -191,8 +193,25 @@ class HierarchicalRiskParity(PortfolioOptimizer):
         # --- Degenerate / tiny-universe fallback: equal weight. ---
         if n == 0:
             raise ValueError("HRP requires at least one asset")
-        if n <= 2:
-            return np.full(n, 1.0 / n, dtype=np.float64)
+        if n == 1:
+            return np.array([1.0], dtype=np.float64)
+        if n == 2:
+            # LdP's recursive bisection is well-defined for two assets: a
+            # single bisection allocating inversely to the cluster variances,
+            # alpha = 1 - var([0]) / (var([0]) + var([1])) - i.e. weights
+            # proportional to 1/variance.  Equal weight is kept only for the
+            # degenerate-covariance case.
+            cov2 = returns.cov()
+            diag2 = np.diag(cov2.values)
+            if not np.all(np.isfinite(cov2.values)) or not np.all(diag2 > 0.0):
+                return np.full(2, 0.5, dtype=np.float64)
+            var_left = self._get_cluster_var(cov2, [columns[0]])
+            var_right = self._get_cluster_var(cov2, [columns[1]])
+            denom = var_left + var_right
+            if denom <= 0.0 or not np.isfinite(denom):
+                return np.full(2, 0.5, dtype=np.float64)
+            alpha = 1.0 - var_left / denom
+            return np.array([alpha, 1.0 - alpha], dtype=np.float64)
 
         cov = returns.cov()
         corr = returns.corr()
@@ -204,7 +223,7 @@ class HierarchicalRiskParity(PortfolioOptimizer):
             return np.full(n, 1.0 / n, dtype=np.float64)
 
         # Any residual NaNs in the correlation matrix (e.g. a constant column)
-        # would break clustering — fall back to equal weight.
+        # would break clustering - fall back to equal weight.
         corr_arr = corr.fillna(0.0).to_numpy(dtype=np.float64, copy=True)
         np.fill_diagonal(corr_arr, 1.0)
         corr = pd.DataFrame(corr_arr, index=corr.index, columns=corr.columns)

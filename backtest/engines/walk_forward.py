@@ -94,19 +94,12 @@ class WalkForwardOptimizer:
         return len(index_or_n)
 
     def n_splits(self, index_or_n: IndexLike) -> int:
-        """Number of folds produced for ``n`` samples (or a given index)."""
-        n = self._resolve_n(index_or_n)
-        gap = self.embargo_gap
-        count = 0
-        train_end = self.train_size  # exclusive end of the raw training block
-        while True:
-            test_start = train_end + gap
-            test_end = test_start + self.test_size
-            if test_end > n:
-                break
-            count += 1
-            train_end += self.test_size
-        return count
+        """Number of folds produced for ``n`` samples (or a given index).
+
+        Delegates to :meth:`split` so folds whose training window is emptied
+        by purging (and are therefore never yielded) are not counted.
+        """
+        return sum(1 for _ in self.split(index_or_n))
 
     def split(
         self, index_or_n: IndexLike

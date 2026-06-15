@@ -374,16 +374,25 @@ class GBDTFactor:
         min_train_obs: int = 50,
         rank_target: bool = True,
         step: int = 1,
+        purge: int = 0,
     ) -> pd.DataFrame:
-        """Walk-forward, strictly causal cross-sectional prediction.
+        """Walk-forward cross-sectional prediction with optional purging.
 
         For each evaluation date ``t`` (after an initial ``train_window`` of
         warm-up dates), the model is *re-fit* on every (security, date)
         observation whose date lies within the trailing window
-        ``[t - train_window, t)`` -- i.e. strictly before ``t`` -- and then
-        used to score the cross-section observed on ``t``. No information from
-        date ``t`` or later ever enters the training set, so the resulting
-        score panel is free of look-ahead bias.
+        ``[t - train_window - purge, t - purge)`` -- i.e. strictly before
+        ``t`` -- and then used to score the cross-section observed on ``t``.
+
+        Training *feature* dates always precede ``t``, but training *labels*
+        are forward returns whose measurement window extends beyond their own
+        date: with a label horizon of ``h`` periods, the labels of the last
+        ``h - 1`` training dates overlap the test date and leak future
+        information unless they are purged. Set ``purge`` to at least the
+        label horizon minus one (e.g. ``purge >= h - 1``) to exclude those
+        dates from the end of the training window and keep the score panel
+        free of label look-ahead. With the default ``purge=0`` the panel is
+        only leak-free for one-period (``h = 1``) labels.
 
         Parameters
         ----------
@@ -409,6 +418,11 @@ class GBDTFactor:
         step:
             Stride (in dates) between successive re-fits. ``step=1`` re-fits
             every date; larger values trade freshness for speed.
+        purge:
+            Number of label-horizon dates to exclude from the *end* of the
+            training window (default 0). Must be at least the label horizon
+            minus one to prevent training labels from overlapping the test
+            date (see above).
 
         Returns
         -------
@@ -421,6 +435,8 @@ class GBDTFactor:
             raise ValueError("train_window must be a positive integer")
         if step <= 0:
             raise ValueError("step must be a positive integer")
+        if purge < 0:
+            raise ValueError("purge must be a non-negative integer")
 
         feats = self._to_long_features(features_panel)
         target = self._to_long_target(forward_returns)
@@ -448,7 +464,11 @@ class GBDTFactor:
 
         for i in range(train_window, len(unique_dates), step):
             t = unique_dates[i]
-            train_dates = unique_dates[i - train_window : i]  # strictly < t
+            if i - purge <= 0:
+                continue
+            # Strictly < t, with the most recent `purge` dates excluded so
+            # multi-period training labels cannot overlap the test date.
+            train_dates = unique_dates[max(0, i - train_window - purge) : i - purge]
 
             train_mask = dates.isin(train_dates)
             train = joined.loc[train_mask]

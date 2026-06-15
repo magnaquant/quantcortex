@@ -20,6 +20,16 @@ The feature families and their naming follow qlib conventions:
 
 With the default five windows ``(5, 10, 20, 30, 60)`` this yields
 ``9 + 4 + 29 * 5 = 158`` features, matching qlib's count exactly.
+
+Parity notes
+------------
+* ``IMAX``/``IMIN`` follow qlib's 1-based convention: the feature is
+  ``(argmax + 1) / w`` (resp. ``argmin``), where ``argmax`` is the 0-based
+  position of the extremum within the trailing window (oldest = 0).
+* Rolling features here require a *full* window (``min_periods=w``) whereas
+  qlib uses ``min_periods=1``. This is a deliberate stricter-warmup deviation:
+  partially-filled windows are reported as ``NaN`` instead of being computed
+  on fewer observations.
 """
 
 from __future__ import annotations
@@ -262,8 +272,9 @@ class Alpha158:
             roll_high = high.rolling(w).max()
             features[f"RSV{w}"] = (close - roll_low) / (roll_high - roll_low + _EPS)
 
-            imax = self._rolling_idxmax(high, w) / w
-            imin = self._rolling_idxmin(low, w) / w
+            # qlib parity: 1-based position, i.e. (argmax + 1) / w.
+            imax = (self._rolling_idxmax(high, w) + 1.0) / w
+            imin = (self._rolling_idxmin(low, w) + 1.0) / w
             features[f"IMAX{w}"] = imax
             features[f"IMIN{w}"] = imin
             features[f"IMXD{w}"] = imax - imin
@@ -353,6 +364,9 @@ class Alpha158:
         # Guard against tiny negative values from floating point cancellation.
         ss_res = ss_res.clip(lower=0.0)
         rsqr = 1.0 - ss_res / (ss_tot + _EPS)
+        # A zero-variance window has no defined R^2 (the regression explains
+        # nothing of nothing); mask it to NaN instead of reporting 1.0.
+        rsqr = rsqr.where(ss_tot > _EPS)
 
         return slope, rsqr, residual
 

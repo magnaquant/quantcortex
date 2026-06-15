@@ -89,9 +89,23 @@ class VIXScaler:
         ``vix`` may be a float, a :class:`pandas.Series`/array (the last value is
         used), or a ``StrategyContext``-like object exposing ``.extra['vix']``.
         The result is validated via :func:`enforce_exposure_contract`.
+
+        When levering up (``cap > 1`` and ``scale > 1``) the scalar scale is
+        first capped so no element of the scaled book exceeds the ``[-1, 1]``
+        per-asset contract: ``effective_scale = min(scale, 1 / max|w_i|)``.
+        The capped scale is applied *unclipped*, preserving the allocation
+        proportions - so a concentrated book (e.g. a 0.8 position) no longer
+        fails validation, it simply levers up less than the raw ratio asked.
         """
         w = np.asarray(weights, dtype=np.float64).ravel()
         scale = self.compute_scale(self._coerce_vix(vix))
+
+        # Cap the scalar so no element leaves the [-1, 1] per-asset contract;
+        # the capped scale is applied unclipped to preserve proportions.
+        max_abs = float(np.max(np.abs(w))) if w.size else 0.0
+        if max_abs > 0.0:
+            scale = min(scale, 1.0 / max_abs)
+
         scaled = w * scale
 
         input_gross = float(np.abs(w).sum())

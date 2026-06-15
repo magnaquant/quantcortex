@@ -20,6 +20,7 @@ the configured :class:`~portfolio.base.PortfolioMode`.
 
 from __future__ import annotations
 
+import warnings
 from typing import Optional, Sequence, Union
 
 import numpy as np
@@ -183,17 +184,64 @@ class MeanVariance(PortfolioOptimizer):
         expected_returns:
             Optional override for the expected-return vector :math:`\\mu`.  When
             omitted the sample mean of ``returns`` is used.
+
+        Notes
+        -----
+        Columns with fewer than 2 finite observations (dead assets) carry no
+        usable risk information; forward/backward/zero-filling them would
+        create zero-variance pseudo-assets that absorb most of the book.  They
+        are excluded from the optimization and re-inserted with weight 0.0 at
+        their original positions.  If *all* columns are dead the optimizer
+        falls back to the mode's neutral allocation with a warning.
         """
+        df = pd.DataFrame(returns).apply(pd.to_numeric, errors="coerce")
+        df = df.replace([np.inf, -np.inf], np.nan)
+        n_total = df.shape[1]
+        alive = (df.notna().sum(axis=0) >= 2).to_numpy()
+
+        if expected_returns is not None:
+            er = np.asarray(expected_returns, dtype=np.float64).reshape(-1)
+            if er.size != n_total:
+                raise ValueError(
+                    f"expected_returns has length {er.size}, expected {n_total}"
+                )
+            er = np.nan_to_num(er, nan=0.0, posinf=0.0, neginf=0.0)
+        else:
+            er = None
+
+        if not alive.any():
+            warnings.warn(
+                "MeanVariance: every column has fewer than 2 finite "
+                "observations; falling back to the mode's neutral allocation.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            if self.mode is PortfolioMode.MARKET_NEUTRAL:
+                return np.zeros(n_total, dtype=np.float64)
+            return np.full(n_total, 1.0 / n_total, dtype=np.float64)
+
+        sub = df.loc[:, df.columns[alive]]
+        w_sub = self._optimize_subset(sub, er[alive] if er is not None else None)
+
+        # Renormalise the optimized sub-vector to the mode's target sum, then
+        # re-insert weight 0.0 at the dead-column positions.
+        if self.mode is PortfolioMode.LONG_ONLY:
+            s = float(w_sub.sum())
+            if s > 0.0 and np.isfinite(s):
+                w_sub = w_sub / s
+        out = np.zeros(n_total, dtype=np.float64)
+        out[alive] = w_sub
+        return out
+
+    def _optimize_subset(
+        self, returns: pd.DataFrame, expected_returns: Optional[np.ndarray]
+    ) -> np.ndarray:
+        """Run the mean-variance machinery on the live-asset subset."""
         mu, sigma = self._estimate(returns)
         n = mu.size
 
         if expected_returns is not None:
-            mu = np.asarray(expected_returns, dtype=np.float64).reshape(-1)
-            if mu.size != n:
-                raise ValueError(
-                    f"expected_returns has length {mu.size}, expected {n}"
-                )
-            mu = np.nan_to_num(mu, nan=0.0, posinf=0.0, neginf=0.0)
+            mu = expected_returns
 
         # Degenerate single-asset book.
         if n == 1:

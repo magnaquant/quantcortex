@@ -1,15 +1,15 @@
 """Time-series momentum (TSMOM) timing overlay.
 
 :class:`TSMomentum` gates portfolio exposure on the sign of each asset's trailing
-return over a ``lookback`` window.  The premise — well documented in the
+return over a ``lookback`` window.  The premise - well documented in the
 cross-sectional and time-series momentum literature (Moskowitz, Ooi & Pedersen)
-— is that an asset's own past return predicts the sign of its near-future
+ -  is that an asset's own past return predicts the sign of its near-future
 return.
 
 Two modes:
 
 * **long-flat** (``allow_short=False``, default): an asset keeps its weight when
-  its trailing return is positive and is set to zero otherwise — the overlay can
+  its trailing return is positive and is set to zero otherwise - the overlay can
   only *reduce* gross exposure.
 * **long-short** (``allow_short=True``): an asset's weight is multiplied by the
   *sign* of its trailing return, so a long flips to a short when momentum turns
@@ -67,7 +67,7 @@ class TSMomentum:
         weights:
             Per-asset weight vector (1-D).
         returns:
-            * 2-D (DataFrame / ``(T, n_assets)`` array): per-asset gating — each
+            * 2-D (DataFrame / ``(T, n_assets)`` array): per-asset gating - each
               asset's weight is multiplied by the sign of *its own* trailing
               return.
             * 1-D (Series / ``(T,)`` array): treated as a portfolio return

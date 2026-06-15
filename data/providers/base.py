@@ -4,13 +4,13 @@ Every concrete provider (yfinance, Polygon, Alpaca, CCXT, FRED, FMP) implements
 this ABC so the rest of the platform can swap data sources without code changes.
 Providers normalise their raw payloads to the platform's canonical shapes:
 
-* **OHLCV** — a ``pandas.DataFrame`` per symbol, ``DatetimeIndex`` (UTC-naive,
+* **OHLCV** - a ``pandas.DataFrame`` per symbol, ``DatetimeIndex`` (UTC-naive,
   ascending), columns ``[open, high, low, close, adj_close, volume]`` (float64).
-* **Fundamentals** — a tidy ``DataFrame`` with at least the columns
+* **Fundamentals** - a tidy ``DataFrame`` with at least the columns
   ``[symbol, period_end, announcement_date, field, value]``.  The presence of
   ``announcement_date`` is what lets ``pit_enforcer`` guarantee point-in-time
   correctness.
-* **Macro** — a wide ``DataFrame`` indexed by date, one column per series id.
+* **Macro** - a wide ``DataFrame`` indexed by date, one column per series id.
 
 Network calls are made lazily *inside* methods, never at import time, so the
 package imports cleanly without provider credentials or connectivity.
@@ -100,6 +100,9 @@ class DataProvider(abc.ABC):
         out = out[OHLCV_COLUMNS].astype("float64")
         if not isinstance(out.index, pd.DatetimeIndex):
             out.index = pd.to_datetime(out.index)
+        if out.index.tz is not None:
+            # Enforce the documented UTC-naive contract.
+            out.index = out.index.tz_convert("UTC").tz_localize(None)
         out.index.name = "date"
         return out.sort_index()
 
@@ -117,7 +120,7 @@ class DataProvider(abc.ABC):
         if not cols:
             return pd.DataFrame()
         panel = pd.DataFrame(cols).sort_index()
-        return panel[_as_symbol_list(symbols)].reindex(
+        return panel.reindex(
             columns=[s for s in _as_symbol_list(symbols) if s in panel.columns]
         )
 

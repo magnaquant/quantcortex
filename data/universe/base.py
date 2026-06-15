@@ -3,7 +3,7 @@
 Survivorship bias is one of the seven enforced pitfalls: a backtest that uses
 *today's* index constituents for *all* history silently deletes every company
 that went bankrupt or was delisted, inflating returns.  Every universe here is
-therefore queried **as of a date** — :meth:`Universe.constituents` returns the
+therefore queried **as of a date** - :meth:`Universe.constituents` returns the
 membership that was true on that date, not the membership today.
 """
 
@@ -68,7 +68,7 @@ class Universe(abc.ABC):
 
     def constituents(self, as_of: Optional[DateLike] = None) -> List[str]:
         """Symbols that were members ``as_of`` the given date (default: now)."""
-        as_of = as_of if as_of is not None else pd.Timestamp.utcnow().normalize()
+        as_of = as_of if as_of is not None else pd.Timestamp.now().normalize()
         return self.membership().members_asof(as_of)
 
     def is_member(self, symbol: str, as_of: DateLike) -> bool:

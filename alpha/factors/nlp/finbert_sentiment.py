@@ -154,7 +154,7 @@ class FinBERTSentiment:
                 return scores
             except Exception:  # noqa: BLE001
                 # transformers may be absent (ImportError) OR present but
-                # unusable — most commonly the FinBERT weights cannot be
+                # unusable - most commonly the FinBERT weights cannot be
                 # downloaded offline (OSError/HTTPError from huggingface_hub),
                 # or a torch runtime error.  In every case the dependency-free
                 # finance-lexicon backend is the reliable fallback.

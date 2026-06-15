@@ -2,8 +2,8 @@
 
 This module provides :class:`DRLAllocator`, an end-to-end portfolio allocator
 trained with Proximal Policy Optimization (PPO).  The agent observes a trailing
-window of asset returns and emits a continuous action that is mapped — via a
-softmax — onto the long-only simplex of portfolio weights.  The reward is the
+window of asset returns and emits a continuous action that is mapped - via a
+softmax - onto the long-only simplex of portfolio weights.  The reward is the
 realized portfolio log-return, penalized for transaction costs (turnover) and
 for return variance (a simple risk adjustment).
 
@@ -16,8 +16,8 @@ Design goals
   raised.
 * **Always usable.**  Without a trained model (and therefore without SB3 /
   gymnasium installed), :meth:`_compute_weights` falls back to a deterministic,
-  fully-offline heuristic policy — softmax of recent mean returns scaled by
-  inverse volatility — that still yields contract-valid long-only weights.
+  fully-offline heuristic policy - softmax of recent mean returns scaled by
+  inverse volatility - that still yields contract-valid long-only weights.
 
 The class subclasses :class:`~portfolio.base.PortfolioOptimizer`, so the public
 :meth:`optimize` entry point validates the output against the weight contract.
@@ -122,7 +122,7 @@ class DRLAllocator(PortfolioOptimizer):
                 A continuous ``Box`` of shape ``(n_assets,)`` mapped to weights
                 via softmax (long-only, sums to 1).
             Reward
-                ``log(1 + w·r) - transaction_cost * turnover - var_penalty``
+                ``log(1 + w*r) - transaction_cost * turnover - var_penalty``
                 where ``var_penalty`` is the cross-sectional variance of the
                 positions (a light risk adjustment).
             """

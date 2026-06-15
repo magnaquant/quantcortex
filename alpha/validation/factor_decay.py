@@ -15,8 +15,10 @@ Conventions
   the cumulative return from ``t`` to ``t + L`` (for ``L >= 1``), built by
   compounding forward single-period returns and then shifting back to ``t``.
   This is strictly causal: ``factor[t]`` is correlated only with returns that
-  occur on or after ``t``. For ``L = 0`` the "forward return" is the
-  contemporaneous one-period return realised at ``t`` (the immediate payoff).
+  occur on or after ``t``. The decay profile therefore starts at lag 1 (the
+  immediate tradeable payoff); lag 0 would be the contemporaneous return
+  realised over the period *ending* at ``t``, which a decision taken at the
+  close of ``t`` could never capture.
 """
 
 from __future__ import annotations
@@ -49,14 +51,14 @@ class FactorDecay:
     def _forward_return(returns: pd.DataFrame, lag: int) -> pd.DataFrame:
         """Causal forward return aligned to the decision date.
 
-        For ``lag == 0`` returns the contemporaneous one-period return. For
-        ``lag >= 1`` returns the cumulative compounded return over the next
-        ``lag`` periods, indexed at the decision date ``t``.
+        Returns the cumulative compounded return over the next ``lag``
+        periods (``lag >= 1``), indexed at the decision date ``t``.  Lag 0 is
+        deliberately unsupported: it would be the return realised over the
+        period ending at ``t``, which is not a tradeable payoff for a
+        decision taken at the close of ``t``.
         """
-        if lag < 0:
-            raise ValueError("lag must be >= 0")
-        if lag == 0:
-            return returns.copy()
+        if lag < 1:
+            raise ValueError("lag must be >= 1 (lag 0 is not tradeable)")
         # Cumulative gross return over a trailing window of `lag` periods...
         gross = (1.0 + returns).rolling(window=lag, min_periods=lag).apply(
             np.prod, raw=True
@@ -74,7 +76,12 @@ class FactorDecay:
         returns: pd.DataFrame,
         max_lag: int = 10,
     ) -> pd.DataFrame:
-        """IC decay profile across forward horizons ``0..max_lag``.
+        """IC decay profile across forward horizons ``1..max_lag``.
+
+        Lag 1 is the immediate tradeable payoff (the one-period return after
+        the decision date); the profile starts there because the lag-0
+        contemporaneous return is already realised and would report an
+        in-sample, non-tradeable IC.
 
         Parameters
         ----------
@@ -86,14 +93,14 @@ class FactorDecay:
         Returns
         -------
         pandas.DataFrame
-            Indexed by ``lag`` (0..``max_lag``) with columns ``ic_mean``,
+            Indexed by ``lag`` (1..``max_lag``) with columns ``ic_mean``,
             ``ic_std`` and ``icir`` (= ``ic_mean / ic_std``).
         """
-        if max_lag < 0:
-            raise ValueError("max_lag must be >= 0")
+        if max_lag < 1:
+            raise ValueError("max_lag must be >= 1")
 
         rows = {}
-        for lag in range(0, max_lag + 1):
+        for lag in range(1, max_lag + 1):
             fwd = self._forward_return(returns, lag)
             ic = compute_information_coefficient(
                 factor, fwd, method=self.ic_method

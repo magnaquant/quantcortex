@@ -3,7 +3,7 @@
 Redis is an optional dependency.  When it is unavailable (or unreachable) this
 cache logs a warning once and falls back to an in-process dictionary with manual
 TTL expiry tracked via :func:`time.monotonic`.  The fallback means cache calls
-always work offline — convenient for tests and local development — at the cost
+always work offline - convenient for tests and local development - at the cost
 of not being shared across processes.
 
 DataFrames are serialized to Parquet bytes via PyArrow so they round-trip with
@@ -114,18 +114,19 @@ class RedisCache:
     def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
         """Store ``value`` under ``key``.
 
-        ``bytes`` are stored verbatim; any other JSON-serialisable value
-        (``str``, numbers, ``dict``, ``list``) is JSON-encoded so it
-        round-trips through :meth:`get`.  A one-byte type tag distinguishes the
-        two so DataFrame Parquet bytes (stored via :meth:`set_df`) survive
-        intact.
+        ``bytes`` are stored verbatim; ``str``, numbers, ``dict`` and ``list``
+        values are JSON-encoded so they round-trip through :meth:`get`.  Any
+        other type (e.g. ``Timestamp``, ``set``) raises ``TypeError`` rather
+        than being silently degraded to a string - use :meth:`set_df` for
+        DataFrames.  A one-byte type tag distinguishes raw bytes from JSON so
+        DataFrame Parquet bytes (stored via :meth:`set_df`) survive intact.
         """
         full = self._key(key)
         ttl = self.default_ttl if ttl is None else ttl
         if isinstance(value, bytes):
             blob = b"B" + value
         else:
-            blob = b"J" + json.dumps(value, default=str).encode("utf-8")
+            blob = b"J" + json.dumps(value).encode("utf-8")
 
         if self._client is not None:
             if ttl and ttl > 0:

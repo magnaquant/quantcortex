@@ -4,12 +4,12 @@ The :class:`OrderManager` owns the canonical order state machine that every
 broker adapter feeds into.  Keeping the state machine here (rather than in each
 broker) means a single, testable definition of *legal* lifecycle transitions::
 
-    NEW ──submit──▶ SUBMITTED ──fill──▶ PARTIALLY_FILLED ──fill──▶ FILLED
-      │                 │                      │
-      └──cancel/reject──┴──────cancel──────────┘
+    NEW --submit--> SUBMITTED --fill--> PARTIALLY_FILLED --fill--> FILLED
+      |                 |                      |
+      +--cancel/reject--+------cancel----------+
 
 Illegal transitions (e.g. filling a cancelled order, or registering two orders
-with the same id) raise immediately — a malformed order must never reach a live
+with the same id) raise immediately - a malformed order must never reach a live
 venue.
 """
 
@@ -217,6 +217,20 @@ class OrderManager:
                 f"Fill {increment} exceeds remaining {order.remaining_quantity}."
             )
 
+        # Validate the prospective lifecycle transition BEFORE mutating the
+        # book, so an illegal fill (e.g. on a NEW or CANCELLED order) cannot
+        # corrupt filled_quantity / avg_fill_price and then raise.
+        target_status = (
+            OrderStatus.FILLED
+            if order.remaining_quantity - increment <= 1e-9
+            else OrderStatus.PARTIALLY_FILLED
+        )
+        if target_status not in _VALID_TRANSITIONS[order.status]:
+            raise InvalidOrderTransitionError(
+                f"Illegal transition for order {order.order_id!r}: "
+                f"{order.status.value} -> {target_status.value}"
+            )
+
         # Volume-weighted average fill price across partial fills.
         if fill_price is not None:
             prior_value = (order.avg_fill_price or 0.0) * order.filled_quantity
@@ -226,10 +240,7 @@ class OrderManager:
         else:
             order.filled_quantity += increment
 
-        if order.remaining_quantity <= 1e-9:
-            self._transition(order, OrderStatus.FILLED)
-        else:
-            self._transition(order, OrderStatus.PARTIALLY_FILLED)
+        self._transition(order, target_status)
         return order
 
     def cancel(self, order_id: str) -> Order:

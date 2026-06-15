@@ -3,7 +3,7 @@
 The :class:`PositionManager` maintains an in-memory book of :class:`Position`
 objects, updated either from filled :class:`Order` objects (the live path) or
 from raw ``(symbol, qty_delta, price)`` deltas (the backtest / manual path).  It
-also converts a *target weight* allocation — the output of the portfolio layer —
+also converts a *target weight* allocation - the output of the portfolio layer  - 
 into a concrete list of order intents given current holdings and capital.
 
 Positions use a running volume-weighted average price (VWAP) so that
@@ -146,6 +146,7 @@ class PositionManager:
         capital: float,
         current_positions: Optional[Mapping[str, float]] = None,
         min_trade_notional: float = 1.0,
+        allow_fractional: bool = False,
     ) -> List[dict]:
         """Convert a target-weight allocation into a list of order intents.
 
@@ -166,13 +167,22 @@ class PositionManager:
         min_trade_notional:
             Trades whose absolute notional (``|delta shares| * price``) is below
             this threshold are skipped, avoiding dust orders.
+        allow_fractional:
+            When ``True``, no rounding is applied and the raw float share
+            delta is used (fractional venues, e.g. crypto).  When ``False``
+            (default), the delta is computed from the *unrounded* current and
+            target share quantities and only the final delta share count is
+            rounded to a whole number.  Note that this equities-style rounding
+            can strand sub-half-share dust (a delta of magnitude < 0.5 rounds
+            to no trade); venues that support fractional quantities should
+            pass ``allow_fractional=True``.
 
         Returns
         -------
         list[dict]
             One intent per symbol that needs trading, each shaped
             ``{"symbol": str, "side": OrderSide, "quantity": float}`` with a
-            whole-share, positive ``quantity``.
+            positive ``quantity`` (whole-share unless ``allow_fractional``).
         """
         weights = self._as_mapping(target_weights)
         price_map = self._as_mapping(prices)
@@ -193,15 +203,19 @@ class PositionManager:
             price = self._to_float(price_map.get(symbol))
             if price is None or price <= 0.0:
                 # Cannot size without a valid price (covers a held name with no
-                # quote, too — we leave it untouched rather than guess).
+                # quote, too - we leave it untouched rather than guess).
                 continue
 
             target_w = self._to_float(weights.get(symbol)) or 0.0
             target_notional = target_w * float(capital)
-            target_shares = round(target_notional / price)
+            target_shares = target_notional / price
 
-            current_shares = round(self._to_float(current.get(symbol)) or 0.0)
+            current_shares = self._to_float(current.get(symbol)) or 0.0
+            # Delta from the UNrounded current and target share quantities;
+            # only the final delta is rounded (whole-share venues).
             delta = target_shares - current_shares
+            if not allow_fractional:
+                delta = float(round(delta))
             if delta == 0:
                 continue
 

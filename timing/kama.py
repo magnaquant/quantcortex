@@ -5,7 +5,7 @@ KAMA (Perry Kaufman) is a moving average whose smoothing constant adapts to the
 tracks closely (fast); when price chops sideways the average lags heavily
 (slow), filtering out noise.
 
-Definitions (all strictly causal — value at ``t`` uses only data up to ``t``):
+Definitions (all strictly causal - value at ``t`` uses only data up to ``t``):
 
 * **Efficiency Ratio**
   ``ER_t = |P_t - P_{t-er_window}| / sum_{i=t-er_window+1..t} |P_i - P_{i-1}|``
@@ -120,11 +120,11 @@ class KAMA:
     ) -> np.ndarray:
         """Gate ``weights`` on the latest price-vs-KAMA trend.
 
-        * ``prices`` a single Series / 1-D array: whole-vector gating — if the
+        * ``prices`` a single Series / 1-D array: whole-vector gating - if the
           latest price is at/above KAMA the weights pass through, otherwise they
           are scaled flat (to zero).
         * ``prices`` a DataFrame / 2-D array (one column per asset): per-asset
-          gating — each asset's weight is kept only if that asset's latest price
+          gating - each asset's weight is kept only if that asset's latest price
           is at/above its KAMA, else zeroed.
         * a ``StrategyContext``-like object exposing ``.prices``.
 

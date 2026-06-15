@@ -1,7 +1,7 @@
 """Kelly-criterion position sizing.
 
 The Kelly criterion sizes a bet (or portfolio) to maximise the expected
-*logarithm* of wealth — equivalently the long-run geometric growth rate.  Full
+*logarithm* of wealth - equivalently the long-run geometric growth rate.  Full
 Kelly is growth-optimal but notoriously aggressive: it tolerates deep drawdowns
 and is acutely sensitive to estimation error in the edge / covariance.  In
 practice desks run **fractional Kelly** (typically 0.25-0.5x), trading a little
@@ -33,7 +33,7 @@ class KellyCriterion:
         is the standard prudent range.
     max_leverage:
         Upper bound on the leverage produced by :meth:`apply` (the lower bound
-        is 0 — Kelly never recommends a negative scaling of a directional bet).
+        is 0 - Kelly never recommends a negative scaling of a directional bet).
     """
 
     def __init__(self, fraction: float = 0.5, *, max_leverage: float = 1.0) -> None:
@@ -77,19 +77,19 @@ class KellyCriterion:
         expected_returns: np.ndarray,
         cov: np.ndarray,
     ) -> np.ndarray:
-        """Growth-optimal Kelly portfolio ``f* = Σ⁻¹ μ`` (times ``fraction``).
+        """Growth-optimal Kelly portfolio ``f* = Sigma^-1 mu`` (times ``fraction``).
 
         Parameters
         ----------
         expected_returns:
-            Vector of expected returns ``μ``, shape ``(n_assets,)``.
+            Vector of expected returns ``mu``, shape ``(n_assets,)``.
         cov:
-            Covariance matrix ``Σ``, shape ``(n_assets, n_assets)``.
+            Covariance matrix ``Sigma``, shape ``(n_assets, n_assets)``.
 
         Returns
         -------
         numpy.ndarray
-            The (fractional) Kelly allocation.  This is *not* normalised — its
+            The (fractional) Kelly allocation.  This is *not* normalised - its
             gross is the leverage Kelly prescribes; downstream layers decide how
             to deploy it.
         """
@@ -100,7 +100,7 @@ class KellyCriterion:
                 f"cov shape {sigma.shape} incompatible with expected_returns "
                 f"length {mu.size}."
             )
-        # Solve Σ f = μ (more stable than forming the explicit inverse);
+        # Solve Sigma f = mu (more stable than forming the explicit inverse);
         # lstsq tolerates a singular / near-singular covariance.
         f_star, *_ = np.linalg.lstsq(sigma, mu, rcond=None)
         return self.fraction * f_star
@@ -120,14 +120,21 @@ class KellyCriterion:
         continuous-Kelly result applied to the portfolio's own drift and
         variance::
 
-            scale = clip( fraction * (wᵀμ) / (wᵀΣw), 0, max_leverage )
+            scale = clip( fraction * (w'mu) / (w'Sigmaw), 0, max_leverage )
 
         i.e. we treat the ``w``-portfolio as a single synthetic asset with mean
-        ``wᵀμ`` and variance ``wᵀΣw`` and Kelly-size *that*.  The scaled weights
-        are clipped to the ``[-1, 1]`` contract and validated.
+        ``w'mu`` and variance ``w'Sigmaw`` and Kelly-size *that*.
+
+        The requested scalar scale is then capped so no element of the scaled
+        book exceeds the ``[-1, 1]`` per-asset contract:
+        ``effective_scale = min(scale, 1 / max|w_i|)``.  The capped scale is
+        applied *unclipped*, preserving the allocation proportions (per-asset
+        clipping would silently distort them and make the realized gross differ
+        from the prescribed scale).  ``last_scale`` reports the EFFECTIVE
+        (possibly capped) scale.
 
         A non-positive expected return (or non-positive variance) yields a zero
-        scale — Kelly declines to take a bet with no edge.
+        scale - Kelly declines to take a bet with no edge.
         """
         w = np.asarray(weights, dtype=np.float64).ravel()
         mu = np.asarray(expected_returns, dtype=np.float64).ravel()
@@ -152,12 +159,18 @@ class KellyCriterion:
             raw = self.fraction * (port_mean / port_var)
             scale = float(np.clip(raw, 0.0, self.max_leverage))
 
+        # Cap the scalar so no element leaves the [-1, 1] per-asset contract;
+        # the capped scale is applied unclipped to preserve proportions.
+        max_abs = float(np.max(np.abs(w))) if w.size else 0.0
+        if max_abs > 0.0:
+            scale = min(scale, 1.0 / max_abs)
+
         self.last_scale = scale
 
-        scaled = np.clip(w * scale, -1.0, 1.0)
-        # Gross of the scaled book is in_gross * scale (pre-clip); clipping only
-        # ever lowers it. Size the cap to the larger of the input gross and the
-        # levered gross so both a de-risk and a legitimate lever-up pass.
+        scaled = w * scale
+        # Gross of the scaled book is in_gross * scale. Size the cap to the
+        # larger of the input gross and the levered gross so both a de-risk
+        # and a legitimate lever-up pass.
         in_gross = float(np.abs(w).sum())
         max_gross = max(1.0, in_gross, in_gross * scale) + 1e-9
         return enforce_exposure_contract(

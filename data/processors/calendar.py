@@ -9,7 +9,9 @@ extra packages, so calendar logic always works in tests and CI.
 The fallback models the standard NYSE holiday schedule including weekend
 observance shifts (a holiday falling on Saturday is observed the preceding
 Friday; one falling on Sunday is observed the following Monday) and Juneteenth,
-which became a market holiday in 2021.
+which became a market holiday in 2021.  New Year's Day is special-cased per
+NYSE convention: when January 1 falls on a Saturday it is simply not observed
+(December 31 of the prior year remains a trading day).
 """
 
 from __future__ import annotations
@@ -74,8 +76,14 @@ def _us_market_holidays(year: int) -> set[_dt.date]:
     """Generate the set of US-equity market holidays for a calendar ``year``."""
     holidays: set[_dt.date] = set()
 
-    # New Year's Day (observed).
-    holidays.add(_observed(_dt.date(year, 1, 1)))
+    # New Year's Day. NYSE convention: when Jan 1 falls on a Saturday the
+    # holiday is *not* observed (Dec 31 of the prior year stays a trading
+    # day); a Sunday Jan 1 is observed the following Monday.
+    new_years = _dt.date(year, 1, 1)
+    if new_years.weekday() == 6:  # Sunday -> observed Monday
+        holidays.add(new_years + _dt.timedelta(days=1))
+    elif new_years.weekday() != 5:  # Saturday -> not observed
+        holidays.add(new_years)
     # Martin Luther King Jr. Day: 3rd Monday of January (since 1998).
     if year >= 1998:
         holidays.add(_nth_weekday(year, 1, 0, 3))
@@ -132,8 +140,12 @@ class TradingCalendar:
         return self._mcal is None
 
     def _holidays_in_range(self, start: pd.Timestamp, end: pd.Timestamp) -> set[_dt.date]:
+        # Generate one extra year on each side: an observed holiday can land
+        # in the calendar year adjacent to its nominal one (e.g. a Sunday
+        # Dec 25 observed the following Monday, Jan 1 of the next year... or a
+        # Sunday Jan 1 nominally belonging to the next year's generation).
         holidays: set[_dt.date] = set()
-        for year in range(start.year, end.year + 1):
+        for year in range(start.year - 1, end.year + 2):
             holidays |= _us_market_holidays(year)
         return holidays
 
@@ -163,7 +175,8 @@ class TradingCalendar:
             return len(sched.index) > 0
         if ts.weekday() >= 5:
             return False
-        return ts.date() not in _us_market_holidays(ts.year)
+        # Generate adjacent years too: observed holidays can cross year ends.
+        return ts.date() not in self._holidays_in_range(ts, ts)
 
     def next_session(self, date: DateLike) -> pd.Timestamp:
         """Return the first trading session strictly after ``date``."""

@@ -20,6 +20,7 @@ the returned weights satisfy the canonical *weight contract*.
 
 from __future__ import annotations
 
+import warnings
 from typing import Union
 
 import numpy as np
@@ -173,23 +174,86 @@ class RiskParity(PortfolioOptimizer):
             return np.full(n, 1.0 / n, dtype=np.float64)
         w = candidate / total
 
-        # Respect the configured upper bound; only relevant for tight books.
+        # Respect the configured upper bound via iterative water-filling: a
+        # single clip + global renormalisation would re-inflate weights above
+        # the bound.  Instead, weights exceeding `upper` are fixed AT `upper`
+        # and only the remaining mass is renormalised over the uncapped assets,
+        # repeating until no weight violates the bound.  Feasibility
+        # (n * upper >= 1) is checked upfront in `_compute_weights`.
         upper = self.weight_bounds[1]
         if np.any(w > upper):
-            w = np.clip(w, 0.0, upper)
-            s = w.sum()
-            if s <= 0.0 or not np.isfinite(s):
-                return np.full(n, 1.0 / n, dtype=np.float64)
-            w = w / s
+            w = w.copy()
+            capped = np.zeros(n, dtype=bool)
+            while True:
+                over = (w > upper + 1e-12) & ~capped
+                if not over.any():
+                    break
+                capped |= over
+                w[capped] = upper
+                free = ~capped
+                if not free.any():
+                    break
+                remaining = 1.0 - upper * float(capped.sum())
+                s = float(w[free].sum())
+                if s <= 0.0 or not np.isfinite(s):
+                    w[free] = remaining / float(free.sum())
+                else:
+                    w[free] *= remaining / s
         return w
 
     # ------------------------------------------------------------------
     # PortfolioOptimizer API
     # ------------------------------------------------------------------
     def _compute_weights(self, returns: pd.DataFrame, **kwargs) -> np.ndarray:
-        """Compute raw ERC weights satisfying the long-only contract."""
+        """Compute raw ERC weights satisfying the long-only contract.
+
+        Columns with fewer than 2 finite observations (dead assets) carry no
+        usable risk information; forward/backward/zero-filling them would
+        create zero-variance pseudo-assets that absorb most of the book.  They
+        are excluded from the optimization and re-inserted with weight 0.0 at
+        their original positions.  If *all* columns are dead the optimizer
+        falls back to equal weight with a warning.
+        """
+        df = pd.DataFrame(returns).apply(pd.to_numeric, errors="coerce")
+        df = df.replace([np.inf, -np.inf], np.nan)
+        n_total = df.shape[1]
+        alive = (df.notna().sum(axis=0) >= 2).to_numpy()
+
+        if not alive.any():
+            warnings.warn(
+                "RiskParity: every column has fewer than 2 finite "
+                "observations; falling back to equal weight.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return np.full(n_total, 1.0 / n_total, dtype=np.float64)
+
+        sub = df.loc[:, df.columns[alive]]
+        w_sub = self._optimize_subset(sub)
+
+        # Renormalise the optimized sub-vector to the long-only target sum and
+        # re-insert weight 0.0 at the dead-column positions.
+        s = float(w_sub.sum())
+        if s > 0.0 and np.isfinite(s):
+            w_sub = w_sub / s
+        out = np.zeros(n_total, dtype=np.float64)
+        out[alive] = w_sub
+        return out
+
+    def _optimize_subset(self, returns: pd.DataFrame) -> np.ndarray:
+        """Run the ERC machinery on the live-asset subset."""
         sigma = self._covariance(returns)
         n = sigma.shape[0]
+
+        # Upper-bound feasibility for the fully-invested book: there is no
+        # weight vector summing to 1 with every element <= upper when
+        # n * upper < 1.  Fail loudly rather than silently violating a bound.
+        upper = self.weight_bounds[1]
+        if n * upper < 1.0 - 1e-12:
+            raise ValueError(
+                f"RiskParity: upper weight bound {upper} is infeasible for "
+                f"{n} assets (n * upper = {n * upper:.6f} < 1.0)."
+            )
 
         if n == 1:
             return np.array([1.0], dtype=np.float64)
