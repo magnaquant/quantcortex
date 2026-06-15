@@ -29,6 +29,7 @@ regardless of the backend's internal ordering.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -37,6 +38,19 @@ import pandas as pd
 from portfolio.base import enforce_exposure_contract
 
 __all__ = ["HMMRegime", "BEAR", "SIDEWAYS", "BULL"]
+
+
+def _single_threaded_blas():
+    """Context manager pinning BLAS/OpenMP to one thread for deterministic fits.
+
+    Returns a no-op context if ``threadpoolctl`` is unavailable.
+    """
+    try:
+        from threadpoolctl import threadpool_limits
+
+        return threadpool_limits(limits=1)
+    except Exception:  # pragma: no cover - threadpoolctl ships with sklearn
+        return contextlib.nullcontext()
 
 # Canonical regime labels.
 BEAR: int = 0
@@ -115,14 +129,23 @@ class HMMRegime:
         # state with a singular covariance under covariance_type="full"), in
         # which case the memoryless GMM is the robust fallback.  This keeps the
         # regime gate *active* rather than silently disabling on a bad fit.
+        #
+        # Reproducibility: a non-converged EM near a regime boundary is
+        # sensitive to the float-reduction order of multithreaded BLAS, which
+        # can flip a borderline classification run to run and make a backtest
+        # non-deterministic.  Pinning BLAS to one thread for the (small, fast)
+        # fit makes the reductions order-stable, so the same data always yields
+        # the same regimes.  threadpoolctl ships with scikit-learn; if it is
+        # somehow absent we degrade to a no-op context.
         last_error: Optional[Exception] = None
         for model, backend in self._candidate_models():
             try:
-                model.fit(X)
-                if not self._params_finite(model):
-                    last_error = RuntimeError(f"{backend} fit produced non-finite params")
-                    continue
-                states = np.asarray(model.predict(X), dtype=int)
+                with _single_threaded_blas():
+                    model.fit(X)
+                    if not self._params_finite(model):
+                        last_error = RuntimeError(f"{backend} fit produced non-finite params")
+                        continue
+                    states = np.asarray(model.predict(X), dtype=int)
             except Exception as exc:  # noqa: BLE001 - try next backend
                 last_error = exc
                 continue
