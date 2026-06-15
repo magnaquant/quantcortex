@@ -145,6 +145,12 @@ class FactorExposureLimiter:
         gross-cap is sized to the input so a benign no-op still passes.
         """
         w = np.asarray(weights, dtype=np.float64).ravel()
+        # Operate on a book that already satisfies the per-asset [-1, 1]
+        # contract.  For an in-spec overlay input this is a no-op; it only
+        # matters for a malformed input, and it keeps the two return paths
+        # consistent (the no-offending-factor path must not hand back an
+        # out-of-box vector that the contract validator would then reject).
+        w = np.clip(w, -1.0, 1.0)
         cols = self._selected_columns(loadings)
         L_all = loadings[cols].to_numpy(dtype=np.float64)
 
@@ -182,14 +188,6 @@ class FactorExposureLimiter:
             coef, *_ = np.linalg.lstsq(gram, rhs, rcond=None)
             adjusted = adjusted + L @ coef
 
-        # Guaranteed-feasible fallback: exposures are linear in the weights, so
-        # uniformly shrinking the whole vector until the worst |exposure| hits
-        # the cap always succeeds and preserves the allocation direction.
-        exposures = L_all.T @ adjusted
-        worst = float(np.max(np.abs(exposures))) if exposures.size else 0.0
-        if worst > cap + tol:
-            adjusted = adjusted * (cap / worst)
-
         # Neutralising a tilt can, in principle, nudge gross above the input.
         # An exposure overlay must never *add* gross, so if that happens we
         # rescale the whole vector back down to the input gross (this only
@@ -198,7 +196,22 @@ class FactorExposureLimiter:
         if adj_gross > in_gross > 0.0:
             adjusted = adjusted * (in_gross / adj_gross)
 
+        # Enforce the per-asset [-1, 1] box BEFORE the final cap shrink: a clip
+        # changes the weights non-uniformly and can re-break a factor cap, so it
+        # must not be the last step.
         adjusted = np.clip(adjusted, -1.0, 1.0)
+
+        # Guaranteed-feasible final step: exposures are linear in the weights,
+        # so uniformly shrinking the whole vector until the worst |exposure|
+        # equals the cap always succeeds, preserves the allocation direction,
+        # and (scaling toward zero) keeps every weight inside [-1, 1] -- so it
+        # cannot undo the clip.  This is the backstop whether or not the
+        # iterative projection above converged within max_iter.
+        exposures = L_all.T @ adjusted
+        worst = float(np.max(np.abs(exposures))) if exposures.size else 0.0
+        if worst > cap + tol:
+            adjusted = adjusted * (cap / worst)
+
         return enforce_exposure_contract(
             adjusted, max_gross=max_gross, name="FactorExposureLimiter"
         )

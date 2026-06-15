@@ -144,6 +144,11 @@ class EventDrivenBacktest:
         # of being silently dropped by reindex+ffill.  Dates past the last
         # bar are dropped; duplicate snaps keep the LAST target for that bar.
         snapped = weights.sort_index().reindex(columns=symbols)
+        if len(snapped.index) == 0:
+            # Empty weights -> a fully flat (all-cash) run. Coerce the index to
+            # the price dtype so searchsorted does not choke on an empty
+            # int64 RangeIndex.
+            snapped.index = index[:0]
         pos = index.searchsorted(snapped.index, side="left")
         keep = pos < len(index)
         snapped = snapped.iloc[keep]

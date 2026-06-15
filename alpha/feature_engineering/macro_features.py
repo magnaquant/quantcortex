@@ -214,7 +214,7 @@ class MacroFeatures:
             return None
         return vix.rename("vix_level")
 
-    def vix_change_5d(self, macro: pd.DataFrame) -> Optional[pd.Series]:
+    def vix_change(self, macro: pd.DataFrame) -> Optional[pd.Series]:
         """Change in VIX over ``vix_change_window`` business days."""
         vix = self._resolve(macro, "VIX")
         if vix is None:
@@ -238,7 +238,7 @@ class MacroFeatures:
             return None
         return hy.rename("credit_spread_level")
 
-    def credit_spread_change_21d(self, macro: pd.DataFrame) -> Optional[pd.Series]:
+    def credit_spread_change(self, macro: pd.DataFrame) -> Optional[pd.Series]:
         """Change in HY spread over ``credit_change_window`` business days."""
         hy = self._resolve(macro, "HY")
         if hy is None:
@@ -262,7 +262,7 @@ class MacroFeatures:
             return None
         return pmi.diff(self.pmi_momentum_periods).rename("pmi_momentum")
 
-    def unrate_change_12m(self, macro: pd.DataFrame) -> Optional[pd.Series]:
+    def unrate_change(self, macro: pd.DataFrame) -> Optional[pd.Series]:
         """Change in unemployment rate over ``unrate_change_window`` days.
 
         The Sahm-rule intuition: a rising unemployment rate signals recession.
@@ -315,12 +315,12 @@ class MacroFeatures:
             self.slope_10y3m,
             self.vix_term_structure,
             self.vix_level,
-            self.vix_change_5d,
+            self.vix_change,
             self.credit_spread_level,
-            self.credit_spread_change_21d,
+            self.credit_spread_change,
             self.ig_hy_spread,
             self.pmi_momentum,
-            self.unrate_change_12m,
+            self.unrate_change,
             self.real_rate,
         ]
 
