@@ -21,7 +21,9 @@ w_t = R_t( T_t( A_t( S_t( X<=t ) ) ) )
      Risk   Timing  Alloc  Selection
 ```
 
-**Target performance (2018-2025 backtest):**
+**Design targets (2018-2025 backtest)** - aspirational objectives the strategies
+are built toward, not measured results bundled in this repo (run the notebooks
+on your own licensed price history to evaluate):
 - Multi-asset rotation: Sharpe > 1.10
 - Momentum ML: Sharpe > 0.9
 - Max drawdown < 15% with vol-targeting risk overlay
@@ -34,7 +36,9 @@ quantcortex runs **fully offline out of the box**. The scientific core is all
 that's required; every heavy/optional dependency (boosting libraries, PyTorch,
 FinBERT, Stable-Baselines3, broker SDKs, Redis, TimescaleDB) is imported lazily
 with a graceful fallback, so the tests and all five notebooks run with **no API
-keys and no network**.
+keys required**. The notebooks use live `yfinance` data when a network is
+available and fall back to deterministic synthetic data when it is not, so
+their numeric outputs are reproducible only in the offline (synthetic) path.
 
 ### Install
 
@@ -101,15 +105,24 @@ The platform is organized as seven composable layers. Each layer produces or con
 
 ### Weight Contract
 
-All portfolio and strategy components must satisfy this contract (enforced at runtime):
+Every **portfolio optimizer** output satisfies the strict contract (enforced at
+runtime by `enforce_weight_contract`):
 
 ```python
 # output: np.ndarray, shape (n_assets,)
 # dtype:  float64
 # sum:    1.0  (long-only) or 0.0 (market-neutral)
-# range:  each weight  in  [-1.0, 1.0]
+# range:  each weight in [-1.0, 1.0]
 # violation raises: WeightContractViolationError
 ```
+
+Timing and risk **overlays** legitimately scale gross exposure down (a fully
+de-risked book is flat, a half-scaled long-only book sums to 0.5 with the
+remainder in cash), so the *post-overlay* strategy output satisfies the relaxed
+**exposure contract** (`enforce_exposure_contract`): finite, 1-D float64, each
+weight in `[-1.0, 1.0]`, and gross (`sum |w|`) no greater than the input. In
+other words, `sum == 1.0` holds at the allocation layer; `sum <= 1.0` holds
+after timing and risk scaling.
 
 ---
 
@@ -118,16 +131,16 @@ All portfolio and strategy components must satisfy this contract (enforced at ru
 ```
 quantcortex/
 ├── data/
-│   ├── providers/          # yfinance, Polygon, Alpaca, CCXT, FRED, FMP
-│   ├── processors/         # calendar.py, adjustments.py, pit_enforcer.py
+│   ├── providers/          # base.py ABC + yfinance, Polygon, Alpaca, CCXT, FRED, FMP
+│   ├── processors/         # calendar.py, adjustments.py, pit_enforcer.py, lookahead_detector.py
 │   ├── storage/            # parquet_store.py, timescale_store.py, redis_cache.py
-│   └── universe/           # sp500_universe.py, nasdaq100_universe.py
+│   └── universe/           # base.py ABC + sp500_universe.py, nasdaq100_universe.py
 │
 ├── alpha/
 │   ├── factors/
-│   │   ├── classical/      # momentum, value, quality, low-vol
+│   │   ├── classical/      # momentum, value, quality, low-vol (+ _cross_section helpers)
 │   │   ├── ml/             # GBDT (XGBoost/LightGBM/CatBoost), neural
-│   │   └── nlp/            # FinBERT sentiment, earnings call scoring
+│   │   └── nlp/            # finbert_sentiment.py, news_scorer.py
 │   ├── validation/         # alphalens_report.py, factor_decay.py
 │   └── feature_engineering/ # alpha158.py, macro_features.py
 │
@@ -200,6 +213,7 @@ quantcortex/
 │   └── 05_live_trading_bridge.ipynb
 │
 ├── tests/
+│   ├── conftest.py             # shared synthetic-data fixtures
 │   ├── test_lookahead_detector.py
 │   ├── test_transaction_costs.py
 │   ├── test_weight_interface.py
