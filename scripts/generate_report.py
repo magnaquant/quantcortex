@@ -81,7 +81,7 @@ def _ann_sharpe(r: pd.Series) -> float:
     return float(r.mean() / r.std() * np.sqrt(252)) if r.std() > 0 else float("nan")
 
 
-def compute(start: str, end: str, live: bool = False) -> dict:
+def compute(start: str, end: str, live: bool = False, n_trials: int = 10) -> dict:
     from quantcortex.strategies.multi_asset_rotation import MultiAssetRotation
 
     px = load_prices(start, end, live)
@@ -91,7 +91,8 @@ def compute(start: str, end: str, live: bool = False) -> dict:
 
     ts = Tearsheet(rets)
     m = ts.compute()
-    m["dsr"] = compute_dsr(rets, n_trials=10)
+    m["dsr"] = compute_dsr(rets, n_trials=n_trials)
+    m["dsr_n_trials"] = n_trials
     spy = px["SPY"].pct_change().reindex(rets.index)
     ew = px.pct_change().mean(axis=1).reindex(rets.index)
     return {
@@ -148,7 +149,7 @@ def markdown_metrics(d: dict) -> str:
         ("Max drawdown", f"{m['max_drawdown']:+.2%}"),
         ("VaR 95% (daily)", f"{m['var_95']:.2%}"),
         ("CVaR 95% (daily)", f"{m['cvar_95']:.2%}"),
-        ("Deflated Sharpe (10 trials)", f"{m['dsr']:.3f}"),
+        (f"Deflated Sharpe ({m['dsr_n_trials']} trials)", f"{m['dsr']:.3f}"),
         ("SPY buy & hold Sharpe", f"{d['spy_sharpe']:+.2f}"),
         ("Equal-weight 6-ETF Sharpe", f"{d['ew_sharpe']:+.2f}"),
     ]
@@ -179,10 +180,14 @@ def main(argv) -> int:
     ap.add_argument("--imgdir", default="docs/img")
     ap.add_argument("--live", action="store_true",
                     help="refetch from yfinance instead of the bundled snapshot")
+    ap.add_argument("--n-trials", type=int, default=10,
+                    help="trials assumed for the Deflated Sharpe Ratio (default 10; the "
+                         "committed README report uses this default)")
     args = ap.parse_args(argv[1:])
 
     try:
-        d = compute(f"{args.start}-01-01", f"{args.end}-12-31", live=args.live)
+        d = compute(f"{args.start}-01-01", f"{args.end}-12-31", live=args.live,
+                    n_trials=args.n_trials)
     except Exception as exc:
         print(f"report generation failed: {exc}")
         return 1

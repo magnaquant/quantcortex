@@ -15,9 +15,10 @@ dividends accrue, so every live fetch returns slightly different data.
 reproducible examples and tests only. Whether committing this Yahoo-derived
 snapshot is acceptable for a given use (private repo, redistribution, etc.) is a
 repo-owner / legal decision this file cannot settle; if in doubt, the safest
-alternatives are a deterministic synthetic fixture or local regeneration (below,
-left gitignored). It is not an authoritative or survivorship-safe source.
-Regenerate or extend it with:
+alternatives are a deterministic synthetic fixture, or keeping real data
+local-only by passing `--live` to `scripts/generate_report.py` (which fetches
+fresh and writes nothing). It is not an authoritative or survivorship-safe
+source. Regenerate or extend the committed snapshot with:
 
 ```bash
 python -c "from quantcortex.data.providers.yfinance_provider import YFinanceProvider; \
