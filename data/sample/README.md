@@ -12,9 +12,12 @@ results would drift: `yfinance` re-adjusts historical closes over time as
 dividends accrue, so every live fetch returns slightly different data.
 
 **Provenance / licensing.** Derived from Yahoo Finance via `yfinance` for
-reproducible examples and tests only. It is a small derived dataset, not a
-redistribution of a licensed feed; do not treat it as an authoritative or
-survivorship-safe source. Regenerate or extend it with:
+reproducible examples and tests only. Whether committing this Yahoo-derived
+snapshot is acceptable for a given use (private repo, redistribution, etc.) is a
+repo-owner / legal decision this file cannot settle; if in doubt, the safest
+alternatives are a deterministic synthetic fixture or local regeneration (below,
+left gitignored). It is not an authoritative or survivorship-safe source.
+Regenerate or extend it with:
 
 ```bash
 python -c "from data.providers.yfinance_provider import YFinanceProvider; \

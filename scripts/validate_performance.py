@@ -135,11 +135,15 @@ def main(argv) -> int:
     ap.add_argument("end_year", nargs="?", default="2025")
     ap.add_argument("--pit", action="store_true",
                     help="define the momentum_ml universe from point-in-time S&P 500 membership")
+    ap.add_argument("--n-trials", type=int, default=10,
+                    help="number of strategy trials assumed for the Deflated Sharpe Ratio; "
+                         "set this to the true count of configurations you searched")
     args = ap.parse_args(argv[1:])
     start = f"{args.start_year}-01-01"
     end = f"{args.end_year}-12-31"
     print(f"quantcortex performance validation | window {start} -> {end}"
           + ("  [PIT universe]" if args.pit else ""))
+    print(f"Deflated Sharpe assumes n_trials = {args.n_trials}")
     print("=" * 78)
 
     rot_px = fetch_prices(ROTATION_UNIVERSE, start, end)
@@ -158,7 +162,7 @@ def main(argv) -> int:
     print(f"  {'Equal-weight universe':<26} Sharpe {ann_sharpe(ew):+5.2f}\n")
 
     print("Strategies (weekly/monthly rebalance, 3bps commission + 10bps slippage):")
-    rot = metrics(run_rotation(rot_px), n_trials=10)
+    rot = metrics(run_rotation(rot_px), n_trials=args.n_trials)
     print(fmt_row("multi_asset_rotation", rot, "[target Sharpe > 1.10]"))
 
     mom_syms, mom_label = momentum_universe(start, args.pit)
@@ -171,7 +175,7 @@ def main(argv) -> int:
                         f"yfinance ({len(mom_syms) - priceable} delisted/unpriceable)")
         print(f"\nmomentum_ml universe: {mom_label}{coverage}")
         print(f"momentum_ml data: {mom_px.shape[0]} days x {mom_px.shape[1]} names")
-        mom = metrics(run_momentum_ml(mom_px), n_trials=10)
+        mom = metrics(run_momentum_ml(mom_px), n_trials=args.n_trials)
         print(fmt_row("momentum_ml", mom, "[target Sharpe > 0.9]"))
 
     print("\n" + "=" * 78)
