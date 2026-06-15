@@ -29,5 +29,9 @@ data_cache/
 *.pkl
 *.pt
 
+# Generated reports (regenerable via scripts/generate_report.py).
+# The committed showcase image under docs/img/ is intentionally NOT ignored.
+reports/
+
 # OS
 .DS_Store
