@@ -1,21 +1,27 @@
-"""Generate a publication-quality tearsheet for a strategy backtest.
+"""Generate separate, publication-quality charts + markdown tables for a backtest.
 
-Runs a reference strategy on real data through the mandatory-cost engine and
-renders a professional multi-panel report - cumulative growth vs benchmarks,
-underwater drawdown, rolling Sharpe, monthly-returns heatmap, and a metrics
-table - saved as a PNG (for the README) and a self-contained HTML page.
+Runs the multi_asset_rotation strategy on real data through the mandatory-cost
+engine and emits, as *separate* artifacts (so they can be embedded individually
+in docs):
 
-    python scripts/generate_report.py                      # multi_asset_rotation, 2018-2025
-    python scripts/generate_report.py --out docs/img/x.png --start 2015
+* ``docs/img/equity_vs_benchmarks.png`` - growth of $1 vs SPY and equal-weight
+* ``docs/img/drawdown.png``             - underwater drawdown
+* ``docs/img/rolling_sharpe.png``       - rolling 126-day Sharpe
+* a **performance metrics** markdown table (printed to stdout)
+* a **monthly returns** markdown table (printed to stdout)
 
-Honest by construction: it reports the measured numbers (net of costs), it does
-not tune toward the design targets. Needs network + yfinance + matplotlib.
+Every number printed is computed from the run, so docs can quote it verbatim.
+The backtest is deterministic (see timing/hmm_regime), so the figures reproduce
+given the same price-data window. Honest by construction - no tuning toward the
+design targets. Needs network + yfinance + matplotlib.
+
+    python scripts/generate_report.py
+    python scripts/generate_report.py --start 2015 --end 2024
 """
 
 from __future__ import annotations
 
 import argparse
-import base64
 import logging
 import sys
 import warnings
@@ -32,156 +38,153 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
 
 from backtest.costs.transaction_costs import TransactionCostModel
 from backtest.engines.vectorized import VectorizedBacktest
 from backtest.metrics.tearsheet import Tearsheet
+from backtest.validation.deflated_sharpe import compute_dsr
 
 ROTATION_UNIVERSE = ["QQQ", "VGT", "GLD", "TLT", "SPY", "VIG"]
+SNAPSHOT = Path(__file__).resolve().parent.parent / "data" / "sample" / "rotation_prices.csv"
+
+
+def load_prices(start: str, end: str, live: bool) -> pd.DataFrame:
+    """Load prices for the report.
+
+    Default: the bundled fixed snapshot (``data/sample/rotation_prices.csv``) so
+    the committed charts/tables are exactly reproducible.  ``--live`` refetches
+    from yfinance instead - note that yfinance re-adjusts historical closes over
+    time, so a live fetch will differ slightly from the snapshot (the strategy
+    itself is deterministic given fixed data).
+    """
+    if not live and SNAPSHOT.exists():
+        px = pd.read_csv(SNAPSHOT, index_col="date", parse_dates=True)
+        return px.loc[start:end].dropna(how="all").ffill().dropna()
+    from data.providers.yfinance_provider import YFinanceProvider
+
+    px = YFinanceProvider().get_prices(ROTATION_UNIVERSE, start=start, end=end)
+    if px is None or px.empty:
+        raise RuntimeError("could not fetch prices (need network + yfinance), and "
+                           "no bundled snapshot is available")
+    return px.dropna(how="all").ffill().dropna()
 
 
 def _growth(returns: pd.Series) -> pd.Series:
     return (1.0 + returns.fillna(0.0)).cumprod()
 
 
-def build_report(start: str, end: str):
-    from data.providers.yfinance_provider import YFinanceProvider
+def _ann_sharpe(r: pd.Series) -> float:
+    r = r.dropna()
+    return float(r.mean() / r.std() * np.sqrt(252)) if r.std() > 0 else float("nan")
+
+
+def compute(start: str, end: str, live: bool = False) -> dict:
     from strategies.multi_asset_rotation import MultiAssetRotation
 
-    px = YFinanceProvider().get_prices(ROTATION_UNIVERSE, start=start, end=end)
-    if px is None or px.empty:
-        raise RuntimeError("could not fetch prices (need network + yfinance)")
-    px = px.dropna(how="all").ffill().dropna()
-
+    px = load_prices(start, end, live)
     weekly = px.index[px.index.weekday == 0]
     weights = MultiAssetRotation().generate_weights(px, weekly)
-    result = VectorizedBacktest(TransactionCostModel(), capital=1.0).run(weights, px)
-    rets = result.returns.dropna()
+    rets = VectorizedBacktest(TransactionCostModel(), capital=1.0).run(weights, px).returns.dropna()
 
     ts = Tearsheet(rets)
     m = ts.compute()
-    m["dsr"] = __import__(
-        "backtest.validation.deflated_sharpe", fromlist=["compute_dsr"]
-    ).compute_dsr(rets, n_trials=10)
-
+    m["dsr"] = compute_dsr(rets, n_trials=10)
     spy = px["SPY"].pct_change().reindex(rets.index)
     ew = px.pct_change().mean(axis=1).reindex(rets.index)
+    return {
+        "px": px, "rets": rets, "ts": ts, "m": m,
+        "strat_g": _growth(rets), "spy_g": _growth(spy), "ew_g": _growth(ew),
+        "spy_sharpe": _ann_sharpe(spy), "ew_sharpe": _ann_sharpe(ew),
+        "monthly": ts.monthly_returns_table(),
+    }
 
-    strat_g, spy_g, ew_g = _growth(rets), _growth(spy), _growth(ew)
 
+def save_charts(d: dict, imgdir: Path) -> None:
+    imgdir.mkdir(parents=True, exist_ok=True)
     plt.style.use("seaborn-v0_8-darkgrid")
-    fig = plt.figure(figsize=(14, 11))
-    gs = GridSpec(3, 2, figure=fig, height_ratios=[1.1, 0.9, 1.0], hspace=0.45, wspace=0.22)
-    fig.suptitle(
-        "quantcortex - Multi-Asset Rotation tearsheet\n"
-        f"{rets.index[0].date()} to {rets.index[-1].date()} | weekly rebalance | "
-        "3 bps commission + 10 bps slippage (measured, net of costs)",
-        fontsize=13, fontweight="bold",
-    )
 
-    # Row 0: growth of $1 vs benchmarks.
-    ax = fig.add_subplot(gs[0, :])
-    ax.plot(strat_g.index, strat_g.to_numpy(), label="Multi-Asset Rotation", color="C0", lw=1.6)
-    ax.plot(spy_g.index, spy_g.to_numpy(), label="SPY (buy & hold)", color="C7", lw=1.1, alpha=0.8)
-    ax.plot(ew_g.index, ew_g.to_numpy(), label="Equal-weight 6-ETF", color="C2", lw=1.1, alpha=0.8)
-    ax.set_title("Growth of $1 (vs benchmarks)")
+    fig, ax = plt.subplots(figsize=(11, 4.2))
+    ax.plot(d["strat_g"].index, d["strat_g"].to_numpy(), label="Multi-Asset Rotation", color="C0", lw=1.7)
+    ax.plot(d["spy_g"].index, d["spy_g"].to_numpy(), label="SPY (buy & hold)", color="C7", lw=1.1, alpha=0.85)
+    ax.plot(d["ew_g"].index, d["ew_g"].to_numpy(), label="Equal-weight 6-ETF", color="C2", lw=1.1, alpha=0.85)
+    ax.set_title("Growth of $1 - Multi-Asset Rotation vs benchmarks (net of costs)")
     ax.set_ylabel("Growth of $1")
     ax.legend(loc="upper left", framealpha=0.9)
+    fig.tight_layout(); fig.savefig(imgdir / "equity_vs_benchmarks.png", dpi=130); plt.close(fig)
 
-    # Row 1: drawdown + rolling Sharpe.
-    ax_dd = fig.add_subplot(gs[1, 0])
-    dd = ts.drawdown_series()
-    ax_dd.fill_between(dd.index, dd.to_numpy(), 0.0, color="C3", alpha=0.45)
-    ax_dd.set_title("Underwater (drawdown)")
-    ax_dd.set_ylabel("Drawdown")
+    fig, ax = plt.subplots(figsize=(11, 3.4))
+    dd = d["ts"].drawdown_series()
+    ax.fill_between(dd.index, dd.to_numpy(), 0.0, color="C3", alpha=0.45)
+    ax.set_title("Underwater (drawdown)")
+    ax.set_ylabel("Drawdown")
+    fig.tight_layout(); fig.savefig(imgdir / "drawdown.png", dpi=130); plt.close(fig)
 
-    ax_rs = fig.add_subplot(gs[1, 1])
-    rs = ts.rolling_sharpe(126)
-    ax_rs.plot(rs.index, rs.to_numpy(), color="C4", lw=1.2)
-    ax_rs.axhline(0.0, color="k", lw=0.8)
-    ax_rs.set_title("Rolling Sharpe (126d)")
+    fig, ax = plt.subplots(figsize=(11, 3.4))
+    rs = d["ts"].rolling_sharpe(126)
+    ax.plot(rs.index, rs.to_numpy(), color="C4", lw=1.3)
+    ax.axhline(0.0, color="k", lw=0.8)
+    ax.set_title("Rolling Sharpe (126-day)")
+    ax.set_ylabel("Sharpe")
+    fig.tight_layout(); fig.savefig(imgdir / "rolling_sharpe.png", dpi=130); plt.close(fig)
 
-    # Row 2: monthly heatmap + metrics table.
-    ax_hm = fig.add_subplot(gs[2, 0])
-    table = ts.monthly_returns_table()
-    data = table.drop(columns=["YTD"], errors="ignore")
-    mat = data.to_numpy(dtype=float)
-    vlim = float(np.nanmax(np.abs(mat))) if np.isfinite(mat).any() else 0.05
-    im = ax_hm.imshow(mat, aspect="auto", cmap="RdYlGn", vmin=-vlim, vmax=vlim)
-    ax_hm.set_xticks(range(len(data.columns)))
-    ax_hm.set_xticklabels(data.columns, rotation=45, ha="right", fontsize=7)
-    ax_hm.set_yticks(range(len(data.index)))
-    ax_hm.set_yticklabels(data.index, fontsize=7)
-    ax_hm.set_title("Monthly returns")
-    fig.colorbar(im, ax=ax_hm, fraction=0.046, pad=0.04)
 
-    ax_tbl = fig.add_subplot(gs[2, 1])
-    ax_tbl.set_axis_off()
+def markdown_metrics(d: dict) -> str:
+    m = d["m"]
     rows = [
-        ("CAGR", f"{m['cagr']:+.2%}"), ("Ann. volatility", f"{m['ann_vol']:.2%}"),
-        ("Sharpe", f"{m['sharpe']:+.2f}"), ("Sortino", f"{m['sortino']:+.2f}"),
-        ("Calmar", f"{m['calmar']:+.2f}"), ("Max drawdown", f"{m['max_drawdown']:+.2%}"),
-        ("VaR 95%", f"{m['var_95']:.2%}"), ("CVaR 95%", f"{m['cvar_95']:.2%}"),
-        ("Deflated Sharpe", f"{m['dsr']:.3f}"), ("Design target", "Sharpe > 1.10"),
+        ("CAGR", f"{m['cagr']:+.2%}"),
+        ("Annualized volatility", f"{m['ann_vol']:.2%}"),
+        ("Sharpe", f"{m['sharpe']:+.2f}"),
+        ("Sortino", f"{m['sortino']:+.2f}"),
+        ("Calmar", f"{m['calmar']:+.2f}"),
+        ("Max drawdown", f"{m['max_drawdown']:+.2%}"),
+        ("VaR 95% (daily)", f"{m['var_95']:.2%}"),
+        ("CVaR 95% (daily)", f"{m['cvar_95']:.2%}"),
+        ("Deflated Sharpe (10 trials)", f"{m['dsr']:.3f}"),
+        ("SPY buy & hold Sharpe", f"{d['spy_sharpe']:+.2f}"),
+        ("Equal-weight 6-ETF Sharpe", f"{d['ew_sharpe']:+.2f}"),
     ]
-    tbl = ax_tbl.table(cellText=rows, colLabels=["Metric", "Value"],
-                       loc="center", cellLoc="left")
-    tbl.auto_set_font_size(False)
-    tbl.set_fontsize(10)
-    tbl.scale(1.0, 1.5)
-    ax_tbl.set_title("Performance summary", pad=12)
-
-    return fig, m
+    out = ["| Metric | Value |", "|--------|-------|"]
+    out += [f"| {k} | {v} |" for k, v in rows]
+    return "\n".join(out)
 
 
-def write_html(html_path: Path, png_path: Path, m: dict) -> None:
-    b64 = base64.b64encode(png_path.read_bytes()).decode("ascii")
-    rows = "".join(
-        f"<tr><td>{k}</td><td>{v}</td></tr>"
-        for k, v in [
-            ("CAGR", f"{m['cagr']:+.2%}"), ("Sharpe", f"{m['sharpe']:+.2f}"),
-            ("Sortino", f"{m['sortino']:+.2f}"), ("Calmar", f"{m['calmar']:+.2f}"),
-            ("Max drawdown", f"{m['max_drawdown']:+.2%}"), ("Deflated Sharpe", f"{m['dsr']:.3f}"),
-        ]
-    )
-    html_path.write_text(
-        "<!doctype html><meta charset='utf-8'>"
-        "<title>quantcortex report</title>"
-        "<body style='font-family:system-ui;max-width:1100px;margin:2rem auto'>"
-        "<h1>quantcortex - Multi-Asset Rotation</h1>"
-        "<p>Measured, net of costs. Targets are aspirational design goals.</p>"
-        f"<table border=1 cellpadding=6 style='border-collapse:collapse'>{rows}</table>"
-        f"<p><img style='max-width:100%' src='data:image/png;base64,{b64}'></p>"
-        "</body>"
-    )
+def markdown_monthly(d: dict) -> str:
+    table = d["monthly"]
+    cols = list(table.columns)
+    header = "| Year | " + " | ".join(cols) + " |"
+    sep = "|------|" + "|".join(["-----"] * len(cols)) + "|"
+    lines = [header, sep]
+    for year, row in table.iterrows():
+        cells = []
+        for c in cols:
+            v = row[c]
+            cells.append("" if pd.isna(v) else f"{v*100:+.1f}")
+        lines.append(f"| {year} | " + " | ".join(cells) + " |")
+    return "\n".join(lines)
 
 
 def main(argv) -> int:
-    ap = argparse.ArgumentParser(description="generate a strategy tearsheet report")
+    ap = argparse.ArgumentParser(description="generate separate tearsheet charts + tables")
     ap.add_argument("--start", default="2018")
     ap.add_argument("--end", default="2025")
-    ap.add_argument("--out", default="docs/img/multi_asset_rotation_tearsheet.png")
-    ap.add_argument("--html", default="reports/multi_asset_rotation.html")
+    ap.add_argument("--imgdir", default="docs/img")
+    ap.add_argument("--live", action="store_true",
+                    help="refetch from yfinance instead of the bundled snapshot")
     args = ap.parse_args(argv[1:])
 
     try:
-        fig, m = build_report(f"{args.start}-01-01", f"{args.end}-12-31")
+        d = compute(f"{args.start}-01-01", f"{args.end}-12-31", live=args.live)
     except Exception as exc:
         print(f"report generation failed: {exc}")
         return 1
 
-    png = Path(args.out)
-    png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(png, dpi=130, bbox_inches="tight")
-    plt.close(fig)
-    print(f"wrote {png}  (Sharpe {m['sharpe']:+.2f}, CAGR {m['cagr']:+.2%}, "
-          f"maxDD {m['max_drawdown']:+.1%}, DSR {m['dsr']:.3f})")
-
-    html = Path(args.html)
-    html.parent.mkdir(parents=True, exist_ok=True)
-    write_html(html, png, m)
-    print(f"wrote {html}")
+    save_charts(d, Path(args.imgdir))
+    window = f"{d['rets'].index[0].date()} to {d['rets'].index[-1].date()}"
+    print(f"# Charts written to {args.imgdir}/ for window {window}\n")
+    print("## Performance metrics (markdown)\n")
+    print(markdown_metrics(d))
+    print("\n## Monthly returns %, (markdown)\n")
+    print(markdown_monthly(d))
     return 0
 
 
