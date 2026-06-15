@@ -42,10 +42,14 @@ vintage and will move as data is revised.
   **survivorship-biased** - the universe is today's large-caps, which excludes
   firms that were delisted or merged over the window, inflating the result.
 - **A clean evaluation needs a licensed point-in-time feed** with
-  delisted-name coverage and historical index constituents (see
-  `data/universe/` for the point-in-time membership plumbing). `yfinance`
-  adjusted closes are adequate for the all-ETF rotation (none were delisted) but
-  not for survivorship-safe single-name research.
+  delisted-name coverage and historical index constituents. The point-in-time
+  membership is already available via `SP500Universe.from_wikipedia()`, and
+  `python scripts/survivorship_demo.py` quantifies the gap concretely: of the
+  501 S&P 500 names as of 2018-06-01, 122 are gone today and **55 are no longer
+  priceable** on `yfinance` (acquired/delisted) - exactly the rows a
+  survivor-only single-name backtest omits. `yfinance` adjusted closes are
+  adequate for the all-ETF rotation (none were delisted) but a clean single-name
+  read still needs delisted-name *price* history from a licensed vendor.
 
 ## What this validates
 

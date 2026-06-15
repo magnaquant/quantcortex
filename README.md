@@ -88,6 +88,19 @@ jupyter lab research/   # 01 data quality -> 02 factors -> 03 portfolios -> 04 b
 Each notebook is self-contained and falls back to deterministic synthetic data
 when offline, so they always execute cell-by-cell.
 
+### Validation & operations scripts
+
+```bash
+python scripts/validate_performance.py     # measured backtest vs design targets (real data)
+python scripts/survivorship_demo.py        # quantify S&P 500 survivorship bias (PIT membership)
+python scripts/paper_trade_cycle.py        # one rebalance cycle: offline dry-run, or Alpaca paper
+```
+
+`validate_performance.py` reports honest measured Sharpe/CAGR/DSR vs buy-and-hold
+(see [PERFORMANCE.md](PERFORMANCE.md)); `survivorship_demo.py` shows how many
+past index members a survivor-only feed drops; `paper_trade_cycle.py` runs the
+full execution path (add `--submit` with `ALPACA_*` set to place paper orders).
+
 ### Go live (Phase 4)
 
 Copy `.env.example` to `.env`, add your Alpaca / Interactive Brokers credentials,
@@ -142,7 +155,7 @@ quantcortex/
 │   ├── providers/          # base.py ABC + yfinance, Polygon, Alpaca, CCXT, FRED, FMP
 │   ├── processors/         # calendar.py, adjustments.py, pit_enforcer.py, lookahead_detector.py
 │   ├── storage/            # parquet_store.py, timescale_store.py, redis_cache.py
-│   └── universe/           # base.py ABC + sp500_universe.py, nasdaq100_universe.py
+│   └── universe/           # base ABC, sp500/nasdaq100 + sp500_wikipedia.py (PIT)
 │
 ├── alpha/
 │   ├── factors/
@@ -220,6 +233,11 @@ quantcortex/
 │   ├── 04_backtest_analysis.ipynb
 │   └── 05_live_trading_bridge.ipynb
 │
+├── scripts/
+│   ├── validate_performance.py  # measured out-of-sample backtest vs targets
+│   ├── paper_trade_cycle.py     # one rebalance cycle (offline / Alpaca paper)
+│   └── survivorship_demo.py     # quantify S&P 500 survivorship bias (PIT)
+│
 ├── tests/
 │   ├── conftest.py             # shared synthetic-data fixtures
 │   ├── test_lookahead_detector.py
@@ -233,6 +251,7 @@ quantcortex/
 ├── pyproject.toml
 ├── .env.example
 ├── .gitignore
+├── PERFORMANCE.md              # measured 2018-2025 results (honest, reproducible)
 └── LICENSE
 ```
 
@@ -258,7 +277,7 @@ Where `SR*` = observed max Sharpe, `SR0` = expected max under the null, `gamma3`
 ### 4. Seven Backtesting Pitfall Categories (enforced programmatically)
 1. **Look-ahead bias** - `lookahead_audit.py` detects future data leakage
 2. **Overfitting** - DSR + BHY multiple-testing correction
-3. **Survivorship bias** - `survivorship_check.py` validates universe construction
+3. **Survivorship bias** - universes are queried *as of* a date via point-in-time membership (`data/universe/`); `SP500Universe.from_wikipedia()` reconstructs real historical constituents (verified: of the 501 names in the index on 2018-06-01, 122 are gone today and 55 are no longer priceable - the rows a survivor-only backtest silently omits, quantified by `scripts/survivorship_demo.py`). `survivorship_check.py` validates that a backtest only used PIT-valid members.
 4. **Data adjustment errors** - split/dividend-adjusted price validation
 5. **Multiple testing bias** - BHY correction on all factor IC tests
 6. **Transaction cost neglect** - costs mandatory in all backtest engines
@@ -293,12 +312,15 @@ volume_cap  = 0.10     # max 10% of 20-day ADV
 - **Selection:** Information Ratio relative to QQQ
 - **Allocation:** Residual momentum within selected asset groups
 - **Risk gate:** HMM regime + VIX scaling
-- **Target:** Sharpe > 1.10 (2018-2025)
+- **Design target:** Sharpe > 1.10 (2018-2025). **Measured: ~0.05** on real data
+  (defensive rotation trails buy-and-hold in a bull window). See
+  [PERFORMANCE.md](PERFORMANCE.md).
 
 ### Momentum ML (`strategies/momentum_ml.py`)
 - GBDT cross-sectional momentum with alpha158 features
 - Walk-forward refit every quarter
-- Target: Sharpe > 0.9
+- **Design target:** Sharpe > 0.9. **Measured: ~0.64** (survivorship-biased
+  single-name read). See [PERFORMANCE.md](PERFORMANCE.md).
 
 ### DRL Portfolio (`strategies/drl_portfolio.py`)
 - PPO agent trained on rolling 3-year windows
@@ -314,7 +336,7 @@ volume_cap  = 0.10     # max 10% of 20-day ADV
 | **Phase 1** | Data layer + PIT enforcement + universe construction | Complete |
 | **Phase 2** | Alpha factor library + walk-forward validation harness | Complete |
 | **Phase 3** | Portfolio construction + backtest engines + DSR reporting | Complete |
-| **Phase 4** | Live execution layer (Alpaca paper -> IB live) | Code complete, tested offline - live broker round-trip pending account credentials |
+| **Phase 4** | Live execution layer (Alpaca paper -> IB live) | Adapters verified API-conformant vs real SDKs (alpaca-trade-api, ib_insync, ccxt); `scripts/paper_trade_cycle.py` runs the full cycle. Actual order round-trip pending your paper credentials. |
 | **Phase 5** | DRL allocator + FinBERT sentiment overlay | Complete |
 
 ---
