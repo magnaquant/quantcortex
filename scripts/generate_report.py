@@ -110,14 +110,18 @@ def save_charts(d: dict, imgdir: Path) -> None:
     ax.set_title("Growth of $1 - Multi-Asset Rotation vs benchmarks (net of costs)")
     ax.set_ylabel("Growth of $1")
     ax.legend(loc="upper left", framealpha=0.9)
-    fig.tight_layout(); fig.savefig(imgdir / "equity_vs_benchmarks.png", dpi=130); plt.close(fig)
+    fig.tight_layout()
+    fig.savefig(imgdir / "equity_vs_benchmarks.png", dpi=130)
+    plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(11, 3.4))
     dd = d["ts"].drawdown_series()
     ax.fill_between(dd.index, dd.to_numpy(), 0.0, color="C3", alpha=0.45)
     ax.set_title("Underwater (drawdown)")
     ax.set_ylabel("Drawdown")
-    fig.tight_layout(); fig.savefig(imgdir / "drawdown.png", dpi=130); plt.close(fig)
+    fig.tight_layout()
+    fig.savefig(imgdir / "drawdown.png", dpi=130)
+    plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(11, 3.4))
     rs = d["ts"].rolling_sharpe(126)
@@ -125,7 +129,9 @@ def save_charts(d: dict, imgdir: Path) -> None:
     ax.axhline(0.0, color="k", lw=0.8)
     ax.set_title("Rolling Sharpe (126-day)")
     ax.set_ylabel("Sharpe")
-    fig.tight_layout(); fig.savefig(imgdir / "rolling_sharpe.png", dpi=130); plt.close(fig)
+    fig.tight_layout()
+    fig.savefig(imgdir / "rolling_sharpe.png", dpi=130)
+    plt.close(fig)
 
 
 def markdown_metrics(d: dict) -> str:

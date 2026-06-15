@@ -43,7 +43,7 @@ def main(argv) -> int:
     dropped = sorted(past - today)
     added = sorted(today - past)
 
-    print(f"S&P 500 point-in-time membership (Wikipedia reconstruction)")
+    print("S&P 500 point-in-time membership (Wikipedia reconstruction)")
     print("=" * 70)
     print(f"  members as of {as_of}: {len(past)}")
     print(f"  members today:          {len(today)}")
@@ -65,7 +65,7 @@ def main(argv) -> int:
         unpriceable = sorted(set(dropped) - set(priceable))
         print(f"\n  of the {len(dropped)} dropped names, {len(priceable)} are still")
         print(f"  priceable on yfinance and {len(unpriceable)} are NOT (delisted/")
-        print(f"  merged/renamed) - the rows a survivor-only backtest omits.")
+        print("  merged/renamed) - the rows a survivor-only backtest omits.")
         print(f"  examples no longer priceable: {unpriceable[:12]}")
     except Exception as exc:
         print(f"\n  (pricing step skipped: {type(exc).__name__})")

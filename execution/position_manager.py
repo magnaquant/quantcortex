@@ -3,7 +3,7 @@
 The :class:`PositionManager` maintains an in-memory book of :class:`Position`
 objects, updated either from filled :class:`Order` objects (the live path) or
 from raw ``(symbol, qty_delta, price)`` deltas (the backtest / manual path).  It
-also converts a *target weight* allocation - the output of the portfolio layer  - 
+also converts a *target weight* allocation - the output of the portfolio layer  -
 into a concrete list of order intents given current holdings and capital.
 
 Positions use a running volume-weighted average price (VWAP) so that

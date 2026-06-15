@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Sequence, Union
 
 import pandas as pd
 
-from data.providers.base import DataProvider, FUNDAMENTAL_COLUMNS, _as_symbol_list
+from data.providers.base import FUNDAMENTAL_COLUMNS, DataProvider, _as_symbol_list
 
 __all__ = ["PolygonProvider"]
 

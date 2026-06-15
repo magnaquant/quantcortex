@@ -102,7 +102,16 @@ filterwarnings = [
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+# Notebooks legitimately set up the environment (sys.path, matplotlib backend)
+# before imports and use terse cells; linting generated notebooks is noise.
+extend-exclude = ["research", ".venv"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Operational scripts intentionally set the matplotlib backend / warnings /
+# logging levels before importing modules that pull those libraries in, so
+# module-level imports are not at the very top (E402 is expected, not a defect).
+"scripts/*" = ["E402"]

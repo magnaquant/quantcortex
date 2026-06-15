@@ -17,9 +17,8 @@ NYSE convention: when January 1 falls on a Saturday it is simply not observed
 from __future__ import annotations
 
 import datetime as _dt
-from typing import Optional, Union
+from typing import Union
 
-import numpy as np
 import pandas as pd
 
 __all__ = ["TradingCalendar"]

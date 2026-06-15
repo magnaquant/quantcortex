@@ -1,7 +1,7 @@
 """FRED (Federal Reserve Economic Data) macro provider.
 
 Fetches one or more economic time series from the St. Louis Fed via the
-``fredapi`` library and assembles them into a wide, date-indexed DataFrame  - 
+``fredapi`` library and assembles them into a wide, date-indexed DataFrame  -
 the platform's canonical macro shape.  OHLCV and fundamentals are not served
 here.
 
