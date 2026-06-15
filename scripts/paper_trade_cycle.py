@@ -36,6 +36,9 @@ import pandas as pd
 
 warnings.filterwarnings("ignore")
 logging.getLogger("hmmlearn").setLevel(logging.ERROR)
+# yfinance logs network failures (DNS/HTTP) at error level; the offline fallback
+# is expected, so quiet its logger to keep the dry-run output clean.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 from quantcortex.execution.order_manager import OrderManager, OrderSide
 from quantcortex.execution.position_manager import PositionManager
@@ -47,16 +50,21 @@ UNIVERSE = ["QQQ", "VGT", "GLD", "TLT", "SPY", "VIG"]
 DEFAULT_CAPITAL = 100_000.0
 
 
-def load_prices() -> pd.DataFrame:
-    """Recent daily prices for the universe; synthetic fallback if offline."""
-    try:
-        from quantcortex.data.providers.yfinance_provider import YFinanceProvider
+def load_prices(offline: bool = False) -> pd.DataFrame:
+    """Recent daily prices for the universe; synthetic fallback if offline.
 
-        px = YFinanceProvider().get_prices(UNIVERSE, start="2022-01-01")
-        if px is not None and not px.empty and px.shape[0] > 200:
-            return px.dropna(how="all").ffill().dropna()
-    except Exception as exc:
-        print(f"[offline] yfinance unavailable ({type(exc).__name__}); synthetic prices.")
+    With ``offline=True`` the network is never touched: the synthetic series is
+    used directly, so the dry-run is deterministic and emits no provider noise.
+    """
+    if not offline:
+        try:
+            from quantcortex.data.providers.yfinance_provider import YFinanceProvider
+
+            px = YFinanceProvider().get_prices(UNIVERSE, start="2022-01-01")
+            if px is not None and not px.empty and px.shape[0] > 200:
+                return px.dropna(how="all").ffill().dropna()
+        except Exception as exc:
+            print(f"[offline] yfinance unavailable ({type(exc).__name__}); synthetic prices.")
     rng = np.random.default_rng(0)
     dates = pd.bdate_range("2022-01-01", periods=600)
     px = 100 * np.exp(np.cumsum(rng.normal(0.0003, 0.011, (600, len(UNIVERSE))), axis=0))
@@ -171,9 +179,12 @@ def run_paper(prices, target, submit: bool) -> int:
 def main(argv) -> int:
     ap = argparse.ArgumentParser(description="quantcortex paper rebalance cycle")
     ap.add_argument("--submit", action="store_true", help="actually place paper orders")
+    ap.add_argument("--offline", action="store_true",
+                    help="force the synthetic-price dry-run; never touch the network "
+                         "(deterministic, no provider noise) even if ALPACA_* is set")
     args = ap.parse_args(argv[1:])
 
-    prices = load_prices()
+    prices = load_prices(offline=args.offline)
     target = latest_target(prices)
     print(f"universe: {UNIVERSE}")
     print(f"target weights:\n{target.round(3).to_string() if not target.empty else '  (flat / no signal)'}\n")
@@ -181,6 +192,8 @@ def main(argv) -> int:
         print("strategy is flat this cycle; nothing to trade.")
         return 0
 
+    if args.offline:
+        return run_offline(prices, target)
     has_creds = bool(os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY"))
     return run_paper(prices, target, args.submit) if has_creds else run_offline(prices, target)
 
