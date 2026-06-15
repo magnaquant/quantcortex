@@ -21,12 +21,20 @@ w_t = R_t( T_t( A_t( S_t( X<=t ) ) ) )
      Risk   Timing  Alloc  Selection
 ```
 
-**Design targets (2018-2025 backtest)** - aspirational objectives the strategies
-are built toward, not measured results bundled in this repo (run the notebooks
-on your own licensed price history to evaluate):
-- Multi-asset rotation: Sharpe > 1.10
-- Momentum ML: Sharpe > 0.9
-- Max drawdown < 15% with vol-targeting risk overlay
+**Design targets vs. measured results.** The Sharpe figures below are
+aspirational design goals, *not* claims about the reference implementation. On
+real 2018-2025 prices the baselines do **not** meet them (see
+[PERFORMANCE.md](PERFORMANCE.md), reproducible via
+`python scripts/validate_performance.py`):
+
+| Strategy | Target | Measured (2018-2025) |
+|----------|--------|----------------------|
+| Multi-asset rotation | Sharpe > 1.10 | Sharpe 0.05 (defensive; trails buy-and-hold in a bull window) |
+| Momentum ML | Sharpe > 0.9 | Sharpe 0.64 (survivorship-biased single-name read) |
+
+The targets are reported honestly rather than tuned toward; clearing them on a
+single backtest is precisely the overfitting the platform's Deflated Sharpe
+Ratio and BHY multiple-testing tooling exist to catch.
 
 ---
 
