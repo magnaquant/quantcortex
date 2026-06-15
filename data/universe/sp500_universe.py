@@ -74,6 +74,34 @@ class SP500Universe(Universe):
         frame = pd.read_csv(csv_path)
         return PITMembership(frame)
 
+    @classmethod
+    def from_wikipedia(cls, cache_csv: Optional[str] = None) -> "SP500Universe":
+        """Build a survivorship-aware universe from Wikipedia's change log.
+
+        Fetches the current constituents plus the dated additions/removals and
+        reconstructs point-in-time membership (see
+        :mod:`data.universe.sp500_wikipedia`).  Requires network and ``lxml``.
+
+        Parameters
+        ----------
+        cache_csv:
+            Optional path; when given, the reconstructed
+            ``symbol,start_date,end_date`` table is written there so future runs
+            can load it offline via ``SP500Universe(membership_csv=...)``.
+        """
+        from data.universe.sp500_wikipedia import (
+            build_pit_membership,
+            fetch_sp500_tables,
+        )
+
+        current, changes = fetch_sp500_tables()
+        membership = build_pit_membership(current, changes)
+        if cache_csv is not None:
+            membership.frame.to_csv(cache_csv, index=False)
+        obj = cls()
+        obj._membership = membership
+        return obj
+
     def membership(self) -> PITMembership:
         """Return the point-in-time membership table."""
         if self._membership is None:

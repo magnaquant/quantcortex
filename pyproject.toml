@@ -52,6 +52,7 @@ ccxt = { version = ">=4.2", optional = true }
 yfinance = { version = ">=0.2.37", optional = true }
 polygon-api-client = { version = ">=1.13", optional = true }
 fredapi = { version = ">=0.5", optional = true }
+lxml = { version = ">=5.0", optional = true }  # Wikipedia PIT-constituents parsing
 
 # --- storage / infra ---
 redis = { version = ">=5.0", optional = true }
@@ -64,14 +65,14 @@ rl = ["stable-baselines3", "gymnasium"]
 regime = ["hmmlearn"]
 nlp = ["transformers", "torch"]
 brokers = ["alpaca-trade-api", "ib_insync", "ccxt"]
-providers = ["yfinance", "polygon-api-client", "fredapi"]
+providers = ["yfinance", "polygon-api-client", "fredapi", "lxml"]
 storage = ["redis", "sqlalchemy", "psycopg2-binary"]
 all = [
     "xgboost", "lightgbm", "catboost",
     "stable-baselines3", "gymnasium",
     "hmmlearn", "transformers", "torch",
     "alpaca-trade-api", "ib_insync", "ccxt",
-    "yfinance", "polygon-api-client", "fredapi",
+    "yfinance", "polygon-api-client", "fredapi", "lxml",
     "redis", "sqlalchemy", "psycopg2-binary",
 ]
 
