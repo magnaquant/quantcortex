@@ -2,7 +2,7 @@
 
 ## Development Setup
 
-Use Python 3.11 or newer from the repository root:
+Use Python 3.11 through 3.14 from the repository root:
 
 ```bash
 python3.11 -m venv .venv
