@@ -348,16 +348,27 @@ def _save_figures(
     axes[0].set_ylabel("Cash-excess Sharpe")
 
     labels = [name.replace("_", " ") for name in ablation_results["variant"]]
-    colors = ["C0" if name == "full" else "C7" for name in ablation_results["variant"]]
+    locations = np.arange(len(labels), dtype=float)
+    width = 0.38
     axes[1].bar(
-        labels,
+        locations - width / 2.0,
         ablation_results["net_cash_excess_sharpe"],
-        color=colors,
+        width=width,
+        color="C0",
+        label="Strategy after costs",
+    )
+    axes[1].bar(
+        locations + width / 2.0,
+        ablation_results["matched_equal_weight_cash_excess_sharpe"],
+        width=width,
+        color="C1",
+        label="Exposure-matched equal weight",
     )
     axes[1].axhline(0.0, color="black", lw=0.8)
-    axes[1].set_title("Predefined overlay ablations")
+    axes[1].set_title("Every overlay variant trails matched passive exposure")
     axes[1].set_ylabel("Cash-excess Sharpe")
-    axes[1].tick_params(axis="x", rotation=20)
+    axes[1].set_xticks(locations, labels, rotation=20)
+    axes[1].legend(fontsize=8)
     fig.tight_layout()
     save(fig, "sensitivity_and_ablation")
 
