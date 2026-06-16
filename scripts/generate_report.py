@@ -4,7 +4,7 @@ Runs the multi_asset_rotation strategy on real data through the mandatory-cost
 engine and emits a local Markdown report plus separate diagnostic plots:
 
 * ``report_overview.png`` - compact four-panel review image
-* ``equity_vs_benchmarks.png`` - growth of $1 vs SPY and equal-weight
+* ``equity_vs_benchmarks.png`` - growth of $1 vs SPY and an equal-initial-weight basket
 * ``performance_attribution.png`` - gross, net, cash, and exposure matching
 * ``drawdown.png`` - underwater drawdown
 * ``rolling_sharpe.png`` - rolling 126-day Sharpe
@@ -20,7 +20,9 @@ Every number is computed from the supplied data. The output records the source
 kind, date window, and a SHA-256 digest for local files. The repository does not
 bundle market data or generated performance results.
 
-    python scripts/generate_report.py --prices-csv local_data/rotation_prices.csv
+    python scripts/generate_report.py \
+      --prices-csv local_data/published_rotation_prices.csv \
+      --cash-proxy-symbol SHV
     python scripts/generate_report.py --live-yfinance --start 2015 --end 2024
 """
 
@@ -255,7 +257,7 @@ def _validate_warmup(
 def _buy_hold_returns(
     prices: pd.DataFrame, evaluation_index: pd.DatetimeIndex
 ) -> tuple[pd.Series, pd.Series]:
-    """Return SPY and equal-weight buy-and-hold returns on one capital clock."""
+    """Return SPY and equal-initial-weight buy-and-hold basket returns."""
     first = prices.index.get_loc(evaluation_index[0])
     last = prices.index.get_loc(evaluation_index[-1])
     base = max(0, first - 1)
@@ -450,7 +452,7 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
         ax.plot(
             d["ew_g"].index,
             d["ew_g"].to_numpy(),
-            label="Equal-weight 6-ETF (gross)",
+            label="Equal-initial-weight 6-ETF basket (gross)",
             color="C2",
             lw=1.1,
             alpha=0.85,
@@ -478,7 +480,7 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
         ax.plot(
             d["exposure_matched_ew_g"].index,
             d["exposure_matched_ew_g"].to_numpy(),
-            label="Exposure-matched equal-weight (gross)",
+            label="Exposure-matched passive basket (gross)",
             color="C1",
             lw=1.2,
         )
@@ -807,11 +809,11 @@ def markdown_metrics(d: dict) -> str:
         ("Cash proxy CAGR", f"{benchmarks['cash_proxy']['cagr']:+.2%}"),
         ("SPY buy & hold CAGR (gross)", f"{benchmarks['spy']['cagr']:+.2%}"),
         (
-            "Equal-weight 6-ETF buy & hold CAGR (gross)",
+            "Equal-initial-weight 6-ETF basket CAGR (gross)",
             f"{benchmarks['equal_weight']['cagr']:+.2%}",
         ),
         (
-            "Exposure-matched equal-weight CAGR (gross)",
+            "Exposure-matched passive basket CAGR (gross)",
             f"{benchmarks['exposure_matched_equal_weight']['cagr']:+.2%}",
         ),
         (
@@ -819,7 +821,7 @@ def markdown_metrics(d: dict) -> str:
             f"{d['spy_sharpe']:+.2f}",
         ),
         (
-            "Equal-weight 6-ETF cash-excess Sharpe (gross)",
+            "Equal-initial-weight 6-ETF basket cash-excess Sharpe (gross)",
             f"{d['ew_sharpe']:+.2f}",
         ),
         (
@@ -827,7 +829,7 @@ def markdown_metrics(d: dict) -> str:
             f"{d['exposure_matched_spy_sharpe']:+.2f}",
         ),
         (
-            "Exposure-matched equal-weight cash-excess Sharpe (gross)",
+            "Exposure-matched passive basket cash-excess Sharpe (gross)",
             f"{d['exposure_matched_ew_sharpe']:+.2f}",
         ),
     ]

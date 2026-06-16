@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
@@ -11,6 +12,21 @@ from quantcortex.data.providers.alpaca_provider import AlpacaProvider
 from quantcortex.execution.brokers.alpaca_broker import AlpacaBroker
 from quantcortex.execution.brokers.ib_broker import IBBroker
 from quantcortex.execution.order_manager import OrderSide, OrderStatus, OrderType
+
+
+def test_broker_adapters_do_not_reference_retired_sdk_imports():
+    broker_dir = (
+        Path(__file__).resolve().parent.parent
+        / "quantcortex"
+        / "execution"
+        / "brokers"
+    )
+    source = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(broker_dir.glob("*.py"))
+    )
+
+    assert "ib_insync" not in source
+    assert "alpaca_trade_api" not in source
 
 
 def test_alpaca_py_trading_request_conformance():

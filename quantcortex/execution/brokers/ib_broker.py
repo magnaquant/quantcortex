@@ -209,7 +209,7 @@ class IBBroker(Broker):
         order_type: OrderType,
         limit_price: Optional[float],
     ) -> Order:
-        """Translate an ``ib_insync`` Trade into a quantcortex :class:`Order`."""
+        """Translate an ``ib_async`` Trade into a quantcortex :class:`Order`."""
         order_id = None
         ib_order = getattr(trade, "order", None)
         if ib_order is not None:
