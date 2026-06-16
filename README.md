@@ -3,7 +3,7 @@
 > **Modular quantitative research and paper-execution platform**
 > Data -> Alpha -> Portfolio -> Timing -> Risk -> Backtest -> Execution
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![Python 3.11-3.14](https://img.shields.io/badge/python-3.11--3.14-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/magnaquant/quantcortex/actions/workflows/ci.yml/badge.svg)](https://github.com/magnaquant/quantcortex/actions/workflows/ci.yml)
 
