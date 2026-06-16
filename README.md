@@ -446,6 +446,7 @@ quantcortex/                     # repo root
 ├── tests/
 │   ├── build_notebook_fixtures.py # deterministic test-only notebook inputs
 │   ├── test_data_integrity.py
+│   ├── test_dependency_locks.py
 │   ├── test_factor_integrity.py
 │   ├── test_execution_safety.py
 │   ├── test_fail_closed_invariants.py
