@@ -46,6 +46,9 @@ def test_paper_source_and_reviewed_pdf_are_published():
     input_digest = manifest["source"]["input_sha256"]
 
     assert "\\usepackage[preprint]{neurips_2026}" in main
+    assert "\\usepackage{orcidlink}" in main
+    assert "Kevin Lee\\,\\orcidlink{0009-0004-0388-9260}" in main
+    assert "\\url{https://orcid.org/0009-0004-0388-9260}" not in main
     assert "\\input{checklist}" in main
     assert input_digest in main
 
