@@ -5,20 +5,17 @@ secretly encodes information from ``t+k`` will produce a beautiful in-sample
 Sharpe that evaporates live.  This module provides *static* (no-model) scans of
 a feature ``DataFrame`` that flag the structural fingerprints of leakage:
 
-1. **Trailing-NaN fingerprint.**  A strictly-causal feature (rolling means,
-   lagged returns, ...) can only be undefined at the *start* of a series while
-   the window warms up.  A feature built with ``series.shift(-k)`` instead runs
-   out of *future* data and is undefined at the *end*.  A column with NaNs
-   concentrated at its tail is therefore a prime leakage suspect.
+1. **Trailing-NaN fingerprint.** A forward shift often leaves missing values at
+   the tail. Legitimate data outages can do the same, so this is a review flag,
+   not proof of leakage.
 
 2. **Future-aligned cross-correlation.**  Given a reference series (e.g. close
    price), a causal feature correlates best with the reference at lag ``>= 0``
    (its own past).  If a feature instead correlates best with a *future* lag of
    the reference, it is leaking that future value.
 
-3. **Near-perfect target correlation.**  Given a (forward) target, a feature
-   whose correlation with that target is implausibly close to 1.0 almost
-   certainly *is* (a transform of) the target.
+3. **Near-perfect target correlation.** Given a forward target, implausibly high
+   correlation is a strong reason to inspect feature construction.
 
 The detector *flags* - it errs toward surfacing suspects.  The companion
 ``quantcortex/backtest/validation/lookahead_audit.py`` performs the dynamic,
@@ -95,7 +92,26 @@ class LookaheadDetector:
         max_lag: int = 5,
         trailing_nan_ratio: float = 0.0,
         min_obs: int = 20,
+        lag_margin: float = 0.02,
     ) -> None:
+        if not np.isfinite(corr_threshold) or not 0.0 < corr_threshold <= 1.0:
+            raise ValueError("corr_threshold must be in (0, 1]")
+        if (
+            not np.isfinite(target_corr_threshold)
+            or not 0.0 < target_corr_threshold <= 1.0
+        ):
+            raise ValueError("target_corr_threshold must be in (0, 1]")
+        if isinstance(max_lag, bool) or int(max_lag) != max_lag or max_lag < 1:
+            raise ValueError("max_lag must be a positive integer")
+        if (
+            not np.isfinite(trailing_nan_ratio)
+            or not 0.0 <= trailing_nan_ratio <= 1.0
+        ):
+            raise ValueError("trailing_nan_ratio must be in [0, 1]")
+        if isinstance(min_obs, bool) or int(min_obs) != min_obs or min_obs < 3:
+            raise ValueError("min_obs must be an integer >= 3")
+        if not np.isfinite(lag_margin) or lag_margin < 0.0:
+            raise ValueError("lag_margin must be finite and non-negative")
         self.corr_threshold = float(corr_threshold)
         self.target_corr_threshold = float(target_corr_threshold)
         self.max_lag = int(max_lag)
@@ -103,6 +119,7 @@ class LookaheadDetector:
         # trailing than leading NaNs (ratio compares against this slack).
         self.trailing_nan_ratio = float(trailing_nan_ratio)
         self.min_obs = int(min_obs)
+        self.lag_margin = float(lag_margin)
 
     # ------------------------------------------------------------------ #
     # individual checks
@@ -133,7 +150,8 @@ class LookaheadDetector:
                 continue
             trailing = self._trailing_nans(series)
             leading = self._leading_nans(series)
-            if trailing > leading and trailing > 0:
+            slack = int(np.ceil(len(series) * self.trailing_nan_ratio))
+            if trailing > leading + slack and trailing > 0:
                 findings.append(
                     LeakageFinding(
                         column=str(col),
@@ -156,7 +174,8 @@ class LookaheadDetector:
             series = df[col]
             if not pd.api.types.is_numeric_dtype(series):
                 continue
-            best_lag, best_corr = 0, 0.0
+            best_future_lag, best_future_corr = 0, 0.0
+            best_causal_corr = 0.0
             for lag in range(-self.max_lag, self.max_lag + 1):
                 # positive lag -> reference's past; negative -> reference's future
                 shifted = ref.shift(lag)
@@ -168,17 +187,23 @@ class LookaheadDetector:
                 if a.std() == 0 or b.std() == 0:
                     continue
                 corr = abs(float(np.corrcoef(a, b)[0, 1]))
-                if corr > best_corr:
-                    best_corr, best_lag = corr, lag
-            if best_lag < 0 and best_corr >= self.corr_threshold:
+                if lag < 0 and corr > best_future_corr:
+                    best_future_corr, best_future_lag = corr, lag
+                elif lag >= 0 and corr > best_causal_corr:
+                    best_causal_corr = corr
+            if (
+                best_future_corr >= self.corr_threshold
+                and best_future_corr > best_causal_corr + self.lag_margin
+            ):
                 findings.append(
                     LeakageFinding(
                         column=str(col),
                         reason="best correlation with a FUTURE lag of reference",
                         severity="high",
                         detail=(
-                            f"|corr|={best_corr:.3f} at lag {best_lag} "
-                            "(reference shifted into the future)"
+                            f"future |corr|={best_future_corr:.3f} at lag "
+                            f"{best_future_lag} vs best causal "
+                            f"{best_causal_corr:.3f}"
                         ),
                     )
                 )
@@ -224,6 +249,28 @@ class LookaheadDetector:
         """Run all applicable checks and return a :class:`LookaheadReport`."""
         if not isinstance(features, pd.DataFrame):
             features = pd.DataFrame(features)
+        if features.empty or features.shape[1] == 0:
+            raise ValueError("features must be a non-empty DataFrame")
+        if features.index.has_duplicates or features.columns.has_duplicates:
+            raise ValueError("features index and columns must be unique")
+        numeric = features.select_dtypes(include=[np.number])
+        if np.isinf(numeric.to_numpy(dtype=float)).any():
+            raise ValueError("numeric features must not contain infinite values")
+
+        for name, series in (("reference", reference), ("target", target)):
+            if series is None:
+                continue
+            if not isinstance(series, pd.Series):
+                raise TypeError(f"{name} must be a pandas Series")
+            if series.index.has_duplicates:
+                raise ValueError(f"{name} index must be unique")
+            if not series.index.equals(features.index):
+                raise ValueError(f"{name} index must exactly match features index")
+            numeric_series = pd.to_numeric(series, errors="coerce")
+            if (numeric_series.isna() & series.notna()).any():
+                raise ValueError(f"{name} must contain numeric observations")
+            if np.isinf(numeric_series.to_numpy(dtype=float)).any():
+                raise ValueError(f"{name} must not contain infinite values")
 
         report = LookaheadReport()
         report.findings.extend(self._check_trailing_nans(features))

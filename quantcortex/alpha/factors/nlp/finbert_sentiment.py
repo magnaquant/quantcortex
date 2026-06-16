@@ -1,4 +1,4 @@
-"""FinBERT financial-text sentiment scoring with an offline lexicon fallback.
+"""FinBERT financial-text sentiment scoring with an optional lexicon backend.
 
 :class:`FinBERTSentiment` scores financial text (headlines, filings, earnings
 transcripts) on a ``[-1, 1]`` scale where ``+1`` is maximally bullish and
@@ -20,12 +20,12 @@ fine-tuned on financial communications for three-way sentiment
 
 Offline fallback
 ----------------
-If ``transformers``/``torch`` are not installed, the class transparently falls
-back to a lightweight, dependency-free **finance lexicon** sentiment scorer: it
-counts occurrences of curated bullish vs. bearish finance terms and returns
+The lightweight, dependency-free **finance lexicon** backend counts occurrences
+of curated bullish vs. bearish finance terms and returns
 ``(pos - neg) / (pos + neg + eps)``. This keeps the class fully usable offline
-(notebooks/tests with no optional libraries) while preserving the same
-``[-1, 1]`` interface.
+while preserving the same ``[-1, 1]`` interface. Backend choice is explicit;
+``backend="auto"`` falls back only when the optional transformer stack or model
+files are unavailable.
 
 The transformers import is performed lazily inside the scoring methods, so
 importing this module needs only numpy/pandas.
@@ -99,8 +99,10 @@ class FinBERTSentiment:
         independently, and averaged (FinBERT truncates at ~512 tokens, so very
         long documents must be chunked).
     force_lexicon:
-        If ``True``, skip the transformer backend entirely and always use the
-        offline lexicon. Useful for deterministic tests.
+        Backward-compatible alias for ``backend="lexicon"``.
+    backend:
+        ``"auto"`` (default), ``"transformers"``, or ``"lexicon"``. Runtime
+        inference errors never silently switch model classes.
 
     Attributes
     ----------
@@ -115,13 +117,35 @@ class FinBERTSentiment:
         device: Optional[int] = None,
         max_chars_per_chunk: int = 1500,
         force_lexicon: bool = False,
+        backend: str = "auto",
     ) -> None:
+        if not isinstance(model_name, str) or not model_name.strip():
+            raise ValueError("model_name must be a non-empty string")
+        if device is not None and (
+            isinstance(device, (bool, np.bool_))
+            or not isinstance(device, (int, np.integer))
+        ):
+            raise ValueError("device must be an integer or None")
+        if (
+            isinstance(max_chars_per_chunk, (bool, np.bool_))
+            or not isinstance(max_chars_per_chunk, (int, np.integer))
+            or max_chars_per_chunk <= 0
+        ):
+            raise ValueError("max_chars_per_chunk must be a positive integer")
+        if backend not in {"auto", "transformers", "lexicon"}:
+            raise ValueError(
+                "backend must be 'auto', 'transformers', or 'lexicon'"
+            )
+        if force_lexicon and backend == "transformers":
+            raise ValueError("force_lexicon conflicts with backend='transformers'")
         self.model_name = model_name
-        self.device = device
+        self.device = int(device) if device is not None else None
         self.max_chars_per_chunk = int(max_chars_per_chunk)
-        self.force_lexicon = bool(force_lexicon)
+        self.backend = "lexicon" if force_lexicon else backend
+        self.force_lexicon = self.backend == "lexicon"
 
         self.backend_: Optional[str] = None
+        self.fallback_reason_: Optional[str] = None
         self._pipeline = None  # cached transformers pipeline
 
     # ------------------------------------------------------------------
@@ -146,19 +170,22 @@ class FinBERTSentiment:
         texts = list(texts)
         if not texts:
             return np.empty(0, dtype=float)
+        if any(text is not None and not isinstance(text, str) for text in texts):
+            raise TypeError("texts must contain only strings or None")
 
-        if not self.force_lexicon:
+        self.fallback_reason_ = None
+        if self.backend != "lexicon":
             try:
                 scores = self._score_transformers(texts)
                 self.backend_ = "transformers"
                 return scores
-            except Exception:  # noqa: BLE001
-                # transformers may be absent (ImportError) OR present but
-                # unusable - most commonly the FinBERT weights cannot be
-                # downloaded offline (OSError/HTTPError from huggingface_hub),
-                # or a torch runtime error.  In every case the dependency-free
-                # finance-lexicon backend is the reliable fallback.
-                pass
+            except (ImportError, OSError) as exc:
+                if self.backend == "transformers":
+                    raise RuntimeError(
+                        "transformers backend requested but the package or model "
+                        "files are unavailable"
+                    ) from exc
+                self.fallback_reason_ = f"{type(exc).__name__}: {exc}"
         self.backend_ = "lexicon"
         return self._score_lexicon(texts)
 
@@ -199,6 +226,8 @@ class FinBERTSentiment:
         # Clean inputs: the pipeline rejects empty strings on some versions.
         cleaned = [t if (t and str(t).strip()) else " " for t in texts]
         raw = pipe(cleaned, truncation=True)
+        if len(raw) != len(texts):
+            raise RuntimeError("transformers pipeline returned the wrong batch size")
 
         out = np.zeros(len(texts), dtype=float)
         for i, (orig, result) in enumerate(zip(texts, raw)):
@@ -209,9 +238,15 @@ class FinBERTSentiment:
             probs = {
                 str(d["label"]).lower(): float(d["score"]) for d in result
             }
+            if "positive" not in probs or "negative" not in probs:
+                raise RuntimeError(
+                    "sentiment model labels must include positive and negative"
+                )
             pos = probs.get("positive", 0.0)
             neg = probs.get("negative", 0.0)
             out[i] = pos - neg
+        if not np.all(np.isfinite(out)):
+            raise RuntimeError("transformers pipeline returned non-finite scores")
         return np.clip(out, -1.0, 1.0)
 
     def _get_pipeline(self):
@@ -256,7 +291,7 @@ class FinBERTSentiment:
     def _chunk_text(text: str, max_chars: int) -> List[str]:
         """Split text into chunks <= ``max_chars`` on sentence boundaries."""
         if max_chars <= 0:
-            return [text]
+            raise ValueError("max_chars must be positive")
         # Split into sentence-ish units; keep delimiters attached.
         sentences = re.split(r"(?<=[.!?])\s+", text.strip())
         chunks: List[str] = []

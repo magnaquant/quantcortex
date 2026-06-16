@@ -3,9 +3,9 @@
 :class:`MacroTimingStrategy` rotates across broad asset classes (equities,
 bonds, commodities, defensives) by ranking each class on its trailing
 risk-adjusted momentum (return / volatility) and holding the strongest classes.
-A macro/market regime classifier (:class:`~timing.hmm_regime.HMMRegime`) gates
-the selection: in a bear regime the strategy retreats to the defensive class
-(or the fewest, safest names), while in calmer regimes it holds the leaders.
+A macro/market regime classifier (:class:`~quantcortex.timing.hmm_regime.HMMRegime`, using
+the seeded GMM backend by default) gates selection: in a bear regime the
+strategy retreats to the defensive class, while calmer regimes hold leaders.
 
 Within the selected names, capital is allocated by the configured optimizer
 (risk parity / inverse vol by default), so risk - not dollars - is balanced
@@ -46,7 +46,7 @@ class MacroTimingStrategy(Strategy):
     regime:
         Enable the macro/market regime gate.
     **kw:
-        Forwarded to :class:`~strategies.base_strategy.Strategy`.
+        Forwarded to :class:`~quantcortex.strategies.base_strategy.Strategy`.
     """
 
     #: Asset-class proxy ETFs.  Tolerant of whichever symbols are present.
@@ -67,15 +67,37 @@ class MacroTimingStrategy(Strategy):
         mom_lookback: int = 126,
         mom_gap: int = 21,
         regime: bool = True,
+        regime_backend: str = "gmm",
         **kw,
     ) -> None:
         optimizer = optimizer if optimizer is not None else RiskParity()
         super().__init__(optimizer, mode=PortfolioMode.LONG_ONLY, **kw)
+        integer_parameters = {
+            "top_classes": top_classes,
+            "mom_lookback": mom_lookback,
+            "mom_gap": mom_gap,
+        }
+        if any(
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))
+            for value in integer_parameters.values()
+        ):
+            raise TypeError("class and lookback parameters must be integers")
+        if not isinstance(regime, (bool, np.bool_)):
+            raise TypeError("regime must be a boolean")
         self.top_classes = int(top_classes)
         self.mom_lookback = int(mom_lookback)
         self.mom_gap = int(mom_gap)
         self.regime_enabled = bool(regime)
-        self._hmm = HMMRegime(n_states=3)
+        if not 1 <= self.top_classes <= len(self.GROUPS):
+            raise ValueError(f"top_classes must be in [1, {len(self.GROUPS)}]")
+        if self.mom_lookback <= 0:
+            raise ValueError("mom_lookback must be positive")
+        if self.mom_gap < 0:
+            raise ValueError("mom_gap must be non-negative")
+        if self.mom_gap >= self.mom_lookback:
+            raise ValueError("mom_gap must be smaller than mom_lookback")
+        self._hmm = HMMRegime(n_states=3, backend=regime_backend)
 
     # ------------------------------------------------------------------ #
     # Selection
@@ -107,7 +129,7 @@ class MacroTimingStrategy(Strategy):
                 chosen = ranked[:1]
         elif regime == SIDEWAYS:
             chosen = ranked[: max(1, self.top_classes - 1)]
-        else:  # BULL or unknown
+        else:  # BULL or regime gate disabled
             chosen = ranked[: max(1, self.top_classes)]
 
         members = [s for c in chosen for s in present[c]]
@@ -119,7 +141,7 @@ class MacroTimingStrategy(Strategy):
         member_scores = self._member_momentum(returns, members)
         member_scores = member_scores.dropna()
         if member_scores.empty:
-            return pd.Series(0.0, index=members, dtype=float)
+            return pd.Series(dtype=float)
         return member_scores
 
     # ------------------------------------------------------------------ #
@@ -129,11 +151,10 @@ class MacroTimingStrategy(Strategy):
         symbols = list(scores.index)
         sub_returns = ctx.asset_returns(symbols)
         if sub_returns.shape[1] != len(symbols) or sub_returns.empty:
-            return self.scores_to_weights(scores)
-        try:
-            return self.optimizer.optimize(sub_returns)
-        except Exception:
-            return self.scores_to_weights(scores)
+            raise ValueError(
+                "selected assets require aligned, non-empty return history"
+            )
+        return self.optimizer.optimize(sub_returns)
 
     # ------------------------------------------------------------------ #
     # Signal helpers
@@ -182,34 +203,53 @@ class MacroTimingStrategy(Strategy):
         return pd.Series(out, dtype=float)
 
     def _macro_regime(self, ctx: StrategyContext) -> Optional[int]:
-        """Classify the prevailing macro/market regime (or ``None`` if gated off)."""
+        """Classify the prevailing regime; missing history is treated as bear."""
         if not self.regime_enabled:
             return None
 
         feats = self._regime_features(ctx)
         if feats is None or len(feats) < 60:
-            return None
-        try:
-            self._hmm.fit(feats)
-            return int(self._hmm.current_regime(feats))
-        except Exception:
-            return None
+            return BEAR
+        self._hmm.fit(feats)
+        return int(self._hmm.current_regime(feats))
 
     def _regime_features(self, ctx: StrategyContext) -> Optional[pd.DataFrame]:
-        """Build the (returns, realized_vol, vix) feature frame for the HMM.
+        """Build the (returns, realized_vol, vix) regime feature frame.
 
         Prefers an explicit macro feature frame in ``ctx.extra['macro']`` (a
-        :class:`~alpha.feature_engineering.macro_features.MacroFeatures` output
+        :class:`~quantcortex.alpha.feature_engineering.macro_features.MacroFeatures` output
         or compatible frame); otherwise derives features from the market return.
         """
         extra = ctx.extra if isinstance(ctx.extra, dict) else {}
         macro = extra.get("macro")
         if isinstance(macro, pd.DataFrame) and not macro.empty:
-            cols = {c.lower(): c for c in macro.columns}
-            if {"returns", "realized_vol", "vix"}.issubset(cols.keys()):
-                return macro.rename(columns={cols[k]: k for k in cols}).loc[
-                    :, ["returns", "realized_vol", "vix"]
-                ]
+            if not isinstance(macro.index, pd.DatetimeIndex):
+                raise TypeError("ctx.extra['macro'] must use a DatetimeIndex")
+            if macro.index.hasnans or macro.index.has_duplicates:
+                raise ValueError(
+                    "ctx.extra['macro'] index must contain unique valid timestamps"
+                )
+            normalized = macro.copy()
+            if normalized.index.tz is not None:
+                normalized.index = normalized.index.tz_convert("UTC").tz_localize(None)
+            normalized = normalized.sort_index()
+            normalized = normalized.loc[normalized.index <= ctx.as_of]
+            labels = [str(column).strip().lower() for column in normalized.columns]
+            if len(labels) != len(set(labels)):
+                raise ValueError("ctx.extra['macro'] columns are ambiguous by case")
+            normalized.columns = labels
+            required = ["returns", "realized_vol", "vix"]
+            missing = [column for column in required if column not in normalized.columns]
+            if missing:
+                raise ValueError(
+                    f"ctx.extra['macro'] is missing regime features: {missing}"
+                )
+            selected = normalized.loc[:, required].apply(
+                pd.to_numeric, errors="coerce"
+            )
+            if not np.all(np.isfinite(selected.to_numpy(dtype=np.float64))):
+                raise ValueError("ctx.extra['macro'] features must be finite")
+            return selected
 
         # Market return: benchmark proxy if present, else cross-sectional mean.
         mkt = self._market_return_series(ctx)

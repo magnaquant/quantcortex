@@ -13,8 +13,9 @@ Scaling rule
 * ``current_vix > target_vix`` (stress) -> ``scale < 1`` -> de-risk.
 * ``current_vix < target_vix`` (calm)   -> ``scale > 1``, clipped at ``cap``.
 
-The overlay is strictly causal: it consumes the *last* observed VIX value, which
-is all an executing strategy could know at decision time.
+The overlay consumes the last supplied VIX value. The caller remains
+responsible for publication-time alignment: a same-close VIX observation must
+not be used for an order assumed to execute at that same close.
 """
 
 from __future__ import annotations
@@ -59,12 +60,17 @@ class VIXScaler:
         floor: float = 0.3,
         cap: float = 1.0,
     ) -> None:
-        if target_vix <= 0:
-            raise ValueError("target_vix must be positive")
-        if floor < 0:
-            raise ValueError("floor must be non-negative")
-        if cap < floor:
-            raise ValueError("cap must be >= floor")
+        if any(
+            isinstance(value, (bool, np.bool_))
+            for value in (target_vix, floor, cap)
+        ):
+            raise TypeError("VIX controls must be numeric, not boolean")
+        if not np.isfinite(target_vix) or target_vix <= 0:
+            raise ValueError("target_vix must be finite and positive")
+        if not np.isfinite(floor) or floor < 0:
+            raise ValueError("floor must be finite and non-negative")
+        if not np.isfinite(cap) or cap < floor:
+            raise ValueError("cap must be finite and >= floor")
         self.target_vix = float(target_vix)
         self.floor = float(floor)
         self.cap = float(cap)
@@ -97,7 +103,9 @@ class VIXScaler:
         proportions - so a concentrated book (e.g. a 0.8 position) no longer
         fails validation, it simply levers up less than the raw ratio asked.
         """
-        w = np.asarray(weights, dtype=np.float64).ravel()
+        w = np.asarray(weights, dtype=np.float64)
+        if w.ndim != 1 or w.size == 0 or not np.all(np.isfinite(w)):
+            raise ValueError("weights must be a non-empty finite 1-D vector")
         scale = self.compute_scale(self._coerce_vix(vix))
 
         # Cap the scalar so no element leaves the [-1, 1] per-asset contract;

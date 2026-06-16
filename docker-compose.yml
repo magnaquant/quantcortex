@@ -13,11 +13,23 @@ services:
     working_dir: /app
     volumes:
       - .:/app
-    env_file:
-      - .env
     environment:
+      ALPACA_API_KEY: ${ALPACA_API_KEY:-}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:-}
+      ALPACA_BASE_URL: ${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      IB_HOST: ${IB_HOST:-host.docker.internal}
+      IB_PORT: ${IB_PORT:-7497}
+      IB_CLIENT_ID: ${IB_CLIENT_ID:-1}
+      IB_ACCOUNT: ${IB_ACCOUNT:-}
+      CCXT_API_KEY: ${CCXT_API_KEY:-}
+      CCXT_SECRET: ${CCXT_SECRET:-}
+      CCXT_ACCOUNT_CURRENCY: ${CCXT_ACCOUNT_CURRENCY:-USDT}
+      POLYGON_API_KEY: ${POLYGON_API_KEY:-}
+      FRED_API_KEY: ${FRED_API_KEY:-}
+      FMP_API_KEY: ${FMP_API_KEY:-}
       REDIS_URL: redis://redis:6379/0
-      TIMESCALE_URL: postgresql://quant:quant@timescaledb:5432/quantcortex
+      TIMESCALE_URL: postgresql://${POSTGRES_USER:-quant}:${POSTGRES_PASSWORD:-quant}@timescaledb:5432/${POSTGRES_DB:-quantcortex}
+      MPLCONFIGDIR: /tmp/matplotlib
       PYTHONPATH: /app
     depends_on:
       redis:
@@ -31,7 +43,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     command: ["redis-server", "--appendonly", "yes"]
@@ -45,15 +57,15 @@ services:
     image: timescale/timescaledb:latest-pg16
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     environment:
-      POSTGRES_USER: quant
-      POSTGRES_PASSWORD: quant
-      POSTGRES_DB: quantcortex
+      POSTGRES_USER: ${POSTGRES_USER:-quant}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quant}
+      POSTGRES_DB: ${POSTGRES_DB:-quantcortex}
     volumes:
       - timescale_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U quant -d quantcortex"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 3s
       retries: 5

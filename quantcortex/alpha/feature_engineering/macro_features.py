@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 
 # Approximate number of business days per calendar month / year. Used for the
@@ -108,23 +109,47 @@ class MacroFeatures:
         freq: str = "B",
         publication_lags: Optional[Dict[str, int]] = None,
     ) -> None:
-        if vix_change_window < 1:
-            raise ValueError("vix_change_window must be >= 1")
-        if credit_change_window < 1:
-            raise ValueError("credit_change_window must be >= 1")
-        if pmi_momentum_periods < 1:
-            raise ValueError("pmi_momentum_periods must be >= 1")
-        if unrate_change_window < 1:
-            raise ValueError("unrate_change_window must be >= 1")
+        windows = {
+            "vix_change_window": vix_change_window,
+            "credit_change_window": credit_change_window,
+            "pmi_momentum_periods": pmi_momentum_periods,
+            "unrate_change_window": unrate_change_window,
+        }
+        if any(
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))
+            or value < 1
+            for value in windows.values()
+        ):
+            raise ValueError("macro feature windows must be positive integers")
         self.vix_change_window = int(vix_change_window)
         self.credit_change_window = int(credit_change_window)
         self.pmi_momentum_periods = int(pmi_momentum_periods)
         self.unrate_change_window = int(unrate_change_window)
         self.freq = str(freq)
-        self.publication_lags: Dict[str, int] = {
+        raw_lags = {
             **_DEFAULT_PUBLICATION_LAGS,
             **(publication_lags or {}),
         }
+        self.publication_lags: Dict[str, int] = {}
+        for key, value in raw_lags.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("publication lag names must be non-empty strings")
+            if isinstance(value, bool):
+                raise ValueError("publication lags must be non-negative integers")
+            try:
+                lag = int(value)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(
+                    "publication lags must be non-negative integers"
+                ) from exc
+            if lag != value or lag < 0:
+                raise ValueError("publication lags must be non-negative integers")
+            self.publication_lags[key.strip()] = lag
+        try:
+            pd.date_range("2000-01-01", periods=2, freq=self.freq)
+        except Exception as exc:
+            raise ValueError(f"invalid macro feature frequency {self.freq!r}") from exc
 
     # ------------------------------------------------------------------
     # Input normalization
@@ -158,22 +183,47 @@ class MacroFeatures:
             return macro.copy()
 
         df = macro.copy()
-        df.index = pd.to_datetime(df.index)
+        if df.columns.has_duplicates:
+            raise ValueError("macro columns must be unique")
+        normalized_columns = [str(column).strip().casefold() for column in df.columns]
+        if any(not column for column in normalized_columns):
+            raise ValueError("macro columns must be non-empty")
+        if len(normalized_columns) != len(set(normalized_columns)):
+            raise ValueError("macro columns are ambiguous after case normalization")
+        index = pd.to_datetime(df.index, errors="coerce", utc=True)
+        if index.isna().any():
+            raise ValueError("macro index contains invalid timestamps")
+        df.index = index.tz_localize(None)
         df = df.sort_index()
         # Collapse duplicate timestamps keeping the last observation.
         df = df[~df.index.duplicated(keep="last")]
 
-        # Numeric coercion; non-numeric junk becomes NaN rather than raising.
-        df = df.apply(pd.to_numeric, errors="coerce")
+        # Missing observations are expected; non-numeric observed values are
+        # data errors and must not be silently converted into missing signals.
+        numeric = df.apply(pd.to_numeric, errors="coerce")
+        if (numeric.isna() & df.notna()).any(axis=None):
+            raise ValueError("macro inputs contain non-numeric observations")
+        df = numeric
+        if np.isinf(df.to_numpy(dtype=float)).any():
+            raise ValueError("macro inputs must not contain infinities")
 
         # Shift lagged series' observation dates forward to their approximate
         # publication dates *before* forward-filling, so a monthly value never
         # becomes usable until it would actually have been released.
-        lags = {k.strip().casefold(): int(v) for k, v in self.publication_lags.items()}
+        lags = {
+            k.strip().casefold(): int(v) for k, v in self.publication_lags.items()
+        }
         cols = []
         for col in df.columns:
             series = df[col]
-            lag = lags.get(str(col).strip().casefold(), 0)
+            key = str(col).strip().casefold()
+            lag = lags.get(key)
+            if lag is None:
+                for canonical, aliases in _ALIASES.items():
+                    if key in {alias.casefold() for alias in aliases}:
+                        lag = lags.get(canonical.casefold(), 0)
+                        break
+            lag = 0 if lag is None else lag
             if lag:
                 series = series.copy()
                 series.index = series.index + pd.Timedelta(days=lag)

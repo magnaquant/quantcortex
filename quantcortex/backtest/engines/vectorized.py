@@ -4,10 +4,11 @@
 panel using fast, fully vectorized array arithmetic.  It is the workhorse for
 research-scale sweeps where bar-by-bar fill modelling is unnecessary.
 
-The engine is **strictly causal**: the weights decided at the close of day *t*
-are applied to the asset return realised from *t* to *t+1* (weights are lagged
-one bar before being multiplied by forward returns), so no information from the
-future leaks into a period's return.
+The engine is **strictly causal** for close-derived signals: weights decided at
+the close of day *t* execute on the first bar strictly after *t* and begin
+earning returns after that execution bar. This conservative convention avoids
+assuming that the official close was both observed and traded at the same
+price.
 
 Transaction costs are **mandatory**: a :class:`TransactionCostModel` must be
 supplied, and the constructor raises :class:`ValueError` if it is ``None``.
@@ -27,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from quantcortex.backtest.costs.transaction_costs import TransactionCostModel
+from quantcortex.portfolio.base import enforce_exposure_contract
 
 __all__ = ["BacktestResult", "VectorizedBacktest"]
 
@@ -42,7 +44,8 @@ class BacktestResult:
     equity_curve:
         Cumulative NAV: ``(1 + returns).cumprod() * capital``.
     weights:
-        Effective per-period portfolio weights (date x symbol).
+        Post-trade close weights (date x symbol), which apply to the following
+        bar's return.
     gross_returns:
         Per-period portfolio returns *before* transaction costs.
     costs:
@@ -66,6 +69,9 @@ class BacktestResult:
         """Total compounded net return over the whole backtest."""
         if len(self.returns) == 0:
             return 0.0
+        values = self.returns.dropna().to_numpy(dtype=float)
+        if not np.all(np.isfinite(values)) or np.any(values < -1.0):
+            raise ValueError("backtest returns must be finite and no less than -100%")
         return float((1.0 + self.returns).prod() - 1.0)
 
     def summary(self) -> dict:
@@ -76,6 +82,11 @@ class BacktestResult:
         """
         r = self.returns.dropna()
         ppy = float(self.metadata.get("periods_per_year", 252))
+        values = r.to_numpy(dtype=float)
+        if not np.all(np.isfinite(values)) or np.any(values < -1.0):
+            raise ValueError("backtest returns must be finite and no less than -100%")
+        if not np.isfinite(ppy) or ppy <= 0.0:
+            raise ValueError("periods_per_year must be finite and positive")
         n = len(r)
         if n == 0:
             return {
@@ -98,12 +109,12 @@ class BacktestResult:
         mean = float(r.mean())
         sharpe = (mean / std) * np.sqrt(ppy) if std > 0 else 0.0
 
-        eq = self.equity_curve.dropna()
-        if len(eq) == 0:
+        if len(r) == 0:
             max_dd = 0.0
         else:
-            running_max = eq.cummax()
-            drawdown = eq / running_max - 1.0
+            growth = (1.0 + r).cumprod()
+            running_max = growth.cummax().clip(lower=1.0)
+            drawdown = growth / running_max - 1.0
             max_dd = float(drawdown.min())
 
         return {
@@ -126,7 +137,7 @@ class VectorizedBacktest:
     every bar of the segment, i.e. there is no drift of the holdings with
     relative price moves and no cost for the implied daily re-pegging trades.
     This differs from the event-driven engine
-    (:class:`~backtest.engines.event_driven.EventDrivenBacktest`), which holds
+    (:class:`~quantcortex.backtest.engines.event_driven.EventDrivenBacktest`), which holds
     explicit share positions that drift between rebalances.
 
     Parameters
@@ -146,6 +157,7 @@ class VectorizedBacktest:
         *,
         capital: float = 1e6,
         periods_per_year: int = 252,
+        max_gross: float = 1.0,
     ) -> None:
         if cost_model is None:
             raise ValueError(
@@ -153,8 +165,23 @@ class VectorizedBacktest:
                 "mandatory in quantcortex backtests."
             )
         self.cost_model = cost_model
+        if isinstance(capital, (bool, np.bool_)):
+            raise TypeError("capital must be numeric, not boolean")
+        if isinstance(max_gross, (bool, np.bool_)):
+            raise TypeError("max_gross must be numeric, not boolean")
         self.capital = float(capital)
+        if (
+            isinstance(periods_per_year, (bool, np.bool_))
+            or not isinstance(periods_per_year, (int, np.integer))
+            or periods_per_year <= 0
+        ):
+            raise ValueError("periods_per_year must be a positive integer")
         self.periods_per_year = int(periods_per_year)
+        self.max_gross = float(max_gross)
+        if not np.isfinite(self.capital) or self.capital <= 0.0:
+            raise ValueError("capital must be finite and positive")
+        if not np.isfinite(self.max_gross) or self.max_gross <= 0.0:
+            raise ValueError("max_gross must be finite and positive")
 
     def run(
         self,
@@ -167,12 +194,11 @@ class VectorizedBacktest:
         Parameters
         ----------
         weights:
-            Target weights (fractions of NAV) indexed by rebalance date and
-            columns by symbol.  Need not be on the daily grid -- each rebalance
-            date is snapped to the first price bar on or after it (e.g. a
-            weekend-dated rebalance executes on the next Monday bar).  When
-            several rebalance dates snap to the same bar, the last stated
-            target wins.
+            Complete target weights (fractions of NAV) indexed by decision date
+            and columns by symbol. Need not be on the daily grid. An on-grid
+            close decision executes on the next bar; an off-grid date executes
+            on the next available bar. When several distinct decision dates
+            snap to the same bar, the last stated target wins.
         prices:
             Daily close prices (date x symbol).
         adv:
@@ -188,41 +214,103 @@ class VectorizedBacktest:
         if prices.empty:
             raise ValueError("prices is empty.")
 
+        if not isinstance(prices.index, pd.DatetimeIndex):
+            raise TypeError("prices must use a DatetimeIndex")
+        if prices.index.hasnans:
+            raise ValueError("prices index must contain valid timestamps")
+        prices = prices.copy()
+        if prices.index.tz is not None:
+            prices.index = prices.index.tz_convert("UTC").tz_localize(None)
         prices = prices.sort_index()
+        if prices.index.has_duplicates:
+            raise ValueError("prices index must not contain duplicate bars")
+        if prices.columns.has_duplicates or prices.shape[1] == 0:
+            raise ValueError("prices must have unique, non-empty symbol columns")
+        prices = prices.apply(pd.to_numeric, errors="coerce")
+        if not np.all(np.isfinite(prices.to_numpy(dtype=float))):
+            raise ValueError("prices must contain only finite values")
+        if (prices <= 0.0).any().any():
+            raise ValueError("prices must be strictly positive")
         symbols = list(prices.columns)
         n = len(prices.index)
         n_sym = len(symbols)
 
-        # SNAP each weight-panel date to the first price bar on/after it.
-        # Dates past the last price bar are dropped; duplicate snaps keep the
-        # LAST target stated for that bar.
+        # Snap each decision date to the first price bar strictly after it.
+        # Dates without a later bar are dropped; duplicate snaps keep the last
+        # target stated for that execution bar.
+        if not isinstance(weights, pd.DataFrame):
+            raise TypeError("weights must be a pandas DataFrame")
+        if not isinstance(weights.index, pd.DatetimeIndex):
+            if weights.empty:
+                weights = weights.copy()
+                weights.index = prices.index[:0]
+            else:
+                raise TypeError("weights must use a DatetimeIndex")
+        if weights.index.hasnans:
+            raise ValueError("weights index must contain valid timestamps")
+        if weights.index.has_duplicates:
+            raise ValueError("weights index must not contain duplicate decisions")
+        if weights.columns.has_duplicates:
+            raise ValueError("weights columns must be unique")
+        unknown = [column for column in weights.columns if column not in symbols]
+        if unknown:
+            raise ValueError(f"weights contain unknown symbols: {unknown}")
+        weights = weights.copy()
+        if weights.index.tz is not None:
+            weights.index = weights.index.tz_convert("UTC").tz_localize(None)
+        supplied_symbols = list(weights.columns)
         w = weights.sort_index().reindex(columns=symbols)
+        missing_symbols = [symbol for symbol in symbols if symbol not in supplied_symbols]
+        if missing_symbols:
+            w.loc[:, missing_symbols] = 0.0
+        w = w.apply(pd.to_numeric, errors="coerce")
+        if w[supplied_symbols].isna().any(axis=None):
+            raise ValueError(
+                "each target row must explicitly specify every supplied symbol"
+            )
         if len(w.index) == 0:
             # Empty weights -> a fully flat (all-cash) backtest. Coerce the
             # index to the price dtype so searchsorted does not choke on an
             # empty int64 RangeIndex.
             w.index = prices.index[:0]
-        pos = prices.index.searchsorted(w.index, side="left")
+        pos = prices.index.searchsorted(w.index, side="right")
         keep = pos < n
         w = w.iloc[keep]
         w.index = prices.index[pos[keep]]
         w = w[~w.index.duplicated(keep="last")]
-        # Forward-fill partially specified rows across rebalances, then treat
-        # never-specified assets as flat (0).
-        w = w.ffill().fillna(0.0)
 
         reb_positions = prices.index.get_indexer(w.index)
-        target_rows = w.to_numpy(dtype=np.float64)
+        target_rows = w.to_numpy(dtype=np.float64, copy=True)
+        if not np.all(np.isfinite(target_rows)):
+            raise ValueError("weights must contain only finite values")
+        for position, row in enumerate(target_rows):
+            target_rows[position] = enforce_exposure_contract(
+                row,
+                max_gross=self.max_gross,
+                name=f"VectorizedBacktest target row {position}",
+            )
 
         # Forward simple returns; return at row t is asset move t-1 -> t.
-        asset_returns = prices.pct_change().fillna(0.0)
+        asset_returns = prices.pct_change(fill_method=None).fillna(0.0)
         ret_vals = asset_returns.to_numpy(dtype=np.float64)
         price_vals = prices.to_numpy(dtype=np.float64)
         adv_aligned = None
         if adv is not None:
-            adv_aligned = (
-                adv.reindex(columns=symbols).reindex(prices.index).ffill()
-            ).to_numpy(dtype=np.float64)
+            if not isinstance(adv, pd.DataFrame):
+                raise TypeError("adv must be a pandas DataFrame")
+            if not isinstance(adv.index, pd.DatetimeIndex):
+                raise TypeError("adv must use a DatetimeIndex")
+            if adv.index.hasnans or adv.index.has_duplicates:
+                raise ValueError("adv index must contain unique valid timestamps")
+            if adv.columns.has_duplicates:
+                raise ValueError("adv columns must be unique")
+            adv = adv.copy()
+            if adv.index.tz is not None:
+                adv.index = adv.index.tz_convert("UTC").tz_localize(None)
+            adv = adv.sort_index().apply(pd.to_numeric, errors="coerce")
+            adv_aligned = adv.reindex(columns=symbols).reindex(prices.index).to_numpy(
+                dtype=np.float64
+            )
 
         gross_arr = np.zeros(n, dtype=np.float64)
         costs_arr = np.zeros(n, dtype=np.float64)
@@ -239,6 +327,8 @@ class VectorizedBacktest:
         for k, p in enumerate(reb_positions):
             # Bars [start, p] earn returns on the previously executed weights.
             seg = ret_vals[start : p + 1] @ current
+            if np.any(seg <= -1.0):
+                raise ValueError("portfolio gross return reached or fell below -100%")
             gross_arr[start : p + 1] = seg
             if len(seg) > 1:
                 nav *= float(np.prod(1.0 + seg[:-1]))
@@ -252,16 +342,25 @@ class VectorizedBacktest:
                 prices=price_vals[p],
                 adv=row_adv,
                 capital=nav_mtm,
+                max_gross=self.max_gross,
             )
-            costs_arr[p] = result.total_cost
+            # ``total_cost`` is a fraction of the current pre-trade NAV. Store
+            # costs as a fraction of prior-bar NAV so gross - cost equals the
+            # reported period return exactly.
+            period_cost = result.total_cost * (1.0 + float(seg[-1]))
+            costs_arr[p] = period_cost
             turnover_arr[p] = result.turnover
             eff[start:p] = current
-            nav *= 1.0 + float(seg[-1]) - result.total_cost
+            nav *= (1.0 + float(seg[-1])) * (1.0 - result.total_cost)
+            if not np.isfinite(nav) or nav <= 0.0:
+                raise ValueError("transaction costs exhausted portfolio NAV")
             current = np.asarray(result.executed_weights, dtype=np.float64)
             eff[p] = current
             start = p + 1
         if start < n:
             seg = ret_vals[start:] @ current
+            if np.any(seg <= -1.0):
+                raise ValueError("portfolio gross return reached or fell below -100%")
             gross_arr[start:] = seg
             eff[start:] = current
 
@@ -281,6 +380,7 @@ class VectorizedBacktest:
             "engine": "vectorized",
             "n_periods": int(len(net)),
             "n_rebalances": int(len(reb_positions)),
+            "execution_timing": "next_bar_close",
         }
 
         return BacktestResult(

@@ -68,8 +68,15 @@ class CostResult:
 
     @property
     def turnover(self) -> float:
-        """One-way turnover actually executed (sum of |Deltaw|)/2."""
-        return float(np.abs(self.executed_change).sum() / 2.0)
+        """One-way turnover actually executed.
+
+        This is the larger of buy and sell notional. It equals half-L1
+        turnover for a fully invested rotation, while correctly reporting a
+        100% cash-to-invested transition as 100% rather than 50%.
+        """
+        buys = float(np.clip(self.executed_change, 0.0, None).sum())
+        sells = float(np.abs(np.clip(self.executed_change, None, 0.0)).sum())
+        return max(buys, sells)
 
 
 class TransactionCostModel:
@@ -82,9 +89,18 @@ class TransactionCostModel:
         tax: float = DEFAULT_TAX,
         volume_cap: float = DEFAULT_VOLUME_CAP,
     ) -> None:
-        if commission < 0 or slippage < 0 or tax < 0:
-            raise ValueError("Cost rates must be non-negative.")
-        if not (0.0 < volume_cap <= 1.0):
+        if any(
+            isinstance(value, (bool, np.bool_))
+            for value in (commission, slippage, tax, volume_cap)
+        ):
+            raise TypeError("cost rates and volume_cap must be numeric, not boolean")
+        rates = np.asarray([commission, slippage, tax], dtype=np.float64)
+        if not np.all(np.isfinite(rates)) or np.any(rates < 0.0):
+            raise ValueError("Cost rates must be finite and non-negative.")
+        if commission + slippage >= 1.0 or commission + slippage + tax >= 1.0:
+            raise ValueError("combined buy and sell cost rates must be below 100%")
+        volume_cap = float(volume_cap)
+        if not np.isfinite(volume_cap) or not (0.0 < volume_cap <= 1.0):
             raise ValueError("volume_cap must be in (0, 1].")
         self.commission = float(commission)
         self.slippage = float(slippage)
@@ -108,8 +124,19 @@ class TransactionCostModel:
         if adv is None:
             return None
         adv_arr = np.asarray(adv, dtype=np.float64)
+        if adv_arr.ndim != 1:
+            raise ValueError(f"adv must be a 1-D vector, got shape {adv_arr.shape}")
+        if not np.all(np.isfinite(adv_arr)) or np.any(adv_arr < 0.0):
+            raise ValueError("adv must contain finite, non-negative values")
         if prices is not None:
-            adv_arr = adv_arr * np.asarray(prices, dtype=np.float64)
+            price_arr = np.asarray(prices, dtype=np.float64)
+            if price_arr.shape != adv_arr.shape:
+                raise ValueError(
+                    f"price shape {price_arr.shape} != adv shape {adv_arr.shape}"
+                )
+            if not np.all(np.isfinite(price_arr)) or np.any(price_arr <= 0.0):
+                raise ValueError("prices must contain finite, positive values")
+            adv_arr = adv_arr * price_arr
         return adv_arr
 
     def apply_costs(
@@ -121,6 +148,7 @@ class TransactionCostModel:
         *,
         capital: float = 1.0,
         gross_returns=None,
+        max_gross: Optional[float] = None,
     ) -> CostResult:
         """Apply the cost model to a single rebalance.
 
@@ -141,6 +169,11 @@ class TransactionCostModel:
             Optional per-asset (or scalar) returns realised over the period.
             When supplied, ``CostResult.net_return`` is populated with the
             portfolio return of ``executed_weights`` net of ``total_cost``.
+        max_gross:
+            Optional post-trade gross-exposure limit. If independent ADV caps
+            would leave an over-gross intermediate book (for example, a sell
+            is capped but its replacement buy is not), position-reducing legs
+            execute first and exposure-increasing legs are scaled to the limit.
 
         Returns
         -------
@@ -148,10 +181,25 @@ class TransactionCostModel:
         """
         w_prev = np.asarray(weights_prev, dtype=np.float64)
         w_new = np.asarray(weights_new, dtype=np.float64)
+        if w_prev.ndim != 1 or w_new.ndim != 1 or w_prev.size == 0:
+            raise ValueError("weights must be non-empty 1-D vectors")
         if w_prev.shape != w_new.shape:
             raise ValueError(
                 f"weight shape mismatch: {w_prev.shape} vs {w_new.shape}"
             )
+        if not np.all(np.isfinite(w_prev)) or not np.all(np.isfinite(w_new)):
+            raise ValueError("weights must contain only finite values")
+        if max_gross is not None:
+            if isinstance(max_gross, (bool, np.bool_)):
+                raise TypeError("max_gross must be numeric, not boolean")
+            max_gross = float(max_gross)
+            if not np.isfinite(max_gross) or max_gross <= 0.0:
+                raise ValueError("max_gross must be finite and positive")
+        if isinstance(capital, (bool, np.bool_)):
+            raise TypeError("capital must be numeric, not boolean")
+        capital = float(capital)
+        if not np.isfinite(capital) or capital <= 0.0:
+            raise ValueError("capital must be finite and positive")
 
         desired = w_new - w_prev
         dollar_adv = self._dollar_adv(adv, prices)
@@ -161,7 +209,7 @@ class TransactionCostModel:
                 raise ValueError(
                     f"adv shape {dollar_adv.shape} != weights {desired.shape}"
                 )
-            desired_notional = np.abs(desired) * float(capital)
+            desired_notional = np.abs(desired) * capital
             max_notional = self.volume_cap * dollar_adv
             with np.errstate(divide="ignore", invalid="ignore"):
                 scale = np.where(
@@ -169,12 +217,55 @@ class TransactionCostModel:
                     np.minimum(desired_notional, max_notional) / desired_notional,
                     1.0,
                 )
-            scale = np.clip(np.nan_to_num(scale, nan=1.0), 0.0, 1.0)
+            if not np.all(np.isfinite(scale)):
+                raise ValueError("ADV cap produced a non-finite execution scale")
+            scale = np.clip(scale, 0.0, 1.0)
             executed = desired * scale
-            capped = scale < 1.0 - 1e-12
         else:
             executed = desired.copy()
-            capped = np.zeros_like(desired, dtype=bool)
+
+        if max_gross is not None:
+            # Execute position-reducing legs first. Scaling the entire trade
+            # vector can otherwise cancel a feasible sell merely because its
+            # replacement buy is too large, preserving more risk than needed.
+            reducing = np.zeros_like(executed)
+            long_reduction = (w_prev > 0.0) & (executed < 0.0)
+            short_reduction = (w_prev < 0.0) & (executed > 0.0)
+            reducing[long_reduction] = np.maximum(
+                executed[long_reduction], -w_prev[long_reduction]
+            )
+            reducing[short_reduction] = np.minimum(
+                executed[short_reduction], -w_prev[short_reduction]
+            )
+            increasing = executed - reducing
+            reduced_weights = w_prev + reducing
+            reduced_gross = float(np.abs(reduced_weights).sum())
+
+            if reduced_gross > max_gross + 1e-12:
+                # ADV caps prevented enough liquidation to restore the limit.
+                # Keep every feasible reduction and open no new exposure.
+                executed = reducing
+            else:
+                candidate_gross = float(
+                    np.abs(reduced_weights + increasing).sum()
+                )
+                if candidate_gross > max_gross + 1e-12:
+                    # Gross is monotone along this path because `increasing`
+                    # only adds exposure after reductions/crossings to zero.
+                    low, high = 0.0, 1.0
+                    for _ in range(64):
+                        mid = (low + high) / 2.0
+                        gross = float(
+                            np.abs(reduced_weights + mid * increasing).sum()
+                        )
+                        if gross <= max_gross:
+                            low = mid
+                        else:
+                            high = mid
+                    increasing = increasing * low
+                executed = reducing + increasing
+
+        capped = ~np.isclose(executed, desired, rtol=1e-10, atol=1e-12)
 
         buy_cost = np.clip(executed, 0.0, None) * self.buy_rate
         sell_cost = np.abs(np.clip(executed, None, 0.0)) * self.sell_rate
@@ -185,8 +276,16 @@ class TransactionCostModel:
         net_return: Optional[float] = None
         if gross_returns is not None:
             gr = np.asarray(gross_returns, dtype=np.float64)
-            gross_port = float((executed_weights * gr).sum()) if gr.ndim else float(
-                executed_weights.sum() * gr
+            if gr.ndim > 1 or (gr.ndim == 1 and gr.shape != executed_weights.shape):
+                raise ValueError(
+                    "gross_returns must be scalar or match the weight vector shape"
+                )
+            if not np.all(np.isfinite(gr)):
+                raise ValueError("gross_returns must contain only finite values")
+            gross_port = (
+                float((executed_weights * gr).sum())
+                if gr.ndim
+                else float(executed_weights.sum() * gr)
             )
             net_return = gross_port - total_cost
 

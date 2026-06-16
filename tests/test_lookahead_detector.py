@@ -24,7 +24,7 @@ def feature_frame():
     # causal: a lagged rolling mean (only past data; NaNs at the START)
     df["causal_mom"] = base.rolling(5).mean().shift(1)
     # causal: a simple lagged return
-    df["causal_ret"] = base.pct_change().shift(1)
+    df["causal_ret"] = base.pct_change(fill_method=None).shift(1)
     # LEAK: tomorrow's value used today (NaN at the END; future-aligned)
     df["leaky_future"] = base.shift(-1)
     return df, base
@@ -80,3 +80,12 @@ def test_assert_clean_raises(feature_frame):
     detector = LookaheadDetector()
     with pytest.raises(LookaheadViolationError):
         detector.assert_clean(df, reference=base)
+
+
+def test_detector_rejects_misaligned_reference(feature_frame):
+    df, base = feature_frame
+    shifted_index = base.copy()
+    shifted_index.index = shifted_index.index + pd.Timedelta(days=1)
+
+    with pytest.raises(ValueError, match="exactly match"):
+        LookaheadDetector().scan(df, reference=shifted_index)

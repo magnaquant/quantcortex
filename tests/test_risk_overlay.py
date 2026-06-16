@@ -38,7 +38,9 @@ def test_circuit_breaker_explicit_drawdown():
 
 
 def test_circuit_breaker_hysteresis():
-    breaker = CircuitBreaker(max_drawdown=0.20, reset_drawdown=0.05)
+    breaker = CircuitBreaker(
+        max_drawdown=0.20, reset_drawdown=0.05, auto_reset=True
+    )
     w = np.array([0.5, 0.5])
     breaker.apply(w, current_drawdown=0.25)  # trip
     assert breaker.is_tripped
@@ -48,6 +50,17 @@ def test_circuit_breaker_hysteresis():
     # recovered below reset -> re-engage
     out = breaker.apply(w, current_drawdown=0.02)
     assert np.allclose(out, w)
+
+
+def test_circuit_breaker_requires_manual_reset_by_default():
+    breaker = CircuitBreaker(max_drawdown=0.20, reset_drawdown=0.05)
+    w = np.array([0.5, 0.5])
+
+    breaker.apply(w, current_drawdown=0.25)
+    assert np.allclose(breaker.apply(w, current_drawdown=0.0), 0.0)
+
+    breaker.reset()
+    assert np.allclose(breaker.apply(w, current_drawdown=0.0), w)
 
 
 # --------------------------------------------------------------------------- #
@@ -82,3 +95,12 @@ def test_vol_targeting_can_lever_up_within_cap():
     out = vt.apply(weights, realized_vol=0.05)  # half target -> 2x scale
     assert vt.last_scale == pytest.approx(2.0)
     assert np.allclose(out, weights * 2.0)
+
+
+def test_realized_vol_rejects_invalid_clock_and_undefined_sample():
+    weights = np.array([1.0])
+
+    with pytest.raises(ValueError, match="periods_per_year"):
+        realized_portfolio_vol(weights, np.array([[0.01], [0.02]]), periods_per_year=0)
+    with pytest.raises(ValueError, match="at least two"):
+        realized_portfolio_vol(weights, np.array([[0.01]]))

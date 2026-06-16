@@ -38,7 +38,7 @@ def prices(dates, tickers, rng) -> pd.DataFrame:
 
 @pytest.fixture
 def returns(prices) -> pd.DataFrame:
-    return prices.pct_change().dropna()
+    return prices.pct_change(fill_method=None).dropna()
 
 
 @pytest.fixture

@@ -101,12 +101,16 @@ class CCXTProvider(DataProvider):
             )
         client = self._exchange()
 
-        since = (
-            int(pd.Timestamp(start).timestamp() * 1000) if start is not None else None
-        )
-        end_ms = (
-            int(pd.Timestamp(end).timestamp() * 1000) if end is not None else None
-        )
+        start_ts = pd.to_datetime(start, errors="coerce", utc=True)
+        end_ts = pd.to_datetime(end, errors="coerce", utc=True)
+        if start is not None and pd.isna(start_ts):
+            raise ValueError("start must be a valid timestamp")
+        if end is not None and pd.isna(end_ts):
+            raise ValueError("end must be a valid timestamp")
+        if start is not None and end is not None and start_ts > end_ts:
+            raise ValueError("start must not be after end")
+        since = int(start_ts.timestamp() * 1000) if start is not None else None
+        end_ms = int(end_ts.timestamp() * 1000) if end is not None else None
 
         out: Dict[str, pd.DataFrame] = {}
         for symbol in _as_symbol_list(symbols):
@@ -126,6 +130,7 @@ class CCXTProvider(DataProvider):
         """Page through ``fetch_ohlcv`` until exhausted or past ``end_ms``."""
         rows: List[list] = []
         cursor = since
+        previous_last_ts: Optional[int] = None
         while True:
             batch = client.fetch_ohlcv(
                 symbol, timeframe=tf, since=cursor, limit=self._PAGE_LIMIT
@@ -133,7 +138,13 @@ class CCXTProvider(DataProvider):
             if not batch:
                 break
             rows.extend(batch)
-            last_ts = batch[-1][0]
+            try:
+                last_ts = int(batch[-1][0])
+            except (IndexError, TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("ccxt returned a malformed OHLCV batch") from exc
+            if previous_last_ts is not None and last_ts <= previous_last_ts:
+                raise RuntimeError("ccxt pagination did not advance")
+            previous_last_ts = last_ts
             # Advance past the final candle to avoid an infinite loop.
             cursor = last_ts + 1
             if len(batch) < self._PAGE_LIMIT:

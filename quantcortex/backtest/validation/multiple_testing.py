@@ -22,7 +22,7 @@ Multiple-testing procedures restore a meaningful error guarantee:
   expected fraction of false positives *among the rejections* - and is far
   more powerful.  Valid under independence or positive dependence (PRDS).
 * **Benjamini-Hochberg-Yekutieli (BHY)** controls the FDR under *arbitrary*
-  dependence by inflating the threshold with the harmonic penalty
+  dependence by inflating adjusted p-values with the harmonic penalty
   ``c(m) = sum_{i=1}^{m} 1/i``.  Strategy returns are heavily cross-correlated,
   so BHY is the prudent default for factor mining.
 
@@ -48,7 +48,15 @@ __all__ = [
 
 def _as_pvalue_array(pvalues: Sequence[float]) -> np.ndarray:
     """Validate and coerce p-values to a 1-D float array."""
-    arr = np.asarray(pvalues, dtype=float).ravel()
+    raw = np.asarray(pvalues, dtype=object)
+    if raw.ndim != 1:
+        raise ValueError("pvalues must be a one-dimensional sequence")
+    if any(isinstance(value, (bool, np.bool_)) for value in raw):
+        raise ValueError("pvalues must be numeric, not boolean")
+    try:
+        arr = raw.astype(float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("pvalues must be numeric") from exc
     if arr.size == 0:
         raise ValueError("pvalues must be non-empty")
     if np.any(~np.isfinite(arr)):
@@ -56,6 +64,15 @@ def _as_pvalue_array(pvalues: Sequence[float]) -> np.ndarray:
     if np.any((arr < 0.0) | (arr > 1.0)):
         raise ValueError("pvalues must lie in [0, 1]")
     return arr
+
+
+def _validate_alpha(alpha: float) -> float:
+    if isinstance(alpha, (bool, np.bool_)):
+        raise ValueError("alpha must be numeric, not boolean")
+    alpha = float(alpha)
+    if not np.isfinite(alpha) or not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be finite and in (0, 1)")
+    return alpha
 
 
 def bonferroni(
@@ -71,6 +88,7 @@ def bonferroni(
         Boolean rejection mask and adjusted p-values, in input order.
     """
     p = _as_pvalue_array(pvalues)
+    alpha = _validate_alpha(alpha)
     m = p.size
     adjusted = np.minimum(p * m, 1.0)
     reject = adjusted <= alpha
@@ -93,6 +111,7 @@ def benjamini_hochberg(
         in input order.
     """
     p = _as_pvalue_array(pvalues)
+    alpha = _validate_alpha(alpha)
     return _step_up(p, alpha, penalty=1.0)
 
 
@@ -101,9 +120,10 @@ def bhy_correction(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Benjamini-Hochberg-Yekutieli FDR correction (arbitrary dependence).
 
-    Identical to :func:`benjamini_hochberg` but with the threshold inflated by
-    the harmonic penalty ``c(m) = sum_{i=1}^{m} 1/i``, which makes the FDR
-    guarantee valid under *any* dependence structure.  Consequently the
+    Identical to :func:`benjamini_hochberg` but with adjusted p-values inflated
+    by the harmonic penalty ``c(m) = sum_{i=1}^{m} 1/i`` (equivalently, the
+    rejection threshold is divided by that penalty). This makes the FDR
+    guarantee valid under *any* dependence structure. Consequently the
     BHY-adjusted p-values are always ``>=`` the BH-adjusted p-values.
 
     Returns
@@ -112,6 +132,7 @@ def bhy_correction(
         Boolean rejection mask and adjusted p-values, in input order.
     """
     p = _as_pvalue_array(pvalues)
+    alpha = _validate_alpha(alpha)
     m = p.size
     cm = float(np.sum(1.0 / np.arange(1, m + 1)))  # harmonic number c(m)
     return _step_up(p, alpha, penalty=cm)
@@ -169,7 +190,11 @@ class MultipleTestingReport:
                 raise ValueError(
                     f"labels length {len(labels)} != number of pvalues {m}"
                 )
-            self.labels = [str(x) for x in labels]
+            if any(not isinstance(label, str) or not label.strip() for label in labels):
+                raise ValueError("labels must be non-empty strings")
+            self.labels = [label.strip() for label in labels]
+            if len(set(self.labels)) != len(self.labels):
+                raise ValueError("labels must be unique")
 
     def compare(self, alpha: float = 0.05) -> pd.DataFrame:
         """Return a DataFrame of raw/BH/BHY/Bonferroni p-values and rejections.

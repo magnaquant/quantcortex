@@ -1,14 +1,11 @@
 """Cross-sectional gradient-boosted decision tree (GBDT) return predictor.
 
-Gradient-boosted decision trees are the workhorse of quantitative equity
-research because they *dominate on tabular financial data*: they handle the
-heavy-tailed, non-linear, low signal-to-noise feature/target relationships of
-cross-sectional stock returns far better than linear models, require minimal
-feature scaling, are robust to monotone transforms and outliers, and capture
-interactions automatically. Empirically (Gu, Kelly & Xiu, 2020) tree ensembles
-and shallow neural nets are the top performers for return prediction.
+Gradient-boosted decision trees are a useful baseline for tabular return
+prediction because they capture nonlinearities and interactions without feature
+scaling. Their performance is dataset- and validation-dependent; this module
+does not assume that they outperform simpler models.
 
-This module exposes :class:`GBDTFactor`, a thin, deterministic wrapper that
+This module exposes :class:`GBDTFactor`, a thin seeded wrapper that
 trains a GBDT to map a cross-section of firm characteristics ``X`` to a
 forward-return target ``y`` (raw returns or, more robustly, cross-sectional
 ranks). It transparently uses the best available boosting backend
@@ -60,17 +57,17 @@ class GBDTFactor:
         if its package is not installed, except ``"sklearn"`` which is always
         available).
     random_state:
-        Seed for reproducible training. Defaults to ``42`` for determinism.
+        Seed for reproducible training. Exact reproducibility also requires an
+        explicit backend and fixed library versions; ``model="auto"`` is
+        intentionally environment-dependent.
     **params:
         Backend-specific hyper-parameters forwarded to the underlying
         estimator constructor (e.g. ``n_estimators``, ``max_depth``,
         ``learning_rate``). Sensible defaults are supplied per backend.
 
-    Notes
-    -----
-    GBDTs dominate tabular financial data: they model non-linearities and
-    feature interactions, are insensitive to feature scaling and monotone
-    transforms, and degrade gracefully with noisy, heavy-tailed targets.
+    Backend choice is part of the model specification. ``model="auto"`` is
+    convenient for exploration but environment-dependent; reproducible research
+    should select a concrete backend and pin its version.
     """
 
     def __init__(
@@ -112,12 +109,11 @@ class GBDTFactor:
         for name in candidates:
             try:
                 return name, self._construct_backend(name)
-            except Exception as exc:  # noqa: BLE001
-                # A backend can fail two ways: ImportError (package absent) or a
-                # native-load failure (e.g. OSError when libomp/OpenMP is missing
-                # for LightGBM/XGBoost on a bare host).  In "auto" mode either is
-                # a reason to fall through to the next, ultimately-reliable
-                # backend (sklearn).  An explicit request surfaces the real cause.
+            except (ImportError, OSError) as exc:
+                # Missing packages and native-library load failures mean the
+                # optional backend is unavailable. Constructor/configuration
+                # errors are not caught because silently changing estimators
+                # would hide a broken research specification.
                 last_error = exc
                 if self.model != "auto":
                     if isinstance(exc, ImportError):
@@ -147,7 +143,7 @@ class GBDTFactor:
                 colsample_bytree=0.8,
                 min_child_samples=20,
                 reg_lambda=1.0,
-                n_jobs=-1,
+                n_jobs=1,
                 verbosity=-1,
             )
             defaults.update(self.params)
@@ -163,7 +159,7 @@ class GBDTFactor:
                 subsample=0.8,
                 colsample_bytree=0.8,
                 reg_lambda=1.0,
-                n_jobs=-1,
+                n_jobs=1,
                 verbosity=0,
                 tree_method="hist",
             )
@@ -180,6 +176,7 @@ class GBDTFactor:
                 l2_leaf_reg=3.0,
                 verbose=False,
                 allow_writing_files=False,
+                thread_count=1,
             )
             defaults.update(self.params)
             return CatBoostRegressor(random_seed=self.random_state, **defaults)
@@ -225,7 +222,7 @@ class GBDTFactor:
             ``self``, fitted.
         """
         X = self._validate_features(X)
-        y_arr = self._validate_target(y, n_rows=len(X))
+        y_arr = self._validate_target(y, X.index)
 
         self.feature_names_ = list(X.columns)
         self.backend_, self.estimator_ = self._build_estimator()
@@ -257,7 +254,10 @@ class GBDTFactor:
                 raise ValueError(f"X is missing fitted feature columns: {missing}")
             X = X[self.feature_names_]
         preds = self.estimator_.predict(X.to_numpy(dtype=float))
-        return np.asarray(preds, dtype=float).ravel()
+        preds = np.asarray(preds, dtype=float).ravel()
+        if preds.shape[0] != len(X) or not np.all(np.isfinite(preds)):
+            raise ValueError("estimator returned malformed or non-finite predictions")
+        return preds
 
     # ------------------------------------------------------------------
     # Introspection
@@ -378,8 +378,8 @@ class GBDTFactor:
     ) -> pd.DataFrame:
         """Walk-forward cross-sectional prediction with optional purging.
 
-        For each evaluation date ``t`` (after an initial ``train_window`` of
-        warm-up dates), the model is *re-fit* on every (security, date)
+        For each evaluation date ``t`` (after ``train_window + purge`` warm-up
+        dates), the model is *re-fit* on every (security, date)
         observation whose date lies within the trailing window
         ``[t - train_window - purge, t - purge)`` -- i.e. strictly before
         ``t`` -- and then used to score the cross-section observed on ``t``.
@@ -428,28 +428,43 @@ class GBDTFactor:
         -------
         pandas.DataFrame
             Wide ``date x symbol`` panel of out-of-sample alpha scores. Dates
-            in the warm-up window (and any skipped for insufficient data) are
-            all-NaN rows.
+            in the ``train_window + purge`` warm-up window (and any skipped for
+            insufficient data) are all-NaN rows.
         """
-        if train_window <= 0:
+        if (
+            isinstance(train_window, (bool, np.bool_))
+            or int(train_window) != train_window
+            or train_window <= 0
+        ):
             raise ValueError("train_window must be a positive integer")
-        if step <= 0:
+        if (
+            isinstance(min_train_obs, (bool, np.bool_))
+            or int(min_train_obs) != min_train_obs
+            or min_train_obs <= 0
+        ):
+            raise ValueError("min_train_obs must be a positive integer")
+        if isinstance(step, (bool, np.bool_)) or int(step) != step or step <= 0:
             raise ValueError("step must be a positive integer")
-        if purge < 0:
+        if isinstance(purge, (bool, np.bool_)) or int(purge) != purge or purge < 0:
             raise ValueError("purge must be a non-negative integer")
+        if not isinstance(rank_target, (bool, np.bool_)):
+            raise TypeError("rank_target must be a boolean")
 
         feats = self._to_long_features(features_panel)
         target = self._to_long_target(forward_returns)
 
-        # Align features and target on the shared (date, symbol) index.
+        # Align labels for training, but derive evaluation dates and test rows
+        # from features alone. A forward label is not available at the live
+        # tail and must never be required merely to produce a prediction.
         joined = feats.join(target.rename("__y__"), how="inner")
         if joined.empty:
             raise ValueError("features_panel and forward_returns do not overlap")
 
         feature_cols = list(feats.columns)
-        dates = joined.index.get_level_values(0)
-        unique_dates = pd.Index(sorted(pd.unique(dates)))
-        symbols = pd.Index(sorted(pd.unique(joined.index.get_level_values(1))))
+        train_dates_index = joined.index.get_level_values(0)
+        feature_dates_index = feats.index.get_level_values(0)
+        unique_dates = pd.Index(sorted(pd.unique(feature_dates_index)))
+        symbols = pd.Index(sorted(pd.unique(feats.index.get_level_values(1))))
 
         # Pre-compute the per-date cross-sectional rank target if requested.
         if rank_target:
@@ -462,7 +477,10 @@ class GBDTFactor:
             np.nan, index=unique_dates, columns=symbols, dtype=float
         )
 
-        for i in range(train_window, len(unique_dates), step):
+        # A full train_window must remain after the most recent `purge` dates
+        # are removed. Starting earlier silently changes the configured sample
+        # size in the first purged folds.
+        for i in range(train_window + purge, len(unique_dates), step):
             t = unique_dates[i]
             if i - purge <= 0:
                 continue
@@ -470,13 +488,13 @@ class GBDTFactor:
             # multi-period training labels cannot overlap the test date.
             train_dates = unique_dates[max(0, i - train_window - purge) : i - purge]
 
-            train_mask = dates.isin(train_dates)
+            train_mask = train_dates_index.isin(train_dates)
             train = joined.loc[train_mask]
             train = train.dropna(subset=feature_cols + ["__y__"], how="any")
             if len(train) < min_train_obs:
                 continue
 
-            test = joined.loc[dates == t]
+            test = feats.loc[feature_dates_index == t]
             test_feat = test[feature_cols].dropna(how="any")
             if test_feat.empty:
                 continue
@@ -499,19 +517,30 @@ class GBDTFactor:
             raise TypeError("X must be a pandas DataFrame")
         if X.shape[1] == 0:
             raise ValueError("X must have at least one feature column")
-        return X
+        if X.columns.has_duplicates:
+            raise ValueError("X feature columns must be unique")
+        numeric = X.apply(pd.to_numeric, errors="raise")
+        values = numeric.to_numpy(dtype=float)
+        if np.isinf(values).any():
+            raise ValueError("X must not contain infinite values")
+        return numeric
 
     @staticmethod
-    def _validate_target(y: pd.Series, n_rows: int) -> np.ndarray:
+    def _validate_target(y: pd.Series, expected_index: pd.Index) -> np.ndarray:
         if isinstance(y, pd.DataFrame):
             if y.shape[1] != 1:
                 raise ValueError("y DataFrame must have exactly one column")
             y = y.iloc[:, 0]
+        if isinstance(y, pd.Series) and not y.index.equals(expected_index):
+            raise ValueError("y index must exactly match X index")
         arr = np.asarray(y, dtype=float).ravel()
-        if arr.shape[0] != n_rows:
+        if arr.shape[0] != len(expected_index):
             raise ValueError(
-                f"y has {arr.shape[0]} rows but X has {n_rows}; they must match"
+                f"y has {arr.shape[0]} rows but X has {len(expected_index)}; "
+                "they must match"
             )
+        if not np.all(np.isfinite(arr)):
+            raise ValueError("y must contain only finite values")
         return arr
 
     @staticmethod
@@ -522,6 +551,8 @@ class GBDTFactor:
             raise ValueError(
                 "features_panel must have a (date, symbol) MultiIndex"
             )
+        if panel.index.has_duplicates:
+            raise ValueError("features_panel index must be unique")
         return panel
 
     @staticmethod
@@ -531,6 +562,8 @@ class GBDTFactor:
                 raise ValueError(
                     "forward_returns Series must have a (date, symbol) MultiIndex"
                 )
+            if returns.index.has_duplicates:
+                raise ValueError("forward_returns index must be unique")
             return returns.astype(float)
         if isinstance(returns, pd.DataFrame):
             if isinstance(returns.index, pd.MultiIndex):
@@ -538,8 +571,12 @@ class GBDTFactor:
                     raise ValueError(
                         "MultiIndexed forward_returns DataFrame must have one column"
                     )
+                if returns.index.has_duplicates:
+                    raise ValueError("forward_returns index must be unique")
                 return returns.iloc[:, 0].astype(float)
             # Wide date x symbol -> stack to long.
+            if returns.index.has_duplicates or returns.columns.has_duplicates:
+                raise ValueError("wide forward_returns axes must be unique")
             stacked = returns.stack()
             stacked.index = stacked.index.set_names(["date", "symbol"])
             return stacked.astype(float)

@@ -25,12 +25,10 @@ from __future__ import annotations
 import logging
 import os
 import sys
-import warnings
 
 import numpy as np
 import pandas as pd
 
-warnings.filterwarnings("ignore")
 logging.getLogger("hmmlearn").setLevel(logging.ERROR)
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 # joblib/loky can print a physical-core detection traceback on hosts where CPU
@@ -42,6 +40,10 @@ from quantcortex.backtest.costs.transaction_costs import TransactionCostModel
 from quantcortex.backtest.engines.vectorized import VectorizedBacktest
 from quantcortex.backtest.metrics.tearsheet import Tearsheet
 from quantcortex.backtest.validation.deflated_sharpe import compute_dsr
+from quantcortex.data.processors.calendar import (
+    first_session_each_week,
+    last_session_each_month,
+)
 
 ROTATION_UNIVERSE = ["QQQ", "VGT", "GLD", "TLT", "SPY", "VIG"]
 # Static current large-caps. Using today's names for historical research is
@@ -69,15 +71,19 @@ def fetch_prices(symbols, start, end):
         raise RuntimeError(f"yfinance price fetch failed: {exc}") from exc
     if px is None or px.empty:
         return None
-    px = px.dropna(how="all").ffill().dropna(how="all")
+    px = px.dropna(how="all").ffill(limit=5).dropna(how="all")
     px = px.dropna(axis=1, how="any")  # keep only fully-populated names
     return px if px.shape[0] > 252 and px.shape[1] >= 2 else None
 
 
-def metrics(returns: pd.Series, n_trials: int) -> dict:
+def metrics(
+    returns: pd.Series, n_trials: int, sr_variance: float | None
+) -> dict:
     r = returns.dropna()
     ts = Tearsheet(r).compute()
-    ts["dsr"] = compute_dsr(r, n_trials=n_trials)
+    ts["dsr"] = compute_dsr(
+        r, n_trials=n_trials, sr_variance=sr_variance
+    )
     return ts
 
 
@@ -87,26 +93,56 @@ def ann_sharpe(returns: pd.Series) -> float:
     return float(r.mean() / sd * np.sqrt(252)) if sd > 0 else float("nan")
 
 
-def backtest_weights(weights: pd.DataFrame, prices: pd.DataFrame) -> pd.Series:
+def backtest_weights(
+    weights: pd.DataFrame,
+    prices: pd.DataFrame,
+    evaluation_start: pd.Timestamp,
+) -> pd.Series:
     res = VectorizedBacktest(TransactionCostModel(), capital=CAPITAL).run(weights, prices)
-    return res.returns.dropna()
+    return res.returns.loc[res.returns.index >= evaluation_start].dropna()
 
 
-def run_rotation(prices: pd.DataFrame) -> pd.Series:
+def run_rotation(
+    prices: pd.DataFrame, evaluation_start: pd.Timestamp
+) -> pd.Series:
     from quantcortex.strategies.multi_asset_rotation import MultiAssetRotation
 
-    weekly = prices.index[prices.index.weekday == 0]
+    weekly = first_session_each_week(prices.index)
     weights = MultiAssetRotation().generate_weights(prices, weekly)
-    return backtest_weights(weights, prices)
+    return backtest_weights(weights, prices, evaluation_start)
 
 
-def run_momentum_ml(prices: pd.DataFrame) -> pd.Series:
+def run_momentum_ml(
+    prices: pd.DataFrame, evaluation_start: pd.Timestamp
+) -> pd.Series:
     from quantcortex.strategies.momentum_ml import MomentumMLStrategy
 
-    monthly = prices.resample("MS").first().index
-    monthly = monthly[(monthly >= prices.index[0]) & (monthly <= prices.index[-1])]
+    monthly = last_session_each_month(prices.index)
     weights = MomentumMLStrategy().generate_weights(prices, monthly)
-    return backtest_weights(weights, prices)
+    return backtest_weights(weights, prices, evaluation_start)
+
+
+def benchmark_returns(
+    prices: pd.DataFrame, evaluation_start: pd.Timestamp
+) -> tuple[pd.Series, pd.Series]:
+    """Return SPY and equal-weight buy-and-hold returns for the test window."""
+    first = int(prices.index.searchsorted(evaluation_start, side="left"))
+    if first >= len(prices):
+        raise ValueError("evaluation window begins after the available prices")
+    base = max(0, first - 1)
+    benchmark_prices = prices.iloc[base:]
+    evaluation_index = prices.index[first:]
+    spy = benchmark_prices["SPY"].pct_change(fill_method=None).reindex(
+        evaluation_index
+    )
+    equal_weight_curve = benchmark_prices.div(benchmark_prices.iloc[0]).mean(axis=1)
+    equal_weight = equal_weight_curve.pct_change(fill_method=None).reindex(
+        evaluation_index
+    )
+    if first == 0:
+        spy.iloc[0] = 0.0
+        equal_weight.iloc[0] = 0.0
+    return spy, equal_weight
 
 
 def fmt_row(name: str, m: dict, target: str = "") -> str:
@@ -147,9 +183,31 @@ def main(argv) -> int:
             raise argparse.ArgumentTypeError(f"must be a positive integer (got {value!r})")
         return ivalue
 
+    def nonnegative_int(value: str) -> int:
+        ivalue = int(value)
+        if ivalue < 0:
+            raise argparse.ArgumentTypeError(
+                f"must be a non-negative integer (got {value!r})"
+            )
+        return ivalue
+
+    def nonnegative_float(value: str) -> float:
+        fvalue = float(value)
+        if not np.isfinite(fvalue) or fvalue < 0.0:
+            raise argparse.ArgumentTypeError(
+                f"must be a finite non-negative number (got {value!r})"
+            )
+        return fvalue
+
     ap = argparse.ArgumentParser(description="quantcortex performance validation")
     ap.add_argument("start_year", nargs="?", default="2018")
     ap.add_argument("end_year", nargs="?", default="2025")
+    ap.add_argument(
+        "--warmup-years",
+        type=nonnegative_int,
+        default=2,
+        help="pre-evaluation history loaded for signals (default 2)",
+    )
     ap.add_argument(
         "--live-yfinance",
         action="store_true",
@@ -161,17 +219,40 @@ def main(argv) -> int:
     ap.add_argument("--n-trials", type=positive_int, default=10,
                     help="number of strategy trials assumed for the Deflated Sharpe Ratio; "
                          "set this to the true count of configurations you searched")
+    ap.add_argument(
+        "--sr-variance",
+        type=nonnegative_float,
+        default=None,
+        help="cross-trial variance of per-observation Sharpe estimates for DSR",
+    )
     args = ap.parse_args(argv[1:])
     print(YFINANCE_NOTICE, file=sys.stderr)
-    start = f"{args.start_year}-01-01"
-    end = f"{args.end_year}-12-31"
+    try:
+        evaluation_start = pd.Timestamp(f"{args.start_year}-01-01")
+        evaluation_end = pd.Timestamp(f"{args.end_year}-12-31")
+    except Exception as exc:
+        ap.error(f"invalid evaluation year: {exc}")
+    if evaluation_start > evaluation_end:
+        ap.error("start_year must not be after end_year")
+    data_start = evaluation_start - pd.DateOffset(years=args.warmup_years)
+    start = evaluation_start.strftime("%Y-%m-%d")
+    end = evaluation_end.strftime("%Y-%m-%d")
+    fetch_start = data_start.strftime("%Y-%m-%d")
     print(f"quantcortex performance validation | window {start} -> {end}"
           + ("  [PIT universe]" if args.pit else ""))
     print(f"Deflated Sharpe assumes n_trials = {args.n_trials}")
+    print(
+        "Deflated Sharpe variance = "
+        + (
+            "single-series estimate"
+            if args.sr_variance is None
+            else f"{args.sr_variance:.8g} (supplied cross-trial variance)"
+        )
+    )
     print("=" * 78)
 
     try:
-        rot_px = fetch_prices(ROTATION_UNIVERSE, start, end)
+        rot_px = fetch_prices(ROTATION_UNIVERSE, fetch_start, end)
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -186,23 +267,28 @@ def main(argv) -> int:
             file=sys.stderr,
         )
         return 1
+    warmup_sessions = int((rot_px.index < evaluation_start).sum())
     print(f"rotation data: {rot_px.shape[0]} days x {rot_px.shape[1]} symbols "
           f"({rot_px.index[0].date()} .. {rot_px.index[-1].date()})\n")
+    print(f"pre-evaluation warm-up: {warmup_sessions} sessions\n")
 
     # --- benchmarks ---
-    spy = rot_px["SPY"].pct_change() if "SPY" in rot_px else rot_px.pct_change().mean(axis=1)
-    ew = rot_px.div(rot_px.iloc[0]).mean(axis=1).pct_change()
+    spy, ew = benchmark_returns(rot_px, evaluation_start)
     print("Benchmarks (buy & hold, no costs):")
     print(f"  {'SPY':<26} Sharpe {ann_sharpe(spy):+5.2f}")
     print(f"  {'Equal-weight universe':<26} Sharpe {ann_sharpe(ew):+5.2f}\n")
 
     print("Strategies (weekly/monthly rebalance, 3bps commission + 10bps slippage):")
-    rot = metrics(run_rotation(rot_px), n_trials=args.n_trials)
+    rot = metrics(
+        run_rotation(rot_px, evaluation_start),
+        n_trials=args.n_trials,
+        sr_variance=args.sr_variance,
+    )
     print(fmt_row("multi_asset_rotation", rot, "[target Sharpe > 1.10]"))
 
     try:
         mom_syms, mom_label = momentum_universe(start, args.pit)
-        mom_px = fetch_prices(mom_syms, start, end)
+        mom_px = fetch_prices(mom_syms, fetch_start, end)
     except Exception as exc:
         print(f"ERROR: momentum validation failed: {exc}", file=sys.stderr)
         return 1
@@ -219,7 +305,11 @@ def main(argv) -> int:
         )
     print(f"\nmomentum_ml universe: {mom_label}{coverage}")
     print(f"momentum_ml data: {mom_px.shape[0]} days x {mom_px.shape[1]} names")
-    mom = metrics(run_momentum_ml(mom_px), n_trials=args.n_trials)
+    mom = metrics(
+        run_momentum_ml(mom_px, evaluation_start),
+        n_trials=args.n_trials,
+        sr_variance=args.sr_variance,
+    )
     print(fmt_row("momentum_ml", mom, "[target Sharpe > 0.9]"))
 
     print("\n" + "=" * 78)

@@ -19,6 +19,8 @@ from quantcortex.data.providers.base import (
     FUNDAMENTAL_COLUMNS,
     DataProvider,
     _as_symbol_list,
+    _canonical_fundamental_fields,
+    _canonicalize_fundamental_records,
 )
 
 __all__ = ["PolygonProvider"]
@@ -127,13 +129,14 @@ class PolygonProvider(DataProvider):
         start: Optional[str] = None,
         end: Optional[str] = None,
     ) -> pd.DataFrame:
-        """Return tidy quarterly fundamentals from Polygon's vX financials.
+        """Return canonical tidy fundamentals from Polygon's vX financials.
 
         ``period_end`` is taken from ``end_date``/``period_of_report`` and the
-        PIT ``announcement_date`` from ``filing_date``.
+        PIT ``announcement_date`` from ``filing_date``. Reports without a filing
+        date are omitted rather than backdated to period end.
         """
         client = self._client()
-        wanted = {str(f) for f in fields} if fields else None
+        wanted = _canonical_fundamental_fields(fields)
 
         frames: List[pd.DataFrame] = []
         for symbol in _as_symbol_list(symbols):
@@ -158,12 +161,22 @@ class PolygonProvider(DataProvider):
             getattr(fin, "end_date", None)
             or getattr(fin, "period_of_report", None)
         )
-        announcement = getattr(fin, "filing_date", None) or period_end
+        announcement = getattr(fin, "filing_date", None)
         financials = getattr(fin, "financials", None)
-        if financials is None or period_end is None:
+        if financials is None or period_end is None or announcement is None:
             return pd.DataFrame(columns=FUNDAMENTAL_COLUMNS)
+        period_ts = pd.to_datetime(period_end, errors="coerce", utc=True)
+        announcement_ts = pd.to_datetime(announcement, errors="coerce", utc=True)
+        if (
+            pd.isna(period_ts)
+            or pd.isna(announcement_ts)
+            or announcement_ts < period_ts
+        ):
+            return pd.DataFrame(columns=FUNDAMENTAL_COLUMNS)
+        period_ts = period_ts.tz_localize(None)
+        announcement_ts = announcement_ts.tz_localize(None)
 
-        records: List[dict] = []
+        raw_records: List[tuple[str, object]] = []
         # ``financials`` groups statements (income_statement, balance_sheet, ...);
         # each maps field -> object with a numeric ``value`` attribute.
         for statement in vars(financials).values():
@@ -171,24 +184,22 @@ class PolygonProvider(DataProvider):
                 continue
             items = statement if isinstance(statement, dict) else vars(statement)
             for field, datapoint in items.items():
-                if wanted is not None and field not in wanted:
-                    continue
                 value = getattr(datapoint, "value", None)
                 if value is None and isinstance(datapoint, dict):
                     value = datapoint.get("value")
                 if value is None:
                     continue
-                records.append({"field": field, "value": value})
+                raw_records.append((field, value))
+
+        records = _canonicalize_fundamental_records(raw_records, wanted)
 
         if not records:
             return pd.DataFrame(columns=FUNDAMENTAL_COLUMNS)
 
         tidy = pd.DataFrame(records)
         tidy["symbol"] = symbol
-        tidy["period_end"] = pd.to_datetime(period_end)
-        tidy["announcement_date"] = pd.to_datetime(announcement)
-        tidy["value"] = pd.to_numeric(tidy["value"], errors="coerce")
-        tidy = tidy.dropna(subset=["value"])
+        tidy["period_end"] = period_ts
+        tidy["announcement_date"] = announcement_ts
         return tidy[FUNDAMENTAL_COLUMNS]
 
     # ------------------------------------------------------------------ #

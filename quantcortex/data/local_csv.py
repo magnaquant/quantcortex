@@ -65,9 +65,15 @@ def _read_dated_csv(path: str | Path) -> tuple[Path, pd.DataFrame]:
 
 def _slice(frame: pd.DataFrame, start: str | None, end: str | None) -> pd.DataFrame:
     if start is not None:
-        frame = frame.loc[frame.index >= pd.Timestamp(start)]
+        parsed_start = pd.to_datetime(start, errors="coerce", utc=True)
+        if pd.isna(parsed_start):
+            raise LocalDataError("start must be a valid timestamp")
+        frame = frame.loc[frame.index >= parsed_start.tz_localize(None)]
     if end is not None:
-        frame = frame.loc[frame.index <= pd.Timestamp(end)]
+        parsed_end = pd.to_datetime(end, errors="coerce", utc=True)
+        if pd.isna(parsed_end):
+            raise LocalDataError("end must be a valid timestamp")
+        frame = frame.loc[frame.index <= parsed_end.tz_localize(None)]
     if frame.empty:
         raise LocalDataError("no rows remain after applying the requested date window")
     return frame
@@ -88,15 +94,28 @@ def load_price_matrix(
     symbols: Sequence[str] | None = None,
     start: str | None = None,
     end: str | None = None,
+    max_ffill: int | None = 5,
 ) -> pd.DataFrame:
-    """Load a wide adjusted-close CSV indexed by a required ``date`` column."""
+    """Load a wide adjusted-close CSV indexed by a required ``date`` column.
+
+    Missing prices are forward-filled for at most ``max_ffill`` rows. Set it to
+    ``None`` to disable filling; unlimited filling is intentionally unsupported
+    because it can keep stale or delisted assets alive indefinitely.
+    """
     resolved, frame = _read_dated_csv(path)
     frame.columns = [str(column).strip() for column in frame.columns]
-    if frame.columns.has_duplicates:
-        raise LocalDataError(f"duplicate symbol columns in {resolved}")
+    if frame.columns.has_duplicates or any(not column for column in frame.columns):
+        raise LocalDataError(f"symbol columns must be unique and non-empty in {resolved}")
 
     if symbols is not None:
+        if isinstance(symbols, str):
+            raise LocalDataError("symbols must be a sequence, not a string")
         required = list(symbols)
+        if any(
+            not isinstance(symbol, str) or not symbol.strip() for symbol in required
+        ) or len(required) != len(set(required)):
+            raise LocalDataError("symbols must contain unique non-empty strings")
+        required = [symbol.strip() for symbol in required]
         missing = [symbol for symbol in required if symbol not in frame.columns]
         if missing:
             raise LocalDataError(f"missing symbol columns in {resolved}: {missing}")
@@ -108,7 +127,15 @@ def load_price_matrix(
     if (frame <= 0).any(axis=None):
         raise LocalDataError(f"prices must be strictly positive in {resolved}")
 
-    frame = _slice(frame.ffill(), start, end).dropna(how="any")
+    if max_ffill is not None:
+        if (
+            isinstance(max_ffill, bool)
+            or int(max_ffill) != max_ffill
+            or max_ffill < 0
+        ):
+            raise LocalDataError("max_ffill must be a non-negative integer or None")
+        frame = frame.ffill(limit=int(max_ffill)) if max_ffill > 0 else frame
+    frame = _slice(frame, start, end).dropna(how="any")
     if frame.empty:
         raise LocalDataError("no complete price rows remain after forward-filling")
     return frame

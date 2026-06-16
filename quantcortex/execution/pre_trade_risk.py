@@ -4,7 +4,8 @@ Every order intent and every target-weight vector produced by quantcortex must
 clear :class:`PreTradeRiskCheck` *before* it is handed to a broker adapter.  This
 is the final, authoritative safety gate: it re-validates the canonical weight
 contract, enforces position-concentration and gross-exposure caps, and bounds
-per-order and aggregate notional against the allowed symbol universe.
+per-order and aggregate notional against the allowed symbol universe, and
+reconstructs the post-trade book from current positions before submission.
 
 The design philosophy mirrors the weight contract - fail loud and early.  Use
 :meth:`PreTradeRiskCheck.assert_safe` on the hot path so that any violation
@@ -18,6 +19,7 @@ from typing import Iterable, List, Mapping, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
+from quantcortex.execution.order_manager import OrderSide
 from quantcortex.portfolio.base import PortfolioMode
 
 __all__ = ["PreTradeRiskCheck", "PreTradeRiskError"]
@@ -64,18 +66,55 @@ class PreTradeRiskCheck:
         allowed_symbols: Optional[Iterable[str]] = None,
         tolerance: float = 1e-9,
     ) -> None:
+        numeric_inputs = {
+            "max_position_weight": max_position_weight,
+            "max_gross": max_gross,
+            "tolerance": tolerance,
+        }
+        for name, value in numeric_inputs.items():
+            if isinstance(value, (bool, np.bool_)):
+                raise TypeError(f"{name} must be numeric, not boolean")
         self.max_position_weight = float(max_position_weight)
         self.max_gross = float(max_gross)
-        self.max_notional = (
-            None if max_notional is None else float(max_notional)
-        )
+        for name, value in (
+            ("max_notional", max_notional),
+            ("max_order_notional", max_order_notional),
+        ):
+            if isinstance(value, (bool, np.bool_)):
+                raise TypeError(f"{name} must be numeric, not boolean")
+        self.max_notional = None if max_notional is None else float(max_notional)
         self.max_order_notional = (
             None if max_order_notional is None else float(max_order_notional)
         )
-        self.allowed_symbols = (
-            None if allowed_symbols is None else set(allowed_symbols)
-        )
+        if isinstance(allowed_symbols, str):
+            raise ValueError("allowed_symbols must be an iterable of symbols, not a string")
+        self.allowed_symbols = None
+        if allowed_symbols is not None:
+            normalized = []
+            for symbol in allowed_symbols:
+                if not isinstance(symbol, str) or not symbol.strip():
+                    raise ValueError(
+                        "allowed_symbols must contain non-empty strings"
+                    )
+                normalized.append(symbol.strip())
+            self.allowed_symbols = set(normalized)
         self.tolerance = float(tolerance)
+        if (
+            not np.isfinite(self.max_position_weight)
+            or self.max_position_weight < 0.0
+            or self.max_position_weight > 1.0
+        ):
+            raise ValueError("max_position_weight must be finite and in [0, 1]")
+        if not np.isfinite(self.max_gross) or self.max_gross < 0.0:
+            raise ValueError("max_gross must be finite and non-negative")
+        for name, value in (
+            ("max_notional", self.max_notional),
+            ("max_order_notional", self.max_order_notional),
+        ):
+            if value is not None and (not np.isfinite(value) or value < 0.0):
+                raise ValueError(f"{name} must be finite and non-negative")
+        if not np.isfinite(self.tolerance) or self.tolerance < 0.0:
+            raise ValueError("tolerance must be finite and non-negative")
 
     # ------------------------------------------------------------------ #
     # weight-level checks
@@ -90,7 +129,7 @@ class PreTradeRiskCheck:
         The pre-trade gate sits at the end of the pipeline, so it receives the
         weights *after* timing/risk overlays have scaled exposure.  It therefore
         validates the relaxed **exposure contract** (the same one
-        :func:`portfolio.base.enforce_exposure_contract` enforces), not the
+        :func:`quantcortex.portfolio.base.enforce_exposure_contract` enforces), not the
         strict ``sum == 1.0`` allocation contract: a de-risked or regime-gated
         long-only book legitimately sums to less than 1.0 with the remainder in
         cash, and a fully flat book (circuit breaker tripped) sums to 0.0.
@@ -101,12 +140,17 @@ class PreTradeRiskCheck:
         (``sum |w|``) within ``max_gross``.
         """
         violations: List[str] = []
-        mode = PortfolioMode.coerce(mode)
+        try:
+            mode = PortfolioMode.coerce(mode)
+        except (TypeError, ValueError):
+            return False, [f"invalid portfolio mode {mode!r}"]
 
         try:
-            arr = np.asarray(weights, dtype=np.float64).ravel()
+            arr = np.asarray(weights, dtype=np.float64)
         except (TypeError, ValueError):
             return False, ["weights not coercible to a float64 array"]
+        if arr.ndim != 1:
+            return False, [f"weights must be 1-D, got shape {arr.shape}"]
         if arr.size == 0:
             return False, ["empty weight vector"]
         if not np.all(np.isfinite(arr)):
@@ -134,7 +178,7 @@ class PreTradeRiskCheck:
                 )
         else:  # MARKET_NEUTRAL
             total = float(arr.sum())
-            if abs(total) > 1e-3:
+            if abs(total) > max(self.tolerance, 1e-6):
                 violations.append(
                     f"market-neutral book is not dollar-neutral (sum {total:+.6f})"
                 )
@@ -172,12 +216,35 @@ class PreTradeRiskCheck:
         for API symmetry and informational messages.
         """
         violations: List[str] = []
-        price_map = self._as_mapping(prices)
+        try:
+            price_map = self._normalize_symbol_mapping(prices, "prices")
+        except (TypeError, ValueError) as exc:
+            return False, [str(exc)]
         total_notional = 0.0
+        if capital is not None:
+            capital = self._to_float(capital)
+            if capital is None or capital <= 0.0:
+                violations.append("capital must be finite and positive when provided")
 
-        for order in orders:
+        for i, order in enumerate(orders):
+            if not isinstance(order, Mapping):
+                violations.append(f"order {i} is not a mapping")
+                continue
             symbol = order.get("symbol")
-            quantity = self._to_float(order.get("quantity")) or 0.0
+            if not isinstance(symbol, str) or not symbol.strip():
+                violations.append(f"order {i} has an empty or invalid symbol")
+                continue
+            symbol = symbol.strip()
+            quantity = self._to_float(order.get("quantity"))
+            if quantity is None or quantity <= 0.0:
+                violations.append(
+                    f"order {symbol!r} quantity must be finite and positive"
+                )
+                continue
+            try:
+                OrderSide(order.get("side"))
+            except (TypeError, ValueError):
+                violations.append(f"order {symbol!r} has invalid side")
 
             if self.allowed_symbols is not None and symbol not in self.allowed_symbols:
                 violations.append(f"symbol {symbol!r} not in allowed_symbols")
@@ -210,6 +277,83 @@ class PreTradeRiskCheck:
 
         return (not violations), violations
 
+    def check_post_trade_positions(
+        self,
+        orders: List[dict],
+        prices: PriceLike,
+        capital: float,
+        current_positions: Mapping[str, float],
+        mode: Union[PortfolioMode, str] = PortfolioMode.LONG_ONLY,
+    ) -> Tuple[bool, List[str]]:
+        """Reconstruct and validate the post-trade exposure implied by a batch."""
+        violations: List[str] = []
+        capital_value = self._to_float(capital)
+        if capital_value is None or capital_value <= 0.0:
+            return False, ["post-trade capital must be finite and positive"]
+        try:
+            price_map = self._normalize_symbol_mapping(prices, "prices")
+            quantities = self._normalize_symbol_mapping(
+                current_positions, "current_positions"
+            )
+        except (TypeError, ValueError) as exc:
+            return False, [str(exc)]
+
+        normalized_quantities: dict[str, float] = {}
+        for symbol, quantity in quantities.items():
+            value = self._to_float(quantity)
+            if value is None:
+                violations.append(f"current position for {symbol!r} must be finite")
+            else:
+                normalized_quantities[symbol] = value
+
+        for order in orders:
+            if not isinstance(order, Mapping):
+                continue
+            symbol = order.get("symbol")
+            quantity = self._to_float(order.get("quantity"))
+            try:
+                side = OrderSide(order.get("side"))
+            except (TypeError, ValueError):
+                violations.append("post-trade orders require a valid side")
+                continue
+            if (
+                not isinstance(symbol, str)
+                or not symbol.strip()
+                or quantity is None
+                or quantity <= 0.0
+            ):
+                violations.append("post-trade orders require valid symbols and positive quantities")
+                continue
+            symbol = symbol.strip()
+            signed = quantity if side is OrderSide.BUY else -quantity
+            normalized_quantities[symbol] = normalized_quantities.get(symbol, 0.0) + signed
+
+        symbols = sorted(
+            symbol
+            for symbol, quantity in normalized_quantities.items()
+            if abs(quantity) > self.tolerance
+        )
+        if not symbols:
+            return (not violations), violations
+
+        weights = []
+        for symbol in symbols:
+            price = self._to_float(price_map.get(symbol))
+            if price is None or price <= 0.0:
+                violations.append(f"no usable post-trade price for symbol {symbol!r}")
+                continue
+            weights.append(normalized_quantities[symbol] * price / capital_value)
+
+        if len(weights) == len(symbols):
+            ok, exposure_violations = self.check_weights(
+                np.asarray(weights, dtype=np.float64), mode=mode
+            )
+            if not ok:
+                violations.extend(
+                    f"post-trade {message}" for message in exposure_violations
+                )
+        return (not violations), violations
+
     # ------------------------------------------------------------------ #
     # combined assertion (the live-execution gate)
     # ------------------------------------------------------------------ #
@@ -221,6 +365,7 @@ class PreTradeRiskCheck:
         orders: Optional[List[dict]] = None,
         prices: Optional[PriceLike] = None,
         capital: Optional[float] = None,
+        current_positions: Optional[Mapping[str, float]] = None,
     ) -> None:
         """Run all applicable checks and raise on any violation.
 
@@ -242,6 +387,24 @@ class PreTradeRiskCheck:
                 ok, o_violations = self.check_orders(orders, prices, capital)
                 if not ok:
                     violations.extend(o_violations)
+            if current_positions is None:
+                violations.append(
+                    "post-trade validation requires current_positions when orders are supplied"
+                )
+            elif prices is not None and capital is not None:
+                ok, post_violations = self.check_post_trade_positions(
+                    orders,
+                    prices,
+                    capital,
+                    current_positions,
+                    mode=mode,
+                )
+                if not ok:
+                    violations.extend(post_violations)
+            elif prices is not None:
+                violations.append(
+                    "post-trade validation requires capital when orders are supplied"
+                )
 
         if violations:
             raise PreTradeRiskError(violations)
@@ -254,14 +417,31 @@ class PreTradeRiskCheck:
         if obj is None:
             return {}
         if isinstance(obj, pd.Series):
+            if obj.index.has_duplicates:
+                raise ValueError("Series mappings must not contain duplicate symbols")
             return obj.to_dict()
+        if not isinstance(obj, Mapping):
+            raise TypeError("expected a mapping or pandas Series")
         return dict(obj)
+
+    @classmethod
+    def _normalize_symbol_mapping(cls, obj, name: str) -> dict:
+        normalized = {}
+        for symbol, value in cls._as_mapping(obj).items():
+            if not isinstance(symbol, str) or not symbol.strip():
+                raise ValueError(f"{name} must use non-empty string symbols")
+            key = symbol.strip()
+            if key in normalized:
+                raise ValueError(f"{name} contains duplicate symbol {key!r}")
+            normalized[key] = value
+        return normalized
 
     @staticmethod
     def _to_float(value):
-        if value is None:
+        if value is None or isinstance(value, (bool, np.bool_)):
             return None
         try:
-            return float(value)
+            result = float(value)
         except (TypeError, ValueError):
             return None
+        return result if np.isfinite(result) else None

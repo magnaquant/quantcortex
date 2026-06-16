@@ -1,7 +1,7 @@
 """Financial Modeling Prep (FMP) data provider.
 
-Serves OHLCV history, tidy quarterly fundamentals (income + balance sheet),
-and macro economic indicators.  HTTP is done with the standard library
+Serves OHLCV history, tidy quarterly fundamentals (income, balance sheet, and
+cash flow), and macro economic indicators. HTTP is done with the standard library
 (``urllib.request`` + ``json``) so no third-party HTTP client is required.
 
 The API key defaults to the ``FMP_API_KEY`` environment variable and is only
@@ -22,6 +22,8 @@ from quantcortex.data.providers.base import (
     FUNDAMENTAL_COLUMNS,
     DataProvider,
     _as_symbol_list,
+    _canonical_fundamental_fields,
+    _canonicalize_fundamental_records,
 )
 
 __all__ = ["FMPProvider"]
@@ -117,12 +119,13 @@ class FMPProvider(DataProvider):
         start: Optional[str] = None,
         end: Optional[str] = None,
     ) -> pd.DataFrame:
-        """Return tidy quarterly fundamentals (income + balance sheet).
+        """Return tidy quarterly fundamentals with canonical field names.
 
         ``period_end`` is the statement ``date``; the PIT ``announcement_date``
-        is the ``fillingDate`` (FMP's spelling) or ``acceptedDate`` fallback.
+        is the ``fillingDate`` (FMP's spelling), ``filingDate``, or
+        ``acceptedDate``. Rows without a public-availability date are omitted.
         """
-        wanted = {str(f) for f in fields} if fields else None
+        wanted = _canonical_fundamental_fields(fields)
         meta_keys = {
             "date",
             "symbol",
@@ -139,7 +142,11 @@ class FMPProvider(DataProvider):
 
         frames: List[pd.DataFrame] = []
         for symbol in _as_symbol_list(symbols):
-            for statement in ("income-statement", "balance-sheet-statement"):
+            for statement in (
+                "income-statement",
+                "balance-sheet-statement",
+                "cash-flow-statement",
+            ):
                 rows = self._get(
                     f"{statement}/{symbol}", period="quarter", limit=120
                 )
@@ -154,10 +161,19 @@ class FMPProvider(DataProvider):
             return pd.DataFrame(columns=FUNDAMENTAL_COLUMNS)
 
         result = pd.concat(frames, ignore_index=True)
+        result = result.drop_duplicates(
+            ["symbol", "period_end", "announcement_date", "field"], keep="first"
+        )
         if start is not None:
-            result = result[result["period_end"] >= pd.Timestamp(start)]
+            result = result[
+                result["period_end"]
+                >= pd.to_datetime(start, errors="raise", utc=True).tz_localize(None)
+            ]
         if end is not None:
-            result = result[result["period_end"] <= pd.Timestamp(end)]
+            result = result[
+                result["period_end"]
+                <= pd.to_datetime(end, errors="raise", utc=True).tz_localize(None)
+            ]
         return result.reset_index(drop=True)
 
     def _melt_row(
@@ -171,27 +187,32 @@ class FMPProvider(DataProvider):
             row.get("fillingDate")
             or row.get("filingDate")
             or row.get("acceptedDate")
-            or period_end
         )
+        if announcement is None:
+            return pd.DataFrame(columns=FUNDAMENTAL_COLUMNS)
+        period_ts = pd.to_datetime(period_end, errors="coerce", utc=True)
+        announcement_ts = pd.to_datetime(announcement, errors="coerce", utc=True)
+        if (
+            pd.isna(period_ts)
+            or pd.isna(announcement_ts)
+            or announcement_ts < period_ts
+        ):
+            return pd.DataFrame(columns=FUNDAMENTAL_COLUMNS)
+        period_ts = period_ts.tz_localize(None)
+        announcement_ts = announcement_ts.tz_localize(None)
 
-        records: List[dict] = []
-        for field, value in row.items():
-            if field in meta_keys:
-                continue
-            if wanted is not None and field not in wanted:
-                continue
-            num = pd.to_numeric(value, errors="coerce")
-            if pd.isna(num):
-                continue
-            records.append({"field": field, "value": num})
+        records = _canonicalize_fundamental_records(
+            ((field, value) for field, value in row.items() if field not in meta_keys),
+            wanted,
+        )
 
         if not records:
             return pd.DataFrame(columns=FUNDAMENTAL_COLUMNS)
 
         tidy = pd.DataFrame(records)
         tidy["symbol"] = symbol
-        tidy["period_end"] = pd.to_datetime(period_end)
-        tidy["announcement_date"] = pd.to_datetime(announcement)
+        tidy["period_end"] = period_ts
+        tidy["announcement_date"] = announcement_ts
         return tidy[FUNDAMENTAL_COLUMNS]
 
     # ------------------------------------------------------------------ #

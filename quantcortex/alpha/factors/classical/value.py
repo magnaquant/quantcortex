@@ -1,26 +1,4 @@
-"""Cross-sectional value factor.
-
-Combines three classic valuation ratios into a single composite value score:
-
-* Earnings yield (E/P), the reciprocal of the price-to-earnings ratio.
-* Book-to-price (B/P), the reciprocal of the price-to-book ratio.
-* EBITDA-to-enterprise-value (EBITDA/EV), the reciprocal of the EV/EBITDA
-  multiple.
-
-Each ratio is expressed so that *cheaper is higher* (a high earnings yield
-means a low P/E, i.e. a cheap stock). The composite is the equal-weighted
-average of the three individual cross-sectional z-scores, so a higher composite
-score identifies more attractively valued names.
-
-Fundamental data are treated point-in-time (PIT): a fundamental value only
-becomes usable on its ``announcement_date``, and on any given date we use the
-most recently announced (forward-filled) value. This prevents look-ahead bias
-from period-end values that were not yet public.
-
-Cross-sectional normalization helpers are shared with the other classical
-factor modules via the private :mod:`alpha.factors.classical._cross_section`
-module.
-"""
+"""Point-in-time cross-sectional value factor."""
 
 from __future__ import annotations
 
@@ -32,140 +10,198 @@ from quantcortex.alpha.factors.classical._cross_section import (
     cross_sectional_zscore,
     validate_prices,
 )
-
-_REQUIRED_COLUMNS = ("symbol", "period_end", "announcement_date", "field", "value")
+from quantcortex.alpha.factors.classical._fundamentals import (
+    available_mean,
+    pit_panel,
+    validate_fundamentals,
+)
 
 
 class ValueFactor:
-    """Composite cross-sectional value factor (earnings yield, B/P, EBITDA/EV)."""
+    """Composite earnings-yield, book-to-price, and EBITDA-yield factor.
 
-    # The three sub-factors are combined with equal weight in :meth:`compute`.
+    Flow numerators use the latest four announced quarterly reports. Report
+    revisions become visible strictly after their announcement timestamps by
+    default, avoiding same-date assumptions for date-only feeds.
+    """
 
-    # ------------------------------------------------------------------
-    # Public composite
-    # ------------------------------------------------------------------
-    def compute(self, fundamentals: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
-        """Compute the composite value factor panel.
+    def compute(
+        self,
+        fundamentals: pd.DataFrame,
+        prices: pd.DataFrame,
+        *,
+        market_caps: pd.DataFrame | None = None,
+        prices_are_unadjusted: bool = False,
+    ) -> pd.DataFrame:
+        """Compute the composite value panel.
 
-        Parameters
-        ----------
-        fundamentals:
-            Tidy frame with columns
-            ``[symbol, period_end, announcement_date, field, value]``. Relevant
-            ``field`` values are ``earnings``, ``book_value``, ``ebitda``,
-            ``enterprise_value`` and ``shares_outstanding``.
-        prices:
-            Adjusted close prices indexed by date, columns are symbols.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Composite value factor panel (cross-sectional z-score average),
-            indexed like ``prices``, higher = cheaper = more attractive.
+        ``prices`` must be raw, split-unadjusted closes when market capitalisation
+        is derived from reported shares. Alternatively, pass a point-in-time
+        daily ``market_caps`` panel. Adjusted prices and historical raw shares
+        are not on the same share basis and must not be multiplied silently.
         """
+        frame = validate_fundamentals(fundamentals)
         prices = self._validate_prices(prices)
+        market_cap = self._resolve_market_cap(
+            frame,
+            prices,
+            market_caps=market_caps,
+            prices_are_unadjusted=prices_are_unadjusted,
+        )
+        panels = [
+            self.cross_sectional_zscore(
+                self._earnings_yield(frame, prices, market_cap)
+            ),
+            self.cross_sectional_zscore(
+                self._book_to_price(frame, prices, market_cap)
+            ),
+            self.cross_sectional_zscore(self._ebitda_yield(frame, prices)),
+        ]
+        return available_mean(panels)
 
-        ey = self.earnings_yield(fundamentals, prices)
-        bp = self.book_to_price(fundamentals, prices)
-        ee = self.ev_to_ebitda(fundamentals, prices)
-
-        z_ey = self.cross_sectional_zscore(ey)
-        z_bp = self.cross_sectional_zscore(bp)
-        z_ee = self.cross_sectional_zscore(ee)
-
-        # Equal-weighted average of the available sub-factor z-scores. Using a
-        # nan-aware mean lets a symbol still receive a composite score on dates
-        # where one sub-factor is missing, rather than dropping it entirely.
-        composite = pd.concat([z_ey, z_bp, z_ee]).groupby(level=0).mean()
-        composite = composite.reindex(index=prices.index, columns=prices.columns)
-        return composite
-
-    # ------------------------------------------------------------------
-    # Individual sub-factors (cheap = high)
-    # ------------------------------------------------------------------
-    def earnings_yield(self, fundamentals: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
-        """Earnings yield E/P = earnings / market_cap (reciprocal of P/E).
-
-        Market capitalisation is reconstructed point-in-time from
-        ``shares_outstanding`` and the contemporaneous price, so the ratio is
-        comparable across symbols regardless of share count differences.
-        """
+    def earnings_yield(
+        self,
+        fundamentals: pd.DataFrame,
+        prices: pd.DataFrame,
+        *,
+        market_caps: pd.DataFrame | None = None,
+        prices_are_unadjusted: bool = False,
+    ) -> pd.DataFrame:
+        """Return TTM net income divided by current market capitalisation."""
+        frame = validate_fundamentals(fundamentals)
         prices = self._validate_prices(prices)
-        earnings = self._pit_panel(fundamentals, "earnings", prices)
-        shares = self._pit_panel(fundamentals, "shares_outstanding", prices)
-        market_cap = prices.multiply(shares)
-        return self._safe_ratio(earnings, market_cap)
+        market_cap = self._resolve_market_cap(
+            frame,
+            prices,
+            market_caps=market_caps,
+            prices_are_unadjusted=prices_are_unadjusted,
+        )
+        return self._earnings_yield(frame, prices, market_cap)
 
-    def book_to_price(self, fundamentals: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
-        """Book-to-price B/P = book_value / market_cap (reciprocal of P/B)."""
+    def book_to_price(
+        self,
+        fundamentals: pd.DataFrame,
+        prices: pd.DataFrame,
+        *,
+        market_caps: pd.DataFrame | None = None,
+        prices_are_unadjusted: bool = False,
+    ) -> pd.DataFrame:
+        """Return latest announced book value divided by current market cap."""
+        frame = validate_fundamentals(fundamentals)
         prices = self._validate_prices(prices)
-        book = self._pit_panel(fundamentals, "book_value", prices)
-        shares = self._pit_panel(fundamentals, "shares_outstanding", prices)
-        market_cap = prices.multiply(shares)
-        return self._safe_ratio(book, market_cap)
+        market_cap = self._resolve_market_cap(
+            frame,
+            prices,
+            market_caps=market_caps,
+            prices_are_unadjusted=prices_are_unadjusted,
+        )
+        return self._book_to_price(frame, prices, market_cap)
 
-    def ev_to_ebitda(self, fundamentals: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
-        """EBITDA yield = EBITDA / enterprise_value (reciprocal of EV/EBITDA)."""
+    def ebitda_yield(
+        self, fundamentals: pd.DataFrame, prices: pd.DataFrame
+    ) -> pd.DataFrame:
+        """Return TTM EBITDA divided by latest announced enterprise value."""
+        frame = validate_fundamentals(fundamentals)
         prices = self._validate_prices(prices)
-        ebitda = self._pit_panel(fundamentals, "ebitda", prices)
-        ev = self._pit_panel(fundamentals, "enterprise_value", prices)
-        return self._safe_ratio(ebitda, ev)
+        return self._ebitda_yield(frame, prices)
 
-    # ------------------------------------------------------------------
-    # Cross-sectional normalization (shared via _cross_section)
-    # ------------------------------------------------------------------
-    cross_sectional_zscore = staticmethod(cross_sectional_zscore)
-    rank = staticmethod(cross_sectional_rank)
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-    _validate_prices = staticmethod(validate_prices)
+    def ev_to_ebitda(
+        self, fundamentals: pd.DataFrame, prices: pd.DataFrame
+    ) -> pd.DataFrame:
+        """Return latest announced enterprise value divided by TTM EBITDA."""
+        frame = validate_fundamentals(fundamentals)
+        prices = self._validate_prices(prices)
+        ebitda = pit_panel(
+            frame, "ebitda", prices.index, prices.columns, mode="ttm"
+        )
+        enterprise_value = pit_panel(
+            frame,
+            "enterprise_value",
+            prices.index,
+            prices.columns,
+            mode="latest",
+        )
+        return self._safe_ratio(enterprise_value, ebitda)
 
     @staticmethod
-    def _safe_ratio(numerator: pd.DataFrame, denominator: pd.DataFrame) -> pd.DataFrame:
-        """Element-wise ratio guarding against division by non-positive denoms."""
-        denom = denominator.where(denominator > 0)
+    def _earnings_yield(
+        fundamentals: pd.DataFrame,
+        prices: pd.DataFrame,
+        market_cap: pd.DataFrame,
+    ) -> pd.DataFrame:
+        earnings = pit_panel(
+            fundamentals,
+            "net_income",
+            prices.index,
+            prices.columns,
+            mode="ttm",
+        )
+        return ValueFactor._safe_ratio(earnings, market_cap)
+
+    @staticmethod
+    def _book_to_price(
+        fundamentals: pd.DataFrame,
+        prices: pd.DataFrame,
+        market_cap: pd.DataFrame,
+    ) -> pd.DataFrame:
+        book = pit_panel(
+            fundamentals, "book_value", prices.index, prices.columns, mode="latest"
+        )
+        return ValueFactor._safe_ratio(book, market_cap)
+
+    @staticmethod
+    def _ebitda_yield(
+        fundamentals: pd.DataFrame, prices: pd.DataFrame
+    ) -> pd.DataFrame:
+        ebitda = pit_panel(
+            fundamentals, "ebitda", prices.index, prices.columns, mode="ttm"
+        )
+        enterprise_value = pit_panel(
+            fundamentals,
+            "enterprise_value",
+            prices.index,
+            prices.columns,
+            mode="latest",
+        )
+        return ValueFactor._safe_ratio(ebitda, enterprise_value)
+
+    @staticmethod
+    def _resolve_market_cap(
+        fundamentals: pd.DataFrame,
+        prices: pd.DataFrame,
+        *,
+        market_caps: pd.DataFrame | None,
+        prices_are_unadjusted: bool,
+    ) -> pd.DataFrame:
+        if market_caps is not None:
+            validated = validate_prices(market_caps)
+            return validated.reindex(index=prices.index, columns=prices.columns)
+        if not isinstance(prices_are_unadjusted, bool):
+            raise TypeError("prices_are_unadjusted must be a boolean")
+        if not prices_are_unadjusted:
+            raise ValueError(
+                "pass point-in-time market_caps or explicitly set "
+                "prices_are_unadjusted=True before deriving market cap"
+            )
+        shares = pit_panel(
+            fundamentals,
+            "shares_outstanding",
+            prices.index,
+            prices.columns,
+            mode="latest",
+        )
+        shares = shares.where(shares > 0.0)
+        return prices.multiply(shares)
+
+    @staticmethod
+    def _safe_ratio(
+        numerator: pd.DataFrame, denominator: pd.DataFrame
+    ) -> pd.DataFrame:
+        denom = denominator.where(denominator > 0.0)
         with np.errstate(divide="ignore", invalid="ignore"):
             ratio = numerator.divide(denom)
         return ratio.replace([np.inf, -np.inf], np.nan)
 
-    @classmethod
-    def _pit_panel(
-        cls, fundamentals: pd.DataFrame, field: str, prices: pd.DataFrame
-    ) -> pd.DataFrame:
-        """Build a point-in-time, forward-filled panel for one fundamental field.
-
-        The value for ``(date, symbol)`` is the most recently *announced* value
-        for that field as of ``date`` (using ``announcement_date``, never
-        ``period_end``), aligned onto the trading calendar of ``prices``.
-        """
-        cls._validate_fundamentals(fundamentals)
-        sub = fundamentals.loc[fundamentals["field"] == field,
-                               ["symbol", "announcement_date", "value"]].copy()
-        if sub.empty:
-            return pd.DataFrame(index=prices.index, columns=prices.columns, dtype=float)
-
-        sub["announcement_date"] = pd.to_datetime(sub["announcement_date"])
-        # Stable sort so that announcements tied on date keep their input
-        # order and drop_duplicates(keep="last") retains the latest row.
-        sub = sub.sort_values("announcement_date", kind="stable")
-        # If multiple announcements share a date for one symbol, keep the last.
-        sub = sub.drop_duplicates(subset=["announcement_date", "symbol"], keep="last")
-
-        wide = sub.pivot(index="announcement_date", columns="symbol", values="value")
-        # Reindex onto the union of announcement dates and trading dates, ffill
-        # (so a value is carried forward only after it is announced), then
-        # restrict to the price calendar. Values are NaN before first announce.
-        full_index = wide.index.union(prices.index)
-        wide = wide.reindex(full_index).sort_index().ffill()
-        wide = wide.reindex(index=prices.index, columns=prices.columns)
-        return wide.astype(float)
-
-    @staticmethod
-    def _validate_fundamentals(fundamentals: pd.DataFrame) -> None:
-        if not isinstance(fundamentals, pd.DataFrame):
-            raise TypeError("fundamentals must be a pandas DataFrame")
-        missing = [c for c in _REQUIRED_COLUMNS if c not in fundamentals.columns]
-        if missing:
-            raise ValueError(f"fundamentals missing required columns: {missing}")
+    cross_sectional_zscore = staticmethod(cross_sectional_zscore)
+    rank = staticmethod(cross_sectional_rank)
+    _validate_prices = staticmethod(validate_prices)

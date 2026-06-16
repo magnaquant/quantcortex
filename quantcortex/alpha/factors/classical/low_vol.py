@@ -13,7 +13,7 @@ upon at ``t`` without look-ahead.
 
 Cross-sectional normalization and price/return helpers are shared with the
 other classical factor modules via the private
-:mod:`alpha.factors.classical._cross_section` module.
+:mod:`quantcortex.alpha.factors.classical._cross_section` module.
 """
 
 from __future__ import annotations
@@ -47,10 +47,18 @@ class LowVolFactor:
     """
 
     def __init__(self, window: int = 63, beta_window: int = 252) -> None:
-        if window <= 1:
-            raise ValueError("window must be greater than 1")
-        if beta_window <= 1:
-            raise ValueError("beta_window must be greater than 1")
+        if (
+            isinstance(window, (bool, np.bool_))
+            or not isinstance(window, (int, np.integer))
+            or window <= 1
+        ):
+            raise ValueError("window must be an integer greater than 1")
+        if (
+            isinstance(beta_window, (bool, np.bool_))
+            or not isinstance(beta_window, (int, np.integer))
+            or beta_window <= 1
+        ):
+            raise ValueError("beta_window must be an integer greater than 1")
         self.window = int(window)
         self.beta_window = int(beta_window)
 
@@ -84,7 +92,7 @@ class LowVolFactor:
         causal for a signal acted on at ``t``.
         """
         prices = self._validate_prices(prices)
-        returns = prices.pct_change()
+        returns = prices.pct_change(fill_method=None)
         daily_vol = returns.rolling(self.window, min_periods=self.window).std(ddof=0)
         # Shift by one bar: the volatility usable at t must not include the
         # return measured from t-1 to t (which is only known at t's close).
@@ -115,7 +123,8 @@ class LowVolFactor:
             Rolling window in trading days. Defaults to ``beta_window``.
         market_is_returns:
             Explicitly declare whether ``market`` is a return series (``True``)
-            or a price level (``False``). ``None`` (default) uses a heuristic.
+            or a price level (``False``). ``None`` is rejected because values
+            alone cannot distinguish the two reliably.
 
         Returns
         -------
@@ -125,17 +134,29 @@ class LowVolFactor:
         prices = self._validate_prices(prices)
         if not isinstance(market, pd.Series):
             raise TypeError("market must be a pandas Series")
-        window = int(window) if window is not None else self.beta_window
-        if window <= 1:
-            raise ValueError("window must be greater than 1")
+        window = self.beta_window if window is None else window
+        if (
+            isinstance(window, (bool, np.bool_))
+            or not isinstance(window, (int, np.integer))
+            or window <= 1
+        ):
+            raise ValueError("window must be an integer greater than 1")
+        window = int(window)
 
-        stock_ret = prices.pct_change()
+        if market.index.has_duplicates:
+            raise ValueError("market index must be unique")
+        stock_ret = prices.pct_change(fill_method=None)
         market_ret = self._to_returns(market.reindex(prices.index), market_is_returns)
-        market_var = market_ret.rolling(window, min_periods=window).var(ddof=0)
 
         betas = pd.DataFrame(index=prices.index, columns=prices.columns, dtype=float)
         for col in prices.columns:
-            cov = self._rolling_cov(stock_ret[col], market_ret, window)
+            stock = stock_ret[col]
+            pairwise_market = market_ret.where(stock.notna())
+            pairwise_stock = stock.where(market_ret.notna())
+            market_var = pairwise_market.rolling(
+                window, min_periods=window
+            ).var(ddof=0)
+            cov = self._rolling_cov(pairwise_stock, pairwise_market, window)
             betas[col] = cov.divide(market_var)
 
         betas = betas.replace([np.inf, -np.inf], np.nan)
@@ -162,7 +183,7 @@ class LowVolFactor:
             Market price level (or return series) indexed by the same dates.
         market_is_returns:
             Explicitly declare whether ``market`` is a return series (``True``)
-            or a price level (``False``). ``None`` (default) uses a heuristic.
+            or a price level (``False``). ``None`` is rejected.
 
         Returns
         -------

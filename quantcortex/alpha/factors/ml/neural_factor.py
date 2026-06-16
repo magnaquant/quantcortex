@@ -2,16 +2,16 @@
 
 :class:`NeuralFactor` is a small, deterministic feed-forward neural network
 used as a *baseline* against the gradient-boosted trees in
-:mod:`alpha.factors.ml.gbdt_factor`. On tabular financial cross-sections GBDTs
+:mod:`quantcortex.alpha.factors.ml.gbdt_factor`. On tabular financial cross-sections GBDTs
 typically win, but a shallow MLP is the standard sanity-check / ensemble member
 (Gu, Kelly & Xiu, 2020): if a neural net cannot beat the trees, the trees are
 the model to ship.
 
 The network is intentionally tiny (a couple of hidden layers, ReLU
 activations, MSE loss, Adam optimizer). It uses Torch when available and
-otherwise falls back to scikit-learn's
-:class:`~sklearn.neural_network.MLPRegressor` with the *same* hidden-layer
-sizes, so the class is fully usable offline with no optional dependencies.
+also supports scikit-learn's :class:`~sklearn.neural_network.MLPRegressor` with
+the same hidden-layer sizes. Backend choice is explicit because changing the
+library changes the fitted model even with identical hyperparameters.
 
 Inputs are standardized with :class:`~sklearn.preprocessing.StandardScaler`
 (fit on the training data only -- causal), since neural nets, unlike trees, are
@@ -23,7 +23,6 @@ merely importing this module needs only numpy/pandas/scipy/scikit-learn.
 
 from __future__ import annotations
 
-import random
 from typing import Optional, Sequence, Union
 
 import numpy as np
@@ -51,11 +50,16 @@ class NeuralFactor:
     random_state:
         Seed for reproducible weight initialization and shuffling. Defaults to
         ``42`` for determinism.
+    backend:
+        ``"sklearn"`` (the deterministic default), ``"torch"``, or ``"auto"``.
+        ``"auto"`` uses Torch when importable and otherwise uses sklearn; it is
+        therefore environment-dependent. Runtime training failures never
+        silently switch model classes.
 
     Notes
     -----
     This is a *baseline*. For tabular alpha signals, prefer
-    :class:`~alpha.factors.ml.gbdt_factor.GBDTFactor`; use this model to
+    :class:`~quantcortex.alpha.factors.ml.gbdt_factor.GBDTFactor`; use this model to
     benchmark the trees or as a diversifying ensemble member.
     """
 
@@ -67,21 +71,55 @@ class NeuralFactor:
         batch_size: int = 256,
         weight_decay: float = 1e-4,
         random_state: int = 42,
+        backend: str = "sklearn",
     ) -> None:
+        if not isinstance(hidden, Sequence) or isinstance(hidden, (str, bytes)):
+            raise TypeError("hidden must be a sequence of positive integers")
+        if not hidden or any(
+            isinstance(h, (bool, np.bool_))
+            or not isinstance(h, (int, np.integer))
+            or h <= 0
+            for h in hidden
+        ):
+            raise ValueError("hidden must contain positive integers")
+        if (
+            isinstance(epochs, (bool, np.bool_))
+            or not isinstance(epochs, (int, np.integer))
+            or epochs <= 0
+        ):
+            raise ValueError("epochs must be a positive integer")
+        if not np.isfinite(lr) or lr <= 0:
+            raise ValueError("lr must be finite and positive")
+        if (
+            isinstance(batch_size, (bool, np.bool_))
+            or not isinstance(batch_size, (int, np.integer))
+            or batch_size <= 0
+        ):
+            raise ValueError("batch_size must be a positive integer")
+        if not np.isfinite(weight_decay) or weight_decay < 0:
+            raise ValueError("weight_decay must be finite and non-negative")
+        if (
+            isinstance(random_state, (bool, np.bool_))
+            or not isinstance(random_state, (int, np.integer))
+        ):
+            raise ValueError("random_state must be an integer")
+        if backend not in {"auto", "sklearn", "torch"}:
+            raise ValueError("backend must be 'auto', 'sklearn', or 'torch'")
+
         self.hidden = tuple(int(h) for h in hidden)
-        if any(h <= 0 for h in self.hidden):
-            raise ValueError("all hidden layer sizes must be positive")
         self.epochs = int(epochs)
         self.lr = float(lr)
         self.batch_size = int(batch_size)
         self.weight_decay = float(weight_decay)
         self.random_state = int(random_state)
+        self.backend = backend
 
         # Populated by fit().
         self.backend_: Optional[str] = None
         self.scaler_: Optional[StandardScaler] = None
         self.model_: object = None
         self.feature_names_: Optional[list[str]] = None
+        self._impute_means_: Optional[np.ndarray] = None
         self._y_mean_: float = 0.0
         self._y_std_: float = 1.0
 
@@ -104,7 +142,7 @@ class NeuralFactor:
             ``self``, fitted.
         """
         X = self._validate_features(X)
-        y_arr = self._validate_target(y, n_rows=len(X))
+        y_arr = self._validate_target(y, X.index)
         self.feature_names_ = list(X.columns)
 
         # Standardize inputs (fit on training data only -> causal).
@@ -117,15 +155,23 @@ class NeuralFactor:
         self._impute_means_ = col_means
         X_scaled = self.scaler_.fit_transform(X_filled)
 
-        try:
-            self._fit_torch(X_scaled, y_arr)
-            self.backend_ = "torch"
-        except Exception:  # noqa: BLE001
-            # torch may be absent (ImportError) or present but unusable (a
-            # runtime/device error); the sklearn MLP is the reliable fallback.
-            # A genuinely bad target will then re-raise from the sklearn path.
+        if self.backend == "sklearn":
             self._fit_sklearn(X_scaled, y_arr)
             self.backend_ = "sklearn"
+            return self
+
+        try:
+            import torch  # noqa: F401
+        except (ImportError, OSError) as exc:
+            if self.backend == "torch":
+                raise ImportError(
+                    "backend='torch' requested but Torch is unavailable"
+                ) from exc
+            self._fit_sklearn(X_scaled, y_arr)
+            self.backend_ = "sklearn"
+        else:
+            self._fit_torch(X_scaled, y_arr)
+            self.backend_ = "torch"
         return self
 
     def _fit_torch(self, X_scaled: np.ndarray, y_arr: np.ndarray) -> None:
@@ -133,41 +179,40 @@ class NeuralFactor:
         import torch  # lazy
         from torch import nn
 
-        # Determinism.
-        torch.manual_seed(self.random_state)
-        np.random.seed(self.random_state)
-        random.seed(self.random_state)
-
         # Standardize the target so MSE is well-scaled; undone at predict time.
         self._y_mean_ = float(np.mean(y_arr))
         self._y_std_ = float(np.std(y_arr)) or 1.0
         y_std = (y_arr - self._y_mean_) / self._y_std_
 
-        n_features = X_scaled.shape[1]
-        model = self._build_torch_mlp(nn, n_features)
+        # Model initialization uses Torch's process-global CPU RNG. fork_rng
+        # restores the caller's state when fitting completes.
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(self.random_state)
+            n_features = X_scaled.shape[1]
+            model = self._build_torch_mlp(nn, n_features)
 
-        X_t = torch.as_tensor(X_scaled, dtype=torch.float32)
-        y_t = torch.as_tensor(y_std, dtype=torch.float32).view(-1, 1)
+            X_t = torch.as_tensor(X_scaled, dtype=torch.float32)
+            y_t = torch.as_tensor(y_std, dtype=torch.float32).view(-1, 1)
 
-        optimizer = torch.optim.Adam(
-            model.parameters(), lr=self.lr, weight_decay=self.weight_decay
-        )
-        loss_fn = nn.MSELoss()
+            optimizer = torch.optim.Adam(
+                model.parameters(), lr=self.lr, weight_decay=self.weight_decay
+            )
+            loss_fn = nn.MSELoss()
 
-        n = X_t.shape[0]
-        batch = min(self.batch_size, n)
-        generator = torch.Generator().manual_seed(self.random_state)
+            n = X_t.shape[0]
+            batch = min(self.batch_size, n)
+            generator = torch.Generator().manual_seed(self.random_state)
 
-        model.train()
-        for _ in range(self.epochs):
-            perm = torch.randperm(n, generator=generator)
-            for start in range(0, n, batch):
-                idx = perm[start : start + batch]
-                optimizer.zero_grad()
-                pred = model(X_t[idx])
-                loss = loss_fn(pred, y_t[idx])
-                loss.backward()
-                optimizer.step()
+            model.train()
+            for _ in range(self.epochs):
+                perm = torch.randperm(n, generator=generator)
+                for start in range(0, n, batch):
+                    idx = perm[start : start + batch]
+                    optimizer.zero_grad()
+                    pred = model(X_t[idx])
+                    loss = loss_fn(pred, y_t[idx])
+                    loss.backward()
+                    optimizer.step()
 
         model.eval()
         self.model_ = model
@@ -232,6 +277,8 @@ class NeuralFactor:
                 raise ValueError(f"X is missing fitted feature columns: {missing}")
             X = X[self.feature_names_]
 
+        if self._impute_means_ is None:
+            raise RuntimeError("NeuralFactor fitted state is missing imputation means")
         X_arr = X.to_numpy(dtype=float)
         X_filled = np.where(np.isfinite(X_arr), X_arr, self._impute_means_)
         X_scaled = self.scaler_.transform(X_filled)
@@ -246,11 +293,21 @@ class NeuralFactor:
                     .numpy()
                     .ravel()
                 )
-        else:
+        elif self.backend_ == "sklearn":
             preds = np.asarray(self.model_.predict(X_scaled), dtype=float).ravel()
+        else:
+            raise RuntimeError(f"unknown fitted NeuralFactor backend {self.backend_!r}")
 
         # Undo target standardization.
-        return preds * self._y_std_ + self._y_mean_
+        result = preds * self._y_std_ + self._y_mean_
+        if result.shape != (len(X),):
+            raise RuntimeError(
+                f"NeuralFactor backend returned {result.size} predictions for "
+                f"{len(X)} rows"
+            )
+        if not np.all(np.isfinite(result)):
+            raise RuntimeError("NeuralFactor backend returned non-finite predictions")
+        return result
 
     # ------------------------------------------------------------------
     # Validation
@@ -259,20 +316,33 @@ class NeuralFactor:
     def _validate_features(X: pd.DataFrame) -> pd.DataFrame:
         if not isinstance(X, pd.DataFrame):
             raise TypeError("X must be a pandas DataFrame")
-        if X.shape[1] == 0:
-            raise ValueError("X must have at least one feature column")
-        return X
+        if X.shape[0] == 0 or X.shape[1] == 0:
+            raise ValueError("X must have at least one row and feature column")
+        if X.columns.has_duplicates:
+            raise ValueError("X feature columns must be unique")
+        numeric = X.apply(pd.to_numeric, errors="raise")
+        values = numeric.to_numpy(dtype=float)
+        if np.isinf(values).any():
+            raise ValueError("X must not contain infinite values")
+        if np.isnan(values).all(axis=0).any():
+            raise ValueError("X must not contain an entirely missing feature column")
+        return numeric
 
     @staticmethod
-    def _validate_target(y: Union[pd.Series, pd.DataFrame], n_rows: int) -> np.ndarray:
+    def _validate_target(
+        y: Union[pd.Series, pd.DataFrame], expected_index: pd.Index
+    ) -> np.ndarray:
         if isinstance(y, pd.DataFrame):
             if y.shape[1] != 1:
                 raise ValueError("y DataFrame must have exactly one column")
             y = y.iloc[:, 0]
+        if isinstance(y, pd.Series) and not y.index.equals(expected_index):
+            raise ValueError("y index must exactly match X index")
         arr = np.asarray(y, dtype=float).ravel()
-        if arr.shape[0] != n_rows:
+        if arr.shape[0] != len(expected_index):
             raise ValueError(
-                f"y has {arr.shape[0]} rows but X has {n_rows}; they must match"
+                f"y has {arr.shape[0]} rows but X has {len(expected_index)}; "
+                "they must match"
             )
         if not np.all(np.isfinite(arr)):
             raise ValueError("y contains non-finite values; clean the target first")

@@ -14,9 +14,8 @@ Sign convention
 ----------------
 Returns are signed (positive = gain, negative = loss).  **All VaR/CVaR figures
 are reported as POSITIVE numbers representing a loss.**  A VaR of ``0.031`` at
-``alpha=0.95`` means "we expect to lose no more than 3.1% on 95% of days".  A
-*negative* reported number therefore means the relevant quantile is actually a
-gain (possible for very strongly positively-drifting series).
+``alpha=0.95`` means "we expect to lose no more than 3.1% on 95% of days". If
+the relevant quantile is a gain, the reported loss is floored at zero.
 
 Everything here is strictly causal: estimators consume a realised return
 history and never peek ahead.
@@ -38,12 +37,16 @@ TRADING_DAYS = 252
 
 def _as_1d(returns: ArrayLike) -> np.ndarray:
     """Coerce ``returns`` to a finite 1-D ``float64`` array."""
-    arr = np.asarray(returns, dtype=np.float64).ravel()
+    arr = np.asarray(returns, dtype=np.float64)
+    if arr.ndim != 1:
+        raise ValueError(f"returns must be 1-D, got shape {arr.shape}")
     if arr.size == 0:
         raise ValueError("returns is empty.")
-    arr = arr[np.isfinite(arr)]
+    arr = arr[~np.isnan(arr)]
     if arr.size == 0:
         raise ValueError("returns contains no finite observations.")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("returns must not contain infinite values")
     return arr
 
 
@@ -62,7 +65,9 @@ class VaRCVaR:
     """
 
     def __init__(self, alpha: float = 0.95) -> None:
-        if not 0.0 < alpha < 1.0:
+        if isinstance(alpha, (bool, np.bool_)):
+            raise TypeError("alpha must be numeric, not boolean")
+        if not np.isfinite(alpha) or not 0.0 < alpha < 1.0:
             raise ValueError("alpha must lie strictly in (0, 1).")
         self.alpha = float(alpha)
 
@@ -88,7 +93,7 @@ class VaRCVaR:
         # The loss threshold is the alpha-th quantile of the *loss* = -return,
         # equivalently the (1-alpha) quantile of the return.
         q = float(np.quantile(r, self.tail, method="linear"))
-        return -q
+        return max(-q, 0.0)
 
     def historical_cvar(self, returns: ArrayLike) -> float:
         """Empirical CVaR / Expected Shortfall.
@@ -101,8 +106,8 @@ class VaRCVaR:
         tail_losses = r[r <= threshold]
         if tail_losses.size == 0:
             # Degenerate (e.g. tiny sample); fall back to the VaR point itself.
-            return -float(threshold)
-        return -float(tail_losses.mean())
+            return max(-float(threshold), 0.0)
+        return max(-float(tail_losses.mean()), 0.0)
 
     # ------------------------------------------------------------------ #
     # Parametric (Gaussian) estimators                                   #
@@ -118,7 +123,7 @@ class VaRCVaR:
         mu = float(r.mean())
         sigma = float(r.std(ddof=1)) if r.size > 1 else 0.0
         z = float(stats.norm.ppf(self.tail))
-        return -(mu + z * sigma)
+        return max(-(mu + z * sigma), 0.0)
 
     def parametric_cvar(self, returns: ArrayLike) -> float:
         """Gaussian Expected Shortfall (closed form).
@@ -131,7 +136,7 @@ class VaRCVaR:
         sigma = float(r.std(ddof=1)) if r.size > 1 else 0.0
         z = float(stats.norm.ppf(self.tail))
         pdf = float(stats.norm.pdf(z))
-        return sigma * pdf / self.tail - mu
+        return max(sigma * pdf / self.tail - mu, 0.0)
 
     def cornish_fisher_var(self, returns: ArrayLike) -> float:
         """Cornish-Fisher (modified) VaR adjusting the Gaussian quantile.
@@ -149,6 +154,8 @@ class VaRCVaR:
         r = _as_1d(returns)
         mu = float(r.mean())
         sigma = float(r.std(ddof=1)) if r.size > 1 else 0.0
+        if np.ptp(r) <= np.finfo(np.float64).eps * max(1.0, abs(mu)):
+            return max(-mu, 0.0)
         # Fisher=False -> excess kurtosis is reported as (kurt - 3); request
         # bias-corrected sample moments for a causal point estimate.
         s = float(stats.skew(r, bias=False)) if r.size > 2 else 0.0
@@ -160,7 +167,7 @@ class VaRCVaR:
             + (z**3 - 3.0 * z) / 24.0 * k
             - (2.0 * z**3 - 5.0 * z) / 36.0 * s**2
         )
-        return -(mu + z_cf * sigma)
+        return max(-(mu + z_cf * sigma), 0.0)
 
     # ------------------------------------------------------------------ #
     # Portfolio-level VaR                                                #
@@ -185,8 +192,10 @@ class VaRCVaR:
         method:
             ``"historical"``, ``"parametric"`` or ``"cornish_fisher"``.
         """
-        w = np.asarray(weights, dtype=np.float64).ravel()
+        w = np.asarray(weights, dtype=np.float64)
         rm = np.asarray(returns_matrix, dtype=np.float64)
+        if w.ndim != 1 or w.size == 0 or not np.all(np.isfinite(w)):
+            raise ValueError("weights must be a non-empty finite 1-D vector")
         if rm.ndim != 2:
             raise ValueError("returns_matrix must be 2-D (T, n_assets).")
         if rm.shape[1] != w.size:
@@ -194,6 +203,8 @@ class VaRCVaR:
                 f"weights length {w.size} does not match returns_matrix "
                 f"columns {rm.shape[1]}."
             )
+        if not np.all(np.isfinite(rm)):
+            raise ValueError("returns_matrix must contain only finite values")
         port = rm @ w
         dispatch = {
             "historical": self.historical_var,
@@ -219,4 +230,9 @@ class VaRCVaR:
 
         Assumes i.i.d. returns so risk scales with ``sqrt(periods_per_year)``.
         """
-        return float(var_value) * float(np.sqrt(periods_per_year))
+        var_value = float(var_value)
+        if not np.isfinite(var_value) or var_value < 0.0:
+            raise ValueError("var_value must be finite and non-negative")
+        if not np.isfinite(periods_per_year) or periods_per_year <= 0:
+            raise ValueError("periods_per_year must be finite and positive")
+        return var_value * float(np.sqrt(periods_per_year))

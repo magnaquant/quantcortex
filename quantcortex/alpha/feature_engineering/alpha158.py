@@ -4,11 +4,9 @@ This module provides :class:`Alpha158`, a pure ``pandas``/``numpy`` implementati
 of the canonical `qlib <https://github.com/microsoft/qlib>`_ ``Alpha158`` handler.
 No qlib dependency is required.
 
-All features are **strictly causal**: every value at bar ``t`` is computed using
-information available up to and including bar ``t`` only. Rolling windows look
-strictly backward, and no ``shift(-k)`` / future-looking operation is used. This
-makes the output safe to use directly as model inputs in a backtest or live
-trading context without lookahead leakage.
+Every value at bar ``t`` uses data no later than ``t``. A close-derived feature
+is therefore available only after that bar closes and must be executed on a
+later bar; the feature code alone does not enforce execution timing.
 
 The feature families and their naming follow qlib conventions:
 
@@ -111,6 +109,8 @@ class Alpha158:
             raise ValueError("`windows` must contain at least one window size.")
         if any((not isinstance(w, (int, np.integer))) or w < 2 for w in windows):
             raise ValueError("All windows must be integers >= 2.")
+        if len(windows) != len(set(windows)):
+            raise ValueError("window sizes must be unique")
         self.windows: tuple[int, ...] = tuple(int(w) for w in windows)
 
     # ------------------------------------------------------------------ #
@@ -146,6 +146,20 @@ class Alpha158:
             window) contain ``NaN`` and are intentionally **not** filled, so the
             causal/leakage boundary is preserved.
         """
+        if not isinstance(ohlcv, pd.DataFrame):
+            raise TypeError("ohlcv must be a pandas DataFrame")
+        if ohlcv.empty:
+            raise ValueError("ohlcv must not be empty")
+        if not isinstance(ohlcv.index, pd.DatetimeIndex):
+            raise TypeError("ohlcv must use a DatetimeIndex")
+        if (
+            ohlcv.index.hasnans
+            or ohlcv.index.has_duplicates
+            or not ohlcv.index.is_monotonic_increasing
+        ):
+            raise ValueError("ohlcv index must be unique, valid, and increasing")
+        if ohlcv.columns.has_duplicates:
+            raise ValueError("ohlcv columns must be unique")
         required = {"open", "high", "low", "close", "volume"}
         missing = required - set(ohlcv.columns)
         if missing:
@@ -153,13 +167,30 @@ class Alpha158:
 
         # Work on float64 copies to avoid mutating the caller's frame and to keep
         # numerical stability in rolling sums.
-        open_ = ohlcv["open"].astype("float64")
-        high = ohlcv["high"].astype("float64")
-        low = ohlcv["low"].astype("float64")
-        close = ohlcv["close"].astype("float64")
-        volume = ohlcv["volume"].astype("float64")
+        columns = ["open", "high", "low", "close", "volume"]
         if "vwap" in ohlcv.columns:
-            vwap = ohlcv["vwap"].astype("float64")
+            columns.append("vwap")
+        numeric = ohlcv.loc[:, columns].apply(pd.to_numeric, errors="coerce")
+        if not np.isfinite(numeric.to_numpy(dtype=float)).all():
+            raise ValueError("ohlcv inputs must be finite and complete")
+        if (numeric[["open", "high", "low", "close"]] <= 0.0).any(axis=None):
+            raise ValueError("OHLC prices must be strictly positive")
+        if (numeric["volume"] < 0.0).any():
+            raise ValueError("volume must be non-negative")
+        if (numeric["high"] < numeric[["open", "low", "close"]].max(axis=1)).any():
+            raise ValueError("high is below another OHLC field")
+        if (numeric["low"] > numeric[["open", "high", "close"]].min(axis=1)).any():
+            raise ValueError("low is above another OHLC field")
+        if "vwap" in numeric and (numeric["vwap"] <= 0.0).any():
+            raise ValueError("vwap must be strictly positive")
+
+        open_ = numeric["open"].astype("float64")
+        high = numeric["high"].astype("float64")
+        low = numeric["low"].astype("float64")
+        close = numeric["close"].astype("float64")
+        volume = numeric["volume"].astype("float64")
+        if "vwap" in ohlcv.columns:
+            vwap = numeric["vwap"].astype("float64")
         else:
             vwap = (high + low + close) / 3.0
 
@@ -283,8 +314,21 @@ class Alpha158:
             features[f"CORD{w}"] = self._rolling_corr(close_ret, log_vol_ret, w)
 
             # --- up/down day counts ---------------------------------------
-            cntp = (close > close_prev).astype("float64").rolling(w).mean()
-            cntn = (close < close_prev).astype("float64").rolling(w).mean()
+            comparison_valid = close_prev.notna()
+            cntp = (
+                (close > close_prev)
+                .astype("float64")
+                .where(comparison_valid)
+                .rolling(w)
+                .mean()
+            )
+            cntn = (
+                (close < close_prev)
+                .astype("float64")
+                .where(comparison_valid)
+                .rolling(w)
+                .mean()
+            )
             features[f"CNTP{w}"] = cntp
             features[f"CNTN{w}"] = cntn
             features[f"CNTD{w}"] = cntp - cntn

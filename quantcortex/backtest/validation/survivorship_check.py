@@ -30,6 +30,17 @@ class SurvivorshipBiasError(RuntimeError):
     """Raised when a backtest used symbols that were not PIT members."""
 
 
+def _normalize_symbols(symbols: Iterable[str], name: str) -> set[str]:
+    if isinstance(symbols, (str, bytes)):
+        raise TypeError(f"{name} must be an iterable of symbols, not a string")
+    normalized: set[str] = set()
+    for symbol in symbols:
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise ValueError(f"{name} must contain non-empty strings")
+        normalized.add(symbol.strip().upper().replace(".", "-"))
+    return normalized
+
+
 def survivorship_check(
     universe: Universe, used_symbols: Iterable[str], as_of
 ) -> Dict[str, object]:
@@ -54,8 +65,10 @@ def survivorship_check(
         sorted list of offending symbols, ``n_used`` the count of distinct used
         symbols, and ``n_members`` the size of the PIT universe at ``as_of``.
     """
-    members = set(universe.constituents(as_of))
-    used = {str(s) for s in used_symbols}
+    if not isinstance(universe, Universe):
+        raise TypeError("universe must implement the Universe interface")
+    members = _normalize_symbols(universe.constituents(as_of), "universe members")
+    used = _normalize_symbols(used_symbols, "used_symbols")
     non_members = sorted(used - members)
     return {
         "ok": len(non_members) == 0,
@@ -80,6 +93,10 @@ class SurvivorshipValidator:
     """
 
     def __init__(self, universe: Universe, strict: bool = False) -> None:
+        if not isinstance(universe, Universe):
+            raise TypeError("universe must implement the Universe interface")
+        if not isinstance(strict, bool):
+            raise TypeError("strict must be a boolean")
         self.universe = universe
         self.strict = strict
 
@@ -105,6 +122,8 @@ class SurvivorshipValidator:
         SurvivorshipBiasError
             If ``strict`` is ``True`` and any date holds non-members.
         """
+        if not isinstance(symbols_by_date, Mapping):
+            raise TypeError("symbols_by_date must be a mapping")
         violations: Dict[object, object] = {}
         for as_of, symbols in symbols_by_date.items():
             check = survivorship_check(self.universe, symbols, as_of)

@@ -7,6 +7,10 @@ here.
 
 A small :attr:`COMMON_SERIES` catalogue maps friendly aliases to frequently
 used FRED series ids for convenience.
+
+The standard FRED API returns the latest revised observation values. It is not
+an ALFRED vintage feed, so revision-sensitive historical research must supply
+an appropriate point-in-time vintage dataset separately.
 """
 
 from __future__ import annotations
@@ -84,7 +88,9 @@ class FREDProvider(DataProvider):
             Optional inclusive date bounds.
         ffill:
             When ``True``, reindex onto a common business-day calendar and
-            forward-fill so lower-frequency series align with daily ones.
+            forward-fill so lower-frequency series align with daily ones. This
+            does not supply historical release dates or vintage values; apply
+            a verified publication calendar before using the result in research.
         """
         fred = self._client()
 

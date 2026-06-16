@@ -9,8 +9,6 @@ still exposes the helpers it always had (e.g.
 
 from __future__ import annotations
 
-import warnings
-
 import numpy as np
 import pandas as pd
 
@@ -37,12 +35,32 @@ def cross_sectional_rank(panel: pd.DataFrame) -> pd.DataFrame:
 
 
 def validate_prices(prices: pd.DataFrame) -> pd.DataFrame:
-    """Validate and normalize a date x symbol price panel (sorted, float)."""
+    """Validate and normalize a date x symbol price panel."""
     if not isinstance(prices, pd.DataFrame):
         raise TypeError("prices must be a pandas DataFrame")
-    if not prices.index.is_monotonic_increasing:
-        prices = prices.sort_index()
-    return prices.astype(float)
+    if prices.empty or len(prices.columns) == 0:
+        raise ValueError("prices must contain at least one row and one symbol")
+    if not isinstance(prices.index, pd.DatetimeIndex):
+        raise TypeError("prices must use a DatetimeIndex")
+    if prices.index.hasnans or prices.index.has_duplicates:
+        raise ValueError("prices index must contain unique, valid timestamps")
+    if prices.columns.has_duplicates:
+        raise ValueError("prices columns must be unique")
+    if any(not isinstance(col, str) or not col.strip() for col in prices.columns):
+        raise ValueError("prices columns must be non-empty symbol strings")
+
+    normalized = prices.astype(float).copy()
+    normalized.columns = pd.Index([column.strip() for column in prices.columns])
+    if normalized.columns.has_duplicates:
+        raise ValueError("prices columns must remain unique after whitespace trimming")
+    if normalized.index.tz is not None:
+        normalized.index = normalized.index.tz_convert("UTC").tz_localize(None)
+    values = normalized.to_numpy(dtype=float)
+    if np.isinf(values).any():
+        raise ValueError("prices must not contain infinite values")
+    if (normalized.notna() & (normalized <= 0.0)).any(axis=None):
+        raise ValueError("observed prices must be strictly positive")
+    return normalized.sort_index()
 
 
 def to_returns(
@@ -56,36 +74,35 @@ def to_returns(
         Market price level or return series.
     market_is_returns:
         If ``True``, ``series`` is used as a return series as-is; if ``False``
-        it is treated as a price level and converted via ``pct_change``. If
-        ``None`` (default) a heuristic is used: a strictly positive series
-        whose median exceeds 1.0 is treated as a price level. When the
-        heuristic is ambiguous (all-positive but median <= 1.0) the series is
-        passed through as returns and a warning is emitted; pass
-        ``market_is_returns`` explicitly to silence it.
+        it is treated as a price level and converted via ``pct_change``. The
+        value must be explicit because prices below one and positive return
+        streaks cannot be distinguished reliably from their values alone.
     """
-    s = series.astype(float)
+    if not isinstance(series, pd.Series):
+        raise TypeError("series must be a pandas Series")
+    if not isinstance(series.index, pd.DatetimeIndex):
+        raise TypeError("market series must use a DatetimeIndex")
+    if series.index.hasnans or series.index.has_duplicates:
+        raise ValueError("market series index must contain unique, valid timestamps")
+    if not series.index.is_monotonic_increasing:
+        raise ValueError("market series dates must be sorted in increasing order")
+    if market_is_returns is None:
+        raise ValueError("market_is_returns must be explicitly True or False")
+    s = series.astype(float).copy()
+    if np.isinf(s.to_numpy(dtype=float)).any():
+        raise ValueError("market series must not contain infinite values")
     if market_is_returns is True:
         return s
     if market_is_returns is False:
-        return s.pct_change()
-    # Heuristic: a return series is centered near zero with small magnitude.
-    positive = s.dropna()
-    if not positive.empty and (positive > 0).all():
-        if positive.median() > 1.0:
-            return s.pct_change()
-        warnings.warn(
-            "to_returns: market series is all-positive with median <= 1.0; "
-            "ambiguous whether it is a price level or a return series. "
-            "Treating it as returns; pass market_is_returns=True/False to be "
-            "explicit.",
-            UserWarning,
-            stacklevel=2,
-        )
-    return s
+        observed = s.dropna()
+        if (observed <= 0.0).any():
+            raise ValueError("market price levels must be strictly positive")
+        return s.pct_change(fill_method=None)
+    raise TypeError("market_is_returns must be a boolean")
 
 
 def rolling_cov(x: pd.Series, y: pd.Series, window: int) -> pd.Series:
-    """Strictly-trailing rolling covariance of two aligned series."""
-    xm = x.rolling(window, min_periods=window).mean()
-    ym = y.rolling(window, min_periods=window).mean()
-    return (x * y).rolling(window, min_periods=window).mean() - xm * ym
+    """Trailing population covariance on pairwise-complete observations."""
+    if isinstance(window, (bool, np.bool_)) or int(window) != window or window <= 1:
+        raise ValueError("window must be an integer greater than 1")
+    return x.rolling(window, min_periods=window).cov(y, ddof=0)

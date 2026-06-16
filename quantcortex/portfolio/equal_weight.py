@@ -59,6 +59,8 @@ class EqualWeight(PortfolioOptimizer):
         n_assets: Optional[int] = None,
         **_: Union[int, float],
     ) -> np.ndarray:
+        if isinstance(n_assets, (bool, np.bool_)):
+            raise TypeError("n_assets must be an integer, not boolean")
         n = int(n_assets) if n_assets is not None else _infer_n_assets(returns)
         if n <= 0:
             raise ValueError(f"n_assets must be positive, got {n}")

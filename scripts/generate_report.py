@@ -24,14 +24,12 @@ import argparse
 import logging
 import os
 import sys
-import warnings
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-warnings.filterwarnings("ignore")
 logging.getLogger("hmmlearn").setLevel(logging.ERROR)
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 # joblib/loky can print a physical-core detection traceback on hosts where CPU
@@ -44,6 +42,7 @@ from quantcortex.backtest.engines.vectorized import VectorizedBacktest
 from quantcortex.backtest.metrics.tearsheet import Tearsheet
 from quantcortex.backtest.validation.deflated_sharpe import compute_dsr
 from quantcortex.data.local_csv import load_price_matrix, sha256_file
+from quantcortex.data.processors.calendar import first_session_each_week
 
 ROTATION_UNIVERSE = ["QQQ", "VGT", "GLD", "TLT", "SPY", "VIG"]
 YFINANCE_NOTICE = (
@@ -85,7 +84,7 @@ def load_prices(
     )
     if prices is None or prices.empty:
         raise RuntimeError("yfinance returned no prices")
-    prices = prices.dropna(how="all").ffill().dropna()
+    prices = prices.dropna(how="all").ffill(limit=5).dropna()
     if prices.empty:
         raise RuntimeError("no complete rows remain in the yfinance response")
     return prices, {
@@ -103,24 +102,100 @@ def _ann_sharpe(r: pd.Series) -> float:
     return float(r.mean() / r.std() * np.sqrt(252)) if r.std() > 0 else float("nan")
 
 
-def compute(prices: pd.DataFrame, n_trials: int = 10) -> dict:
+def _evaluation_index(
+    prices: pd.DataFrame,
+    start: str | pd.Timestamp | None,
+    end: str | pd.Timestamp | None,
+) -> pd.DatetimeIndex:
+    index = prices.index
+    if start is not None:
+        index = index[index >= pd.Timestamp(start)]
+    if end is not None:
+        index = index[index <= pd.Timestamp(end)]
+    if index.empty:
+        raise ValueError("no price rows fall inside the evaluation window")
+    return index
+
+
+def _validate_warmup(
+    prices: pd.DataFrame,
+    evaluation_start: pd.Timestamp,
+    required_sessions: int,
+    *,
+    enforce: bool,
+) -> int:
+    """Return available pre-evaluation sessions and enforce full initialization."""
+    available = int((prices.index < evaluation_start).sum())
+    if enforce and available < required_sessions:
+        raise ValueError(
+            f"data source provides {available} pre-evaluation sessions; "
+            f"multi_asset_rotation requires at least {required_sessions} for "
+            "full signal initialization. Supply earlier data or pass "
+            "--warmup-years 0 to explicitly permit a cold-start report"
+        )
+    return available
+
+
+def _buy_hold_returns(
+    prices: pd.DataFrame, evaluation_index: pd.DatetimeIndex
+) -> tuple[pd.Series, pd.Series]:
+    """Return SPY and equal-weight buy-and-hold returns on one capital clock."""
+    first = prices.index.get_loc(evaluation_index[0])
+    last = prices.index.get_loc(evaluation_index[-1])
+    base = max(0, first - 1)
+    benchmark_prices = prices.iloc[base : last + 1]
+
+    spy = benchmark_prices["SPY"].pct_change(fill_method=None).reindex(
+        evaluation_index
+    )
+    equal_weight_curve = benchmark_prices.div(benchmark_prices.iloc[0]).mean(axis=1)
+    equal_weight = equal_weight_curve.pct_change(fill_method=None).reindex(
+        evaluation_index
+    )
+    if first == 0:
+        spy.iloc[0] = 0.0
+        equal_weight.iloc[0] = 0.0
+    return spy, equal_weight
+
+
+def compute(
+    prices: pd.DataFrame,
+    n_trials: int = 10,
+    *,
+    sr_variance: float | None = None,
+    evaluation_start: str | pd.Timestamp | None = None,
+    evaluation_end: str | pd.Timestamp | None = None,
+    strategy=None,
+) -> dict:
     from quantcortex.strategies.multi_asset_rotation import MultiAssetRotation
 
-    weekly = prices.index[prices.index.weekday == 0]
-    weights = MultiAssetRotation().generate_weights(prices, weekly)
+    strategy = strategy if strategy is not None else MultiAssetRotation()
+    weekly = first_session_each_week(prices.index)
+    weights = strategy.generate_weights(prices, weekly)
+    if weights.empty:
+        raise ValueError("strategy produced no target weights")
     cost_model = TransactionCostModel()
     result = VectorizedBacktest(cost_model, capital=1.0).run(weights, prices)
-    rets = result.returns.dropna()
+    evaluation_index = _evaluation_index(
+        prices, evaluation_start, evaluation_end
+    )
+    rets = result.returns.reindex(evaluation_index).dropna()
+    if rets.empty:
+        raise ValueError("backtest produced no returns in the evaluation window")
 
     ts = Tearsheet(rets)
     m = ts.compute()
-    m["dsr"] = compute_dsr(rets, n_trials=n_trials)
+    m["dsr"] = compute_dsr(
+        rets, n_trials=n_trials, sr_variance=sr_variance
+    )
     m["dsr_n_trials"] = n_trials
-    m["annualized_turnover"] = float(result.turnover.mean() * 252)
-    m["summed_cost_fraction"] = float(result.costs.sum())
-    spy = prices["SPY"].pct_change().reindex(rets.index)
-    equal_weight_curve = prices.div(prices.iloc[0]).mean(axis=1)
-    ew = equal_weight_curve.pct_change().reindex(rets.index)
+    m["dsr_sr_variance"] = sr_variance
+    m["annualized_turnover"] = float(
+        result.turnover.reindex(rets.index).mean() * 252
+    )
+    m["summed_cost_fraction"] = float(result.costs.reindex(rets.index).sum())
+    spy, ew = _buy_hold_returns(prices, rets.index)
+    first_evaluation_position = prices.index.get_loc(rets.index[0])
     return {
         "px": prices,
         "rets": rets,
@@ -133,6 +208,7 @@ def compute(prices: pd.DataFrame, n_trials: int = 10) -> dict:
         "ew_sharpe": _ann_sharpe(ew),
         "monthly": ts.monthly_returns_table(),
         "cost_model": cost_model,
+        "warmup_sessions": first_evaluation_position,
     }
 
 
@@ -236,12 +312,31 @@ def markdown_settings(d: dict) -> str:
     cost_model = d["cost_model"]
     rows = [
         ("Strategy", "multi_asset_rotation"),
-        ("Rebalance", "weekly (available Mondays)"),
+        (
+            "Evaluation window",
+            f"{d['rets'].index[0].date()} to {d['rets'].index[-1].date()}",
+        ),
+        ("Pre-evaluation warm-up sessions", str(d["warmup_sessions"])),
+        ("Full-signal warm-up requirement", str(d["required_warmup_sessions"])),
+        (
+            "Cold-start override",
+            "enabled" if d["cold_start_allowed"] else "disabled",
+        ),
+        (
+            "Rebalance",
+            "first available session each week; close signal executes next bar close",
+        ),
         ("Commission", f"{cost_model.commission * 10_000:.1f} bps per trade"),
         ("Slippage", f"{cost_model.slippage * 10_000:.1f} bps per trade"),
         ("Transfer tax", f"{cost_model.tax * 10_000:.1f} bps on sells"),
         ("ADV cap", "not applied; this report supplies no volume input"),
         ("DSR trial count", str(d["m"]["dsr_n_trials"])),
+        (
+            "DSR cross-trial Sharpe variance",
+            "single-series estimate"
+            if d["m"]["dsr_sr_variance"] is None
+            else f"{d['m']['dsr_sr_variance']:.8g}",
+        ),
     ]
     out = ["| Setting | Value |", "|---------|-------|"]
     out.extend(f"| {setting} | {value} |" for setting, value in rows)
@@ -256,10 +351,73 @@ def positive_int(value: str) -> int:
     return ivalue
 
 
+def nonnegative_int(value: str) -> int:
+    """argparse type: a non-negative integer."""
+    ivalue = int(value)
+    if ivalue < 0:
+        raise argparse.ArgumentTypeError(
+            f"must be a non-negative integer (got {value!r})"
+        )
+    return ivalue
+
+
+def nonnegative_float(value: str) -> float:
+    """argparse type: a finite non-negative float."""
+    fvalue = float(value)
+    if not np.isfinite(fvalue) or fvalue < 0.0:
+        raise argparse.ArgumentTypeError(
+            f"must be a finite non-negative number (got {value!r})"
+        )
+    return fvalue
+
+
+def date_boundary(value: str, *, end_of_year: bool) -> pd.Timestamp:
+    """Parse an exact ISO date or expand a four-digit year to its boundary."""
+    try:
+        if len(value) == 4 and value.isdigit():
+            year = int(value)
+            parsed = date(year, 12, 31) if end_of_year else date(year, 1, 1)
+        else:
+            parsed = date.fromisoformat(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"must be YYYY or YYYY-MM-DD (got {value!r})"
+        ) from exc
+    return pd.Timestamp(parsed)
+
+
+def start_date(value: str) -> pd.Timestamp:
+    """argparse type: evaluation start as a year or exact ISO date."""
+    return date_boundary(value, end_of_year=False)
+
+
+def end_date(value: str) -> pd.Timestamp:
+    """argparse type: evaluation end as a year or exact ISO date."""
+    return date_boundary(value, end_of_year=True)
+
+
 def main(argv) -> int:
-    ap = argparse.ArgumentParser(description="generate separate tearsheet charts + tables")
-    ap.add_argument("--start", default="2018")
-    ap.add_argument("--end", default="2025")
+    ap = argparse.ArgumentParser(
+        description="generate separate tearsheet charts + tables"
+    )
+    ap.add_argument(
+        "--start",
+        type=start_date,
+        default=start_date("2018"),
+        help="evaluation start year or YYYY-MM-DD (default 2018)",
+    )
+    ap.add_argument(
+        "--end",
+        type=end_date,
+        default=end_date("2025"),
+        help="evaluation end year or YYYY-MM-DD (default 2025)",
+    )
+    ap.add_argument(
+        "--warmup-years",
+        type=nonnegative_int,
+        default=2,
+        help="pre-evaluation history loaded for signals (default 2)",
+    )
     ap.add_argument("--imgdir", type=Path, default=Path("reports/img"))
     source = ap.add_mutually_exclusive_group(required=True)
     source.add_argument(
@@ -272,18 +430,52 @@ def main(argv) -> int:
         action="store_true",
         help="explicitly fetch live data through yfinance",
     )
-    ap.add_argument("--n-trials", type=positive_int, default=10,
-                    help="trials assumed for the Deflated Sharpe Ratio (default 10)")
+    ap.add_argument(
+        "--n-trials",
+        type=positive_int,
+        default=10,
+        help="trials assumed for the Deflated Sharpe Ratio (default 10)",
+    )
+    ap.add_argument(
+        "--sr-variance",
+        type=nonnegative_float,
+        default=None,
+        help="cross-trial variance of per-observation Sharpe estimates for DSR",
+    )
     args = ap.parse_args(argv[1:])
 
     try:
+        evaluation_start = args.start
+        evaluation_end = args.end
+        if evaluation_start > evaluation_end:
+            raise ValueError("evaluation start must not be after evaluation end")
+        data_start = evaluation_start - pd.DateOffset(years=args.warmup_years)
         prices, source_metadata = load_prices(
-            f"{args.start}-01-01",
-            f"{args.end}-12-31",
+            data_start.strftime("%Y-%m-%d"),
+            evaluation_end.strftime("%Y-%m-%d"),
             prices_csv=args.prices_csv,
             live_yfinance=args.live_yfinance,
         )
-        d = compute(prices, n_trials=args.n_trials)
+        from quantcortex.strategies.multi_asset_rotation import MultiAssetRotation
+
+        strategy = MultiAssetRotation()
+        warmup_sessions = _validate_warmup(
+            prices,
+            evaluation_start,
+            strategy.required_history,
+            enforce=args.warmup_years > 0,
+        )
+        d = compute(
+            prices,
+            n_trials=args.n_trials,
+            sr_variance=args.sr_variance,
+            evaluation_start=evaluation_start,
+            evaluation_end=evaluation_end,
+            strategy=strategy,
+        )
+        d["warmup_sessions"] = warmup_sessions
+        d["required_warmup_sessions"] = strategy.required_history
+        d["cold_start_allowed"] = args.warmup_years == 0
     except Exception as exc:
         print(f"report generation failed: {exc}", file=sys.stderr)
         return 1

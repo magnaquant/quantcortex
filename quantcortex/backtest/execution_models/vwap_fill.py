@@ -9,8 +9,7 @@ pays progressively more.
 
 Slippage is modelled as *linear in participation*::
 
-    participation = |target_qty| / bar_volume          (capped at the
-                                                        configured ``participation``)
+    participation = |target_qty| / bar_volume
     slippage_frac = slippage_coef * participation
     fill = vwap * (1 + sign(target_qty) * slippage_frac)
 
@@ -48,11 +47,9 @@ class VWAPFill(ExecutionModel):
     Parameters
     ----------
     participation:
-        Maximum assumed participation rate (fraction of bar volume).  The
-        effective participation used for slippage is capped at this value, so
-        that an order larger than ``participation * volume`` does not produce an
-        unboundedly bad fill (it is presumed to be worked across the bar).
-        Default ``0.1`` (10% of volume).
+        Maximum permitted participation rate (fraction of bar volume). Orders
+        above the cap are rejected because this fill-price-only interface cannot
+        represent a partial fill or a multi-bar schedule. Default ``0.1``.
     slippage_coef:
         Linear coefficient mapping participation to a fractional price
         concession.  At full ``participation`` the slippage is
@@ -60,9 +57,13 @@ class VWAPFill(ExecutionModel):
     """
 
     def __init__(self, participation: float = 0.1, slippage_coef: float = 0.1) -> None:
-        if not (0.0 < participation <= 1.0):
+        if isinstance(participation, (bool, np.bool_)):
+            raise TypeError("participation must be numeric, not boolean")
+        if isinstance(slippage_coef, (bool, np.bool_)):
+            raise TypeError("slippage_coef must be numeric, not boolean")
+        if not np.isfinite(participation) or not (0.0 < participation <= 1.0):
             raise ValueError("participation must be in (0, 1].")
-        if slippage_coef < 0.0:
+        if not np.isfinite(slippage_coef) or slippage_coef < 0.0:
             raise ValueError("slippage_coef must be non-negative.")
         self.participation = float(participation)
         self.slippage_coef = float(slippage_coef)
@@ -75,8 +76,15 @@ class VWAPFill(ExecutionModel):
         **kw,
     ) -> float:
         """Return the participation-adjusted VWAP fill price."""
+        if isinstance(target_qty, (bool, np.bool_)):
+            raise TypeError("target_qty must be numeric, not boolean")
+        quantity = float(target_qty)
+        if not np.isfinite(quantity):
+            raise ValueError("target_qty must be finite")
         vwap = _bar_vwap(bar)
-        if target_qty == 0:
+        if not np.isfinite(vwap) or vwap <= 0.0:
+            raise ValueError("VWAP reference price must be finite and positive")
+        if quantity == 0:
             return vwap
 
         volume = kw.get("volume")
@@ -84,13 +92,16 @@ class VWAPFill(ExecutionModel):
             volume = bar["volume"]
 
         if volume is None or not np.isfinite(volume) or volume <= 0:
-            # No volume information: assume full configured participation.
-            participation = self.participation
-        else:
-            participation = min(abs(float(target_qty)) / float(volume), self.participation)
+            raise ValueError("VWAPFill requires finite positive bar volume")
+        participation = abs(quantity) / float(volume)
+        if participation > self.participation + 1e-12:
+            raise ValueError(
+                f"order participation {participation:.6f} exceeds cap "
+                f"{self.participation:.6f}"
+            )
 
         slippage_frac = self.slippage_coef * participation
-        direction = 1.0 if target_qty > 0 else -1.0
+        direction = 1.0 if quantity > 0 else -1.0
         return float(vwap * (1.0 + direction * slippage_frac))
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic

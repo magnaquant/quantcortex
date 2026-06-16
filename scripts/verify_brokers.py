@@ -5,8 +5,8 @@ SDKs expose the methods the adapters call): this exercises the adapters'
 *behavior* end to end by injecting SDK-shaped fake clients and asserting that
 each adapter constructs the right request and parses the response into the
 correct ``Order`` / ``Position`` / ``AccountInfo``. It needs no network and no
-broker account - the only thing it cannot cover is the literal TCP/auth
-handshake, which genuinely requires real credentials.
+broker account. It does not prove authenticated connectivity, account
+permissions, SDK-version compatibility, or venue-side fill/rejection behavior.
 
     python scripts/verify_brokers.py
 """
@@ -14,6 +14,7 @@ handshake, which genuinely requires real credentials.
 from __future__ import annotations
 
 from quantcortex.execution.brokers.alpaca_broker import AlpacaBroker
+from quantcortex.execution.brokers.base import BrokerError
 from quantcortex.execution.brokers.ccxt_broker import CCXTBroker
 from quantcortex.execution.brokers.ib_broker import IBBroker
 from quantcortex.execution.order_manager import OrderSide, OrderStatus, OrderType
@@ -34,11 +35,64 @@ class _Obj:
 
 
 class _FakeAlpacaREST:
-    def submit_order(self, symbol, qty, side, type, time_in_force, limit_price=None):
-        self.last = dict(symbol=symbol, qty=qty, side=side, type=type,
-                         time_in_force=time_in_force, limit_price=limit_price)
-        return _Obj(id="alp-123", status="filled", filled_qty=str(qty),
-                    filled_avg_price="150.25", client_order_id="cli-1")
+    def __init__(self):
+        self.orders_by_client_id = {}
+        self.open_orders = [
+            _Obj(
+                id="alp-open",
+                client_order_id="open-1",
+                symbol="MSFT",
+                side="sell",
+                qty="2",
+                type="limit",
+                limit_price="310",
+                status="new",
+                filled_qty="0",
+                filled_avg_price=None,
+            )
+        ]
+
+    def submit_order(
+        self,
+        symbol,
+        qty,
+        side,
+        type,
+        time_in_force,
+        limit_price=None,
+        client_order_id=None,
+    ):
+        self.last = dict(
+            symbol=symbol,
+            qty=qty,
+            side=side,
+            type=type,
+            time_in_force=time_in_force,
+            limit_price=limit_price,
+            client_order_id=client_order_id,
+        )
+        raw = _Obj(
+            id="alp-123",
+            status="filled",
+            filled_qty=str(qty),
+            filled_avg_price="150.25",
+            client_order_id=client_order_id or "auto-1",
+            symbol=symbol,
+            side=side,
+            qty=str(qty),
+            type=type,
+            limit_price=limit_price,
+        )
+        if client_order_id is not None:
+            self.orders_by_client_id[client_order_id] = raw
+        return raw
+
+    def get_order_by_client_order_id(self, client_order_id):
+        return self.orders_by_client_id[client_order_id]
+
+    def list_orders(self, status=None, limit=None, direction=None):
+        self.list_args = (status, limit, direction)
+        return self.open_orders
 
     def get_account(self):
         return _Obj(cash="50000", equity="100000", buying_power="200000",
@@ -55,13 +109,35 @@ class _FakeAlpacaREST:
 def verify_alpaca():
     b = AlpacaBroker()
     b._api = _FakeAlpacaREST()  # inject; skip the network connect()
-    o = b.submit_order("AAPL", OrderSide.BUY, 10, OrderType.MARKET)
+    o = b.submit_order(
+        "AAPL",
+        OrderSide.BUY,
+        10,
+        OrderType.MARKET,
+        client_order_id="qc-check-1",
+    )
     _check("alpaca.submit request kwargs", b._api.last["side"] == "buy"
-           and b._api.last["type"] == "market" and b._api.last["qty"] == 10)
+           and b._api.last["type"] == "market" and b._api.last["qty"] == 10
+           and b._api.last["client_order_id"] == "qc-check-1")
     _check("alpaca.submit parses Order",
            o.order_id == "alp-123" and o.status is OrderStatus.FILLED
            and abs(o.filled_quantity - 10) < 1e-9 and abs((o.avg_fill_price or 0) - 150.25) < 1e-9,
            f"{o.order_id}/{o.status}/{o.filled_quantity}/{o.avg_fill_price}")
+    found = b.find_order_by_client_order_id("qc-check-1")
+    _check(
+        "alpaca.client-order lookup parses",
+        found is not None
+        and found.order_id == "alp-123"
+        and found.status is OrderStatus.FILLED,
+    )
+    open_orders = b.get_open_orders()
+    _check(
+        "alpaca.open-order reconciliation",
+        len(open_orders) == 1
+        and open_orders[0].order_id == "alp-open"
+        and open_orders[0].status is OrderStatus.SUBMITTED
+        and b._api.list_args == ("open", 500, "asc"),
+    )
     acct = b.get_account()
     _check("alpaca.get_account parses", abs(acct.equity - 100000) < 1e-9
            and abs(acct.buying_power - 200000) < 1e-9 and acct.currency == "USD")
@@ -106,8 +182,20 @@ def verify_ccxt():
     syms = {p.symbol: p.quantity for p in pos}
     _check("ccxt.get_positions (nonzero balances only)",
            syms.get("BTC") == 0.5 and syms.get("USDT") == 1000.0 and "ETH" not in syms, str(syms))
-    acct = b.get_account()
-    _check("ccxt.get_account from balances", acct.equity >= 0.0)
+    try:
+        b.get_account()
+    except BrokerError as exc:
+        _check(
+            "ccxt.get_account refuses incomplete cross-asset valuation",
+            "unvalued assets" in str(exc),
+            str(exc),
+        )
+    else:
+        _check(
+            "ccxt.get_account refuses incomplete cross-asset valuation",
+            False,
+            "mixed-asset balance was accepted",
+        )
     b.cancel_order("ccxt-9", "BTC/USDT")
     _check("ccxt.cancel_order", b._exchange.cancelled == ("ccxt-9", "BTC/USDT"))
 
@@ -189,8 +277,10 @@ def main() -> int:
         print(f"  [{'PASS' if ok else 'FAIL'}] {name}" + (f"  -> {detail}" if not ok else ""))
     print("=" * 66)
     print(f"{npass}/{len(_results)} checks passed")
-    print("Note: only the live TCP/auth handshake remains unverified (needs a real "
-          "broker account); request construction + response parsing are covered.")
+    print(
+        "Note: mocks cover request construction and response parsing, not "
+        "authenticated connectivity, account permissions, or venue behavior."
+    )
     return 0 if npass == len(_results) else 1
 
 

@@ -11,16 +11,13 @@ is the asset return covariance matrix and :math:`\\lambda` is the investor's
 risk-aversion coefficient.
 
 The estimator is deliberately robust: covariances may be shrunk towards a
-well-conditioned target via Ledoit-Wolf, :math:`\\Sigma` is ridge-regularised
-before any inversion, and if the constrained solver fails to converge the
-optimizer degrades gracefully to an equal-weight allocation.  Whatever path is
-taken, the returned weights always satisfy the canonical *weight contract* for
-the configured :class:`~portfolio.base.PortfolioMode`.
+well-conditioned target via Ledoit-Wolf and :math:`\\Sigma` is ridge-regularised
+before any inversion. Failed or undefined problems raise rather than silently
+substituting a different portfolio. Successful results satisfy the contract.
 """
 
 from __future__ import annotations
 
-import warnings
 from typing import Optional, Sequence, Union
 
 import numpy as np
@@ -32,6 +29,8 @@ from quantcortex.portfolio.base import (
     PortfolioMode,
     PortfolioOptimizer,
     normalize_market_neutral,
+    prepare_return_panel,
+    validate_return_panel,
 )
 
 __all__ = ["MeanVariance"]
@@ -48,7 +47,7 @@ class MeanVariance(PortfolioOptimizer):
     Parameters
     ----------
     mode:
-        :class:`~portfolio.base.PortfolioMode` selecting a long-only
+        :class:`~quantcortex.portfolio.base.PortfolioMode` selecting a long-only
         (weights sum to 1.0) or market-neutral (weights sum to 0.0) book.
     risk_aversion:
         Risk-aversion coefficient :math:`\\lambda` in the objective.  Larger
@@ -59,11 +58,10 @@ class MeanVariance(PortfolioOptimizer):
         shrinkage (:class:`sklearn.covariance.LedoitWolf`); otherwise the plain
         sample covariance is used.
     allow_short:
-        For the long-only mode this relaxes the non-negativity constraint so the
-        lower weight bound becomes ``weight_bounds[0]`` rather than ``0``.  It
-        has no effect in market-neutral mode, which is short-enabled by design.
+        Retained for API compatibility. Shorting is only valid in
+        ``market_neutral`` mode; setting this in ``long_only`` mode raises.
     **kw:
-        Forwarded to :class:`~portfolio.base.PortfolioOptimizer`
+        Forwarded to :class:`~quantcortex.portfolio.base.PortfolioOptimizer`
         (``tolerance``, ``weight_bounds``).
     """
 
@@ -77,7 +75,19 @@ class MeanVariance(PortfolioOptimizer):
         **kw,
     ) -> None:
         super().__init__(mode, **kw)
+        if not isinstance(shrinkage, (bool, np.bool_)):
+            raise TypeError("shrinkage must be a boolean")
+        if not isinstance(allow_short, (bool, np.bool_)):
+            raise TypeError("allow_short must be a boolean")
+        if allow_short and self.mode is PortfolioMode.LONG_ONLY:
+            raise ValueError(
+                "allow_short=True conflicts with LONG_ONLY; use MARKET_NEUTRAL"
+            )
+        if isinstance(risk_aversion, (bool, np.bool_)):
+            raise TypeError("risk_aversion must be numeric, not boolean")
         self.risk_aversion = float(risk_aversion)
+        if not np.isfinite(self.risk_aversion) or self.risk_aversion <= 0.0:
+            raise ValueError("risk_aversion must be finite and positive")
         self.shrinkage = bool(shrinkage)
         self.allow_short = bool(allow_short)
 
@@ -86,17 +96,8 @@ class MeanVariance(PortfolioOptimizer):
     # ------------------------------------------------------------------
     @staticmethod
     def _clean(returns: pd.DataFrame) -> pd.DataFrame:
-        """Coerce to a numeric DataFrame and remove non-finite observations.
-
-        Rows that are entirely missing are dropped; any remaining gaps are
-        forward/backward filled and finally zero-filled so the covariance
-        estimators never receive ``NaN``.
-        """
-        df = pd.DataFrame(returns).apply(pd.to_numeric, errors="coerce")
-        df = df.replace([np.inf, -np.inf], np.nan)
-        df = df.dropna(how="all")
-        df = df.ffill().bfill().fillna(0.0)
-        return df
+        """Use rows observed for every asset in the estimation subset."""
+        return prepare_return_panel(returns, name="MeanVariance returns")
 
     def _estimate(self, returns: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         """Return ``(mu, sigma)`` sample/shrunk estimates from ``returns``."""
@@ -126,7 +127,7 @@ class MeanVariance(PortfolioOptimizer):
     def _solve_long_only(self, mu: np.ndarray, sigma: np.ndarray) -> np.ndarray:
         """Constrained QP: maximise the mean-variance utility on the simplex."""
         n = mu.size
-        lower = self.weight_bounds[0] if self.allow_short else 0.0
+        lower = max(0.0, self.weight_bounds[0])
         upper = self.weight_bounds[1]
         bounds = [(lower, upper)] * n
         constraints = ({"type": "eq", "fun": lambda w: np.sum(w) - 1.0},)
@@ -137,7 +138,9 @@ class MeanVariance(PortfolioOptimizer):
         def neg_grad(w: np.ndarray) -> np.ndarray:
             return -mu + self.risk_aversion * (sigma @ w)
 
-        x0 = np.full(n, 1.0 / n, dtype=np.float64)
+        x0 = self._project_configured_bounds(
+            np.full(n, 1.0 / n, dtype=np.float64)
+        )
         res = minimize(
             neg_utility,
             x0,
@@ -148,12 +151,8 @@ class MeanVariance(PortfolioOptimizer):
             options={"maxiter": 500, "ftol": 1e-12},
         )
         if not res.success or not np.all(np.isfinite(res.x)):
-            return x0
-        w = np.clip(res.x, lower, upper)
-        total = w.sum()
-        if total <= 0.0 or not np.isfinite(total):
-            return x0
-        return w / total
+            raise RuntimeError(f"MeanVariance solver failed: {res.message}")
+        return self._project_configured_bounds(res.x)
 
     def _solve_market_neutral(self, mu: np.ndarray, sigma: np.ndarray) -> np.ndarray:
         """Closed-form ``Sigma^-1 mu`` then demean / L1-normalise to sum 0."""
@@ -164,7 +163,7 @@ class MeanVariance(PortfolioOptimizer):
             raw = np.linalg.lstsq(sigma, mu, rcond=None)[0]
         if not np.all(np.isfinite(raw)):
             return np.zeros(n, dtype=np.float64)
-        return normalize_market_neutral(raw)
+        return self._project_configured_bounds(normalize_market_neutral(raw))
 
     # ------------------------------------------------------------------
     # PortfolioOptimizer API
@@ -191,11 +190,9 @@ class MeanVariance(PortfolioOptimizer):
         usable risk information; forward/backward/zero-filling them would
         create zero-variance pseudo-assets that absorb most of the book.  They
         are excluded from the optimization and re-inserted with weight 0.0 at
-        their original positions.  If *all* columns are dead the optimizer
-        falls back to the mode's neutral allocation with a warning.
+        their original positions. If all columns are dead, optimization fails.
         """
-        df = pd.DataFrame(returns).apply(pd.to_numeric, errors="coerce")
-        df = df.replace([np.inf, -np.inf], np.nan)
+        df = validate_return_panel(returns, name="MeanVariance returns")
         n_total = df.shape[1]
         alive = (df.notna().sum(axis=0) >= 2).to_numpy()
 
@@ -205,20 +202,23 @@ class MeanVariance(PortfolioOptimizer):
                 raise ValueError(
                     f"expected_returns has length {er.size}, expected {n_total}"
                 )
-            er = np.nan_to_num(er, nan=0.0, posinf=0.0, neginf=0.0)
+            if not np.all(np.isfinite(er)):
+                raise ValueError("expected_returns must contain only finite values")
         else:
             er = None
 
         if not alive.any():
-            warnings.warn(
-                "MeanVariance: every column has fewer than 2 finite "
-                "observations; falling back to the mode's neutral allocation.",
-                RuntimeWarning,
-                stacklevel=2,
+            raise ValueError(
+                "MeanVariance requires at least one asset with two observations"
             )
-            if self.mode is PortfolioMode.MARKET_NEUTRAL:
-                return np.zeros(n_total, dtype=np.float64)
-            return np.full(n_total, 1.0 / n_total, dtype=np.float64)
+        if (~alive).any():
+            lower, upper = self.weight_bounds
+            effective_lower = max(0.0, lower) if self.mode is PortfolioMode.LONG_ONLY else lower
+            if not effective_lower - self.tolerance <= 0.0 <= upper + self.tolerance:
+                raise ValueError(
+                    "MeanVariance cannot assign the configured non-zero minimum "
+                    "weight to assets without enough observations"
+                )
 
         sub = df.loc[:, df.columns[alive]]
         w_sub = self._optimize_subset(sub, er[alive] if er is not None else None)
@@ -245,17 +245,11 @@ class MeanVariance(PortfolioOptimizer):
 
         # Degenerate single-asset book.
         if n == 1:
-            return np.array(
+            return self._project_configured_bounds(np.array(
                 [1.0 if self.mode is PortfolioMode.LONG_ONLY else 0.0],
                 dtype=np.float64,
-            )
+            ))
 
-        try:
-            if self.mode is PortfolioMode.MARKET_NEUTRAL:
-                return self._solve_market_neutral(mu, sigma)
-            return self._solve_long_only(mu, sigma)
-        except Exception:
-            # Last-resort fallback: a valid, well-defined allocation.
-            if self.mode is PortfolioMode.MARKET_NEUTRAL:
-                return np.zeros(n, dtype=np.float64)
-            return np.full(n, 1.0 / n, dtype=np.float64)
+        if self.mode is PortfolioMode.MARKET_NEUTRAL:
+            return self._solve_market_neutral(mu, sigma)
+        return self._solve_long_only(mu, sigma)

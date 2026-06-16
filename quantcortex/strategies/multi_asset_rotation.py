@@ -21,10 +21,11 @@ Signal construction
 
 Overlays
 --------
-* **Regime gate** (timing overlay).  An :class:`~timing.hmm_regime.HMMRegime` is
-  fit on the benchmark's return and realized vol; bear -> flat, sideways -> half,
-  bull -> full exposure.  Disabled with ``regime=False`` or when the fit fails.
-* **VIX scaler** (risk overlay).  A :class:`~timing.vix_scaler.VIXScaler` leans
+* **Regime gate** (timing overlay). :class:`~quantcortex.timing.hmm_regime.HMMRegime` uses
+  the explicitly configured backend (seeded GMM by default) on benchmark return
+  and realized vol; bear -> flat, sideways -> half, bull -> full exposure.
+  Insufficient history produces a flat book; model failures stop the run.
+* **VIX scaler** (risk overlay).  A :class:`~quantcortex.timing.vix_scaler.VIXScaler` leans
   the book down when implied (or proxied realized) volatility is elevated.
 
 Everything is strictly causal: every signal at date ``t`` uses only data
@@ -39,7 +40,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from quantcortex.portfolio.base import PortfolioMode
+from quantcortex.portfolio.base import PortfolioMode, project_bounded_sum
 from quantcortex.portfolio.equal_weight import EqualWeight
 from quantcortex.strategies.base_strategy import Strategy, StrategyContext
 from quantcortex.timing.hmm_regime import HMMRegime
@@ -69,12 +70,16 @@ class MultiAssetRotation(Strategy):
         Most-recent days skipped in the residual-momentum window.
     target_vix:
         VIX level at which the book runs at its natural exposure.
+    max_position_weight:
+        Maximum final weight for any selected ETF. If too few assets are
+        selected to deploy the full book under this limit, residual capital
+        remains in cash.
     regime:
-        Enable the HMM regime timing gate.
+        Enable the regime timing gate.
     vix_scale:
         Enable the VIX risk overlay.
     **kw:
-        Forwarded to :class:`~strategies.base_strategy.Strategy`.
+        Forwarded to :class:`~quantcortex.strategies.base_strategy.Strategy`.
 
     Notes
     -----
@@ -97,6 +102,7 @@ class MultiAssetRotation(Strategy):
     }
     #: Benchmark used for active-return / CAPM calculations.
     BENCHMARK: str = "QQQ"
+    DEFAULT_MAX_POSITION_WEIGHT: float = 0.60
 
     def __init__(
         self,
@@ -107,26 +113,84 @@ class MultiAssetRotation(Strategy):
         mom_lookback: int = 126,
         mom_gap: int = 21,
         target_vix: float = 20.0,
+        max_position_weight: float = DEFAULT_MAX_POSITION_WEIGHT,
         regime: bool = True,
+        regime_backend: str = "gmm",
         vix_scale: bool = True,
         **kw,
     ) -> None:
         optimizer = optimizer if optimizer is not None else EqualWeight()
         super().__init__(optimizer, mode=PortfolioMode.LONG_ONLY, **kw)
+        integer_parameters = {
+            "top_n_groups": top_n_groups,
+            "ir_lookback": ir_lookback,
+            "mom_lookback": mom_lookback,
+            "mom_gap": mom_gap,
+        }
+        if any(
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))
+            for value in integer_parameters.values()
+        ):
+            raise TypeError("group and lookback parameters must be integers")
+        if not isinstance(regime, (bool, np.bool_)):
+            raise TypeError("regime must be a boolean")
+        if not isinstance(vix_scale, (bool, np.bool_)):
+            raise TypeError("vix_scale must be a boolean")
+        if isinstance(target_vix, (bool, np.bool_)):
+            raise TypeError("target_vix must be numeric, not boolean")
+        if isinstance(max_position_weight, (bool, np.bool_)):
+            raise TypeError("max_position_weight must be numeric, not boolean")
+        try:
+            target_vix = float(target_vix)
+            max_position_weight = float(max_position_weight)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise TypeError(
+                "target_vix and max_position_weight must be numeric"
+            ) from exc
+        if not np.isfinite(target_vix) or target_vix <= 0.0:
+            raise ValueError("target_vix must be finite and positive")
+        if (
+            not np.isfinite(max_position_weight)
+            or max_position_weight <= 0.0
+            or max_position_weight > 1.0
+        ):
+            raise ValueError("max_position_weight must be in (0, 1]")
         self.top_n_groups = int(top_n_groups)
         self.ir_lookback = int(ir_lookback)
         self.mom_lookback = int(mom_lookback)
         self.mom_gap = int(mom_gap)
+        self.max_position_weight = max_position_weight
         self.regime_enabled = bool(regime)
         self.vix_scale_enabled = bool(vix_scale)
+        if not 1 <= self.top_n_groups <= len(self.GROUPS):
+            raise ValueError(f"top_n_groups must be in [1, {len(self.GROUPS)}]")
+        if self.ir_lookback < 2:
+            raise ValueError("ir_lookback must be at least 2")
+        if self.mom_lookback <= 0:
+            raise ValueError("mom_lookback must be positive")
+        if self.mom_gap < 0:
+            raise ValueError("mom_gap must be non-negative")
+        if self.mom_gap >= self.mom_lookback:
+            raise ValueError("mom_gap must be smaller than mom_lookback")
 
-        self._hmm = HMMRegime(n_states=3)
-        self._vix_scaler = VIXScaler(target_vix=float(target_vix))
+        self._hmm = HMMRegime(n_states=3, backend=regime_backend)
+        self._vix_scaler = VIXScaler(target_vix=target_vix)
 
         if self.regime_enabled:
             self.timing_overlays.append(self._regime_overlay)
         if self.vix_scale_enabled:
             self.risk_overlays.append(self._vix_overlay)
+        self.risk_overlays.append(self._position_limit_overlay)
+
+    @property
+    def required_history(self) -> int:
+        """Price sessions needed before every default signal path is mature."""
+        residual_momentum = self.mom_gap + 2 * self.mom_lookback + 1
+        regime_prices = 61 if self.regime_enabled else 0
+        vix_proxy_prices = 6 if self.vix_scale_enabled else 0
+        ir_prices = self.ir_lookback + 1
+        return max(residual_momentum, regime_prices, vix_proxy_prices, ir_prices)
 
     # ------------------------------------------------------------------ #
     # Selection
@@ -181,6 +245,7 @@ class MultiAssetRotation(Strategy):
             scores = self._plain_momentum(prices[members])
 
         scores = scores.reindex(members).dropna()
+        scores = scores[scores > 0.0]
         if scores.empty:
             return self._fallback_momentum(prices)
         return scores
@@ -200,39 +265,51 @@ class MultiAssetRotation(Strategy):
     ) -> Optional[pd.Series]:
         """Latest residual (CAPM) momentum per member, or ``None`` on cold start."""
         n = len(member_prices)
-        if n <= self.mom_gap + 2:
-            return None
-        window = min(self.mom_lookback, max(2, n - self.mom_gap - 1))
-        if window <= 1:
+        residual_history = self.mom_gap + 2 * self.mom_lookback + 1
+        if n < residual_history:
             return None
 
-        member_ret = member_prices.pct_change()
-        bench_ret = bench_prices.reindex(member_prices.index).pct_change()
+        member_ret = member_prices.pct_change(fill_method=None)
+        bench_ret = bench_prices.reindex(member_prices.index).pct_change(
+            fill_method=None
+        )
 
-        # Trailing-window CAPM beta over the most recent ``window`` observations.
-        recent = member_ret.iloc[-window:]
-        x = bench_ret.iloc[-window:]
-        x_aligned = x.reindex(recent.index)
-        x_var = float(x_aligned.var(ddof=0))
-        if not np.isfinite(x_var) or x_var <= 0:
+        # Estimate CAPM parameters on a window preceding the momentum
+        # formation window. Estimating an intercept on the same window whose
+        # residuals are summed would force the score to zero by construction.
+        formation_end = len(member_ret) - self.mom_gap if self.mom_gap else len(member_ret)
+        formation_start = max(1, formation_end - self.mom_lookback)
+        estimation_start = formation_start - self.mom_lookback
+        formation = member_ret.iloc[formation_start:formation_end]
+        formation_bench = bench_ret.iloc[formation_start:formation_end]
+        estimation = member_ret.iloc[estimation_start:formation_start]
+        estimation_bench = bench_ret.iloc[estimation_start:formation_start]
+        if (
+            len(formation) != self.mom_lookback
+            or len(estimation) != self.mom_lookback
+        ):
             return None
 
         residual_mom: Dict[str, float] = {}
-        # Use the segment that excludes the most recent ``mom_gap`` days for the
-        # momentum accumulation; betas use the full trailing window.
         for col in member_prices.columns:
-            y = recent[col]
-            mask = y.notna() & x_aligned.notna()
-            if mask.sum() < 3:
+            y_est = estimation[col]
+            est_mask = y_est.notna() & estimation_bench.notna()
+            if est_mask.sum() != len(estimation):
                 continue
-            yc = y[mask]
-            xc = x_aligned[mask]
+            yc = y_est[est_mask]
+            xc = estimation_bench[est_mask]
+            x_var = float(xc.var(ddof=0))
+            if not np.isfinite(x_var) or x_var <= 0.0:
+                continue
             beta = float(np.cov(yc, xc, ddof=0)[0, 1] / x_var)
             alpha = float(yc.mean() - beta * xc.mean())
-            resid = yc - (alpha + beta * xc)
-            # Momentum = cumulative residual return up to t-gap.
-            if self.mom_gap > 0 and len(resid) > self.mom_gap:
-                resid = resid.iloc[: -self.mom_gap]
+            y_form = formation[col]
+            form_mask = y_form.notna() & formation_bench.notna()
+            if form_mask.sum() != len(formation):
+                continue
+            resid = y_form[form_mask] - (
+                alpha + beta * formation_bench[form_mask]
+            )
             if resid.empty:
                 continue
             residual_mom[col] = float(resid.sum())
@@ -241,14 +318,15 @@ class MultiAssetRotation(Strategy):
             return None
         return pd.Series(residual_mom)
 
-    @staticmethod
-    def _plain_momentum(member_prices: pd.DataFrame) -> pd.Series:
+    def _plain_momentum(self, member_prices: pd.DataFrame) -> pd.Series:
         """Simple trailing total return per member (cold-start fallback)."""
-        if len(member_prices) < 2:
+        end = len(member_prices) - 1 - self.mom_gap
+        if end <= 0:
             return pd.Series(
                 0.0, index=member_prices.columns, dtype=float
             )
-        ret = member_prices.iloc[-1] / member_prices.iloc[0] - 1.0
+        start = max(0, end - self.mom_lookback)
+        ret = member_prices.iloc[end] / member_prices.iloc[start] - 1.0
         return ret.astype(float)
 
     def _fallback_momentum(self, prices: pd.DataFrame) -> pd.Series:
@@ -256,7 +334,7 @@ class MultiAssetRotation(Strategy):
         if prices.shape[1] == 0 or len(prices) < 2:
             return pd.Series(dtype=float)
         mom = self._plain_momentum(prices).dropna()
-        return mom
+        return mom[mom > 0.0]
 
     # ------------------------------------------------------------------ #
     # Overlays
@@ -270,19 +348,15 @@ class MultiAssetRotation(Strategy):
     def _regime_overlay(
         self, weights: np.ndarray, ctx: StrategyContext
     ) -> np.ndarray:
-        """HMM regime exposure gate (bear x0, sideways x0.5, bull x1)."""
+        """Regime exposure gate (bear x0, sideways x0.5, bull x1)."""
         w = np.asarray(weights, dtype=np.float64)
         mkt = self._market_return_series(ctx)
         # Need enough history for a meaningful regime fit.
         if len(mkt) < 60:
-            return w
+            return np.zeros_like(w)
         feats = HMMRegime._features_from_returns(mkt)
-        try:
-            self._hmm.fit(feats)
-            return self._hmm.scale_weights(w, feats)
-        except Exception:
-            # Any fit/predict failure -> no gate (pass weights through).
-            return w
+        self._hmm.fit(feats)
+        return self._hmm.scale_weights(w, feats)
 
     def _vix_overlay(self, weights: np.ndarray, ctx: StrategyContext) -> np.ndarray:
         """VIX exposure scaler; derives a realized-vol proxy if no VIX given."""
@@ -291,11 +365,31 @@ class MultiAssetRotation(Strategy):
         if vix is None:
             vix = self._realized_vol_proxy(ctx)
         if vix is None:
-            return w
-        try:
-            return self._vix_scaler.apply(w, vix)
-        except Exception:
-            return w
+            vix = np.nan
+        return self._vix_scaler.apply(w, vix)
+
+    def _position_limit_overlay(
+        self, weights: np.ndarray, ctx: StrategyContext
+    ) -> np.ndarray:
+        """Cap final positions, redistributing only when the cap is feasible."""
+        del ctx
+        w = np.asarray(weights, dtype=np.float64)
+        if w.ndim != 1 or not np.all(np.isfinite(w)):
+            raise ValueError("position limit requires a finite one-dimensional vector")
+        if np.any(w < -1e-12):
+            raise ValueError("position limit received negative long-only weights")
+        w = np.clip(w, 0.0, None)
+        gross = float(w.sum())
+        if gross <= 0.0:
+            return np.zeros_like(w)
+        if len(w) * self.max_position_weight < gross - 1e-12:
+            return np.clip(w, 0.0, self.max_position_weight)
+        return project_bounded_sum(
+            w,
+            target_sum=gross,
+            lower=0.0,
+            upper=self.max_position_weight,
+        )
 
     def _realized_vol_proxy(self, ctx: StrategyContext) -> Optional[float]:
         """Annualized 21-day realized vol of the benchmark, in VIX points."""

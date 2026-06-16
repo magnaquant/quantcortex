@@ -10,15 +10,13 @@ entirely:
 
 Because it depends only on the covariance matrix - the most *estimable* moment
 of a return series - the GMV portfolio is a workhorse benchmark and a robust
-default allocation.  This implementation supports Ledoit-Wolf shrinkage, ridge
-regularisation of :math:`\\Sigma`, a constrained long-only solver and the
-closed-form long/short solution, with an equal-weight fallback.  All paths
-return weights that satisfy the canonical *weight contract*.
+default allocation. This implementation supports Ledoit-Wolf shrinkage, ridge
+regularisation of :math:`\\Sigma`, and a constrained long-only solver. Failed
+or undefined problems raise rather than silently substituting a portfolio.
 """
 
 from __future__ import annotations
 
-import warnings
 from typing import Union
 
 import numpy as np
@@ -29,7 +27,8 @@ from sklearn.covariance import LedoitWolf
 from quantcortex.portfolio.base import (
     PortfolioMode,
     PortfolioOptimizer,
-    normalize_market_neutral,
+    prepare_return_panel,
+    validate_return_panel,
 )
 
 __all__ = ["MinimumVariance"]
@@ -43,14 +42,14 @@ class MinimumVariance(PortfolioOptimizer):
     Parameters
     ----------
     mode:
-        :class:`~portfolio.base.PortfolioMode`.  ``LONG_ONLY`` solves the
-        bounded simplex QP; ``MARKET_NEUTRAL`` uses the closed-form long/short
-        GMV direction projected onto a dollar-neutral book.
+        :class:`~quantcortex.portfolio.base.PortfolioMode`.  ``LONG_ONLY`` solves the
+        bounded simplex QP. ``MARKET_NEUTRAL`` is rejected because minimum
+        variance with only a zero-net constraint has the trivial zero solution.
     shrinkage:
         When ``True`` (default) the covariance is estimated with Ledoit-Wolf
         shrinkage; otherwise the plain sample covariance is used.
     **kw:
-        Forwarded to :class:`~portfolio.base.PortfolioOptimizer`
+        Forwarded to :class:`~quantcortex.portfolio.base.PortfolioOptimizer`
         (``tolerance``, ``weight_bounds``).
     """
 
@@ -62,6 +61,13 @@ class MinimumVariance(PortfolioOptimizer):
         **kw,
     ) -> None:
         super().__init__(mode, **kw)
+        if not isinstance(shrinkage, (bool, np.bool_)):
+            raise TypeError("shrinkage must be a boolean")
+        if self.mode is not PortfolioMode.LONG_ONLY:
+            raise ValueError(
+                "MinimumVariance requires LONG_ONLY; a non-zero market-neutral "
+                "minimum needs an additional exposure or return constraint"
+            )
         self.shrinkage = bool(shrinkage)
 
     # ------------------------------------------------------------------
@@ -69,11 +75,7 @@ class MinimumVariance(PortfolioOptimizer):
     # ------------------------------------------------------------------
     @staticmethod
     def _clean(returns: pd.DataFrame) -> pd.DataFrame:
-        df = pd.DataFrame(returns).apply(pd.to_numeric, errors="coerce")
-        df = df.replace([np.inf, -np.inf], np.nan)
-        df = df.dropna(how="all")
-        df = df.ffill().bfill().fillna(0.0)
-        return df
+        return prepare_return_panel(returns, name="MinimumVariance returns")
 
     def _covariance(self, returns: pd.DataFrame) -> np.ndarray:
         """Estimate a symmetric, ridge-regularised covariance matrix."""
@@ -110,7 +112,9 @@ class MinimumVariance(PortfolioOptimizer):
         def grad(w: np.ndarray) -> np.ndarray:
             return 2.0 * (sigma @ w)
 
-        x0 = np.full(n, 1.0 / n, dtype=np.float64)
+        x0 = self._project_configured_bounds(
+            np.full(n, 1.0 / n, dtype=np.float64)
+        )
         res = minimize(
             variance,
             x0,
@@ -121,29 +125,8 @@ class MinimumVariance(PortfolioOptimizer):
             options={"maxiter": 500, "ftol": 1e-12},
         )
         if not res.success or not np.all(np.isfinite(res.x)):
-            return x0
-        w = np.clip(res.x, lower, upper)
-        total = w.sum()
-        if total <= 0.0 or not np.isfinite(total):
-            return x0
-        return w / total
-
-    def _solve_market_neutral(self, sigma: np.ndarray) -> np.ndarray:
-        """Closed-form GMV direction ``Sigma^-1 1`` projected to dollar-neutral.
-
-        The unconstrained GMV weights ``Sigma^-1 1 / (1' Sigma^-1 1)`` are the
-        natural minimum-variance direction; demeaning and L1-normalising them
-        yields a valid sum-zero, unit-gross market-neutral book.
-        """
-        n = sigma.shape[0]
-        ones = np.ones(n, dtype=np.float64)
-        try:
-            inv_ones = np.linalg.solve(sigma, ones)
-        except np.linalg.LinAlgError:
-            inv_ones = np.linalg.lstsq(sigma, ones, rcond=None)[0]
-        if not np.all(np.isfinite(inv_ones)):
-            return np.zeros(n, dtype=np.float64)
-        return normalize_market_neutral(inv_ones)
+            raise RuntimeError(f"MinimumVariance solver failed: {res.message}")
+        return self._project_configured_bounds(res.x)
 
     # ------------------------------------------------------------------
     # PortfolioOptimizer API
@@ -155,24 +138,21 @@ class MinimumVariance(PortfolioOptimizer):
         usable risk information; forward/backward/zero-filling them would
         create zero-variance pseudo-assets that absorb most of the book.  They
         are excluded from the optimization and re-inserted with weight 0.0 at
-        their original positions.  If *all* columns are dead the optimizer
-        falls back to the mode's neutral allocation with a warning.
+        their original positions. If all columns are dead, optimization fails.
         """
-        df = pd.DataFrame(returns).apply(pd.to_numeric, errors="coerce")
-        df = df.replace([np.inf, -np.inf], np.nan)
+        df = validate_return_panel(returns, name="MinimumVariance returns")
         n_total = df.shape[1]
         alive = (df.notna().sum(axis=0) >= 2).to_numpy()
 
         if not alive.any():
-            warnings.warn(
-                "MinimumVariance: every column has fewer than 2 finite "
-                "observations; falling back to the mode's neutral allocation.",
-                RuntimeWarning,
-                stacklevel=2,
+            raise ValueError(
+                "MinimumVariance requires at least one asset with two observations"
             )
-            if self.mode is PortfolioMode.MARKET_NEUTRAL:
-                return np.zeros(n_total, dtype=np.float64)
-            return np.full(n_total, 1.0 / n_total, dtype=np.float64)
+        if (~alive).any() and max(0.0, self.weight_bounds[0]) > self.tolerance:
+            raise ValueError(
+                "MinimumVariance cannot assign the configured positive minimum "
+                "weight to assets without enough observations"
+            )
 
         sub = df.loc[:, df.columns[alive]]
         w_sub = self._optimize_subset(sub)
@@ -193,16 +173,8 @@ class MinimumVariance(PortfolioOptimizer):
         n = sigma.shape[0]
 
         if n == 1:
-            return np.array(
-                [1.0 if self.mode is PortfolioMode.LONG_ONLY else 0.0],
-                dtype=np.float64,
+            return self._project_configured_bounds(
+                np.array([1.0], dtype=np.float64)
             )
 
-        try:
-            if self.mode is PortfolioMode.MARKET_NEUTRAL:
-                return self._solve_market_neutral(sigma)
-            return self._solve_long_only(sigma)
-        except Exception:
-            if self.mode is PortfolioMode.MARKET_NEUTRAL:
-                return np.zeros(n, dtype=np.float64)
-            return np.full(n, 1.0 / n, dtype=np.float64)
+        return self._solve_long_only(sigma)
