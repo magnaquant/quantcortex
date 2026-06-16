@@ -6,19 +6,22 @@ the controls below before any real-money deployment.
 
 ## Broker Certification
 
-- Migrate Alpaca from `alpaca-trade-api` to `alpaca-py`.
-- Migrate Interactive Brokers from archived `ib_insync` to a maintained client.
+- Alpaca uses `alpaca-py`; Interactive Brokers uses `ib_async`. CI constructs
+  requests with the installed SDK models, and offline mocks cover request and
+  response mapping.
 - Run authenticated paper tests for permissions, reconnects, rejects, partial
   fills, cancellations, duplicate submissions, and venue-side idempotency.
 - Reconcile broker positions, cash, orders, and fills before every trading cycle.
 
 ## State and Recovery
 
-- Persist positions, orders, submission intents, and reconciliation metadata as
-  one recoverable transaction or event stream.
-- Define restart behavior for crashes between order submission and persistence.
+- Positions, known orders, submission intents, and reconciliation metadata are
+  persisted as one versioned snapshot with optimistic concurrency.
+- Submission intent is durably marked `ATTEMPTING` before a broker call. An
+  uncertain outcome blocks automatic retry until broker reconciliation.
 - Add backup restoration, corruption, concurrent-writer, and disaster-recovery
-  tests for every configured storage backend.
+  drills for Redis and the local file backend. File concurrency is tested;
+  Redis transaction behavior still needs a real-service integration test.
 
 ## Research and Data
 
@@ -32,11 +35,13 @@ the controls below before any real-money deployment.
 
 ## Deployment Controls
 
-- Pin and lock all dependencies and container base images.
+- Dependencies, Python exports, and container images are locked. CI rejects
+  stale dependency exports.
 - Run container, database, Redis, and broker integration tests in a staging
   environment matching production.
-- Run services as a non-root user with secret management, least privilege,
-  structured logs, metrics, alerting, and immutable audit records.
+- The application container runs as a non-root user with a read-only root
+  filesystem. Add managed secrets, least privilege, structured logs, metrics,
+  alerting, and immutable audit records before production deployment.
 - Define kill switches, exposure limits, incident ownership, rollback steps,
   and independent release approval.
 

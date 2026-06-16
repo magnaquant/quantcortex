@@ -14,6 +14,7 @@ PUBLISHED_CHARTS = {
     "drawdown.png",
     "equity_vs_benchmarks.png",
     "monthly_returns.png",
+    "performance_attribution.png",
     "report_overview.png",
     "return_distribution.png",
     "rolling_risk.png",

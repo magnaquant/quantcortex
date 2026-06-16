@@ -45,20 +45,26 @@ hashes are recorded in
 | Reference-run result | Value |
 |---|---:|
 | Evaluation window | 2018-01-02 to 2025-12-31 |
-| CAGR | -0.07% |
-| Annualized volatility | 6.53% |
-| Sharpe | 0.02 |
-| Maximum drawdown | -14.22% |
+| Net nominal CAGR | +1.33% |
+| Gross nominal CAGR before modeled costs | +3.26% |
+| Net Sharpe, excess of SHV cash proxy | -0.14 |
+| Gross Sharpe before modeled costs, excess of SHV | +0.15 |
+| Maximum drawdown | -10.33% |
 | Annualized one-way turnover | 10.84x |
 | Sum of modeled cost fractions | 15.06% |
-| SPY Sharpe, gross | 0.78 |
-| Equal-weight six-ETF Sharpe, gross | 0.96 |
+| Mean active gross exposure | 34.76% |
+| Fully-cash sessions | 41.92% |
+| Exposure-matched equal-weight cash-excess Sharpe, gross | +0.69 |
 
-Strategy returns are net of 3 bps commission and 10 bps flat slippage per
-trade; benchmark returns are gross. The ADV cap is inactive because this run
-has no volume input. The reported DSR is 0.065 using an assumed 10 trials and a
-single-series variance estimate. The true historical trial count is unknown,
-so that DSR is not a validated multiple-testing correction.
+Residual cash earns the adjusted-close return of SHV. Strategy returns are net
+of 3 bps commission and 10 bps flat slippage per trade; benchmark returns are
+gross. The positive nominal return is not evidence of positive active return:
+after subtracting the cash proxy, net Sharpe is negative, and the strategy
+trails an equal-weight benchmark scaled to the same daily risky exposure. The
+ADV cap is inactive because this run has no volume input. The reported DSR is
+0.024 using an assumed 10 trials and a single-series variance estimate. The
+true historical trial count is unknown, so this is not a validated
+multiple-testing correction.
 
 <details>
 <summary><strong>Open the full diagnostic gallery</strong></summary>
@@ -66,6 +72,10 @@ so that DSR is not a validated multiple-testing correction.
 ### Equity Versus Benchmarks
 
 ![Net strategy equity versus gross benchmarks](docs/img/equity_vs_benchmarks.png)
+
+### Performance Attribution
+
+![Gross and net strategy, exposure-matched benchmark, and cash proxy](docs/img/performance_attribution.png)
 
 ### Drawdown
 
@@ -98,17 +108,18 @@ so that DSR is not a validated multiple-testing correction.
 </details>
 
 The published run uses Yahoo Finance data retrieved through yfinance 1.4.1 on
-June 15, 2026. It covers QQQ, VGT, GLD, TLT, SPY, and VIG from January 4, 2016
-through December 31, 2025; the first 503 sessions are signal warm-up. The local
-adjusted-close CSV has SHA-256
-`3b256ef083794a67f173d635a3cd297237b7a3d01489ccf53cc807c99602607c`.
+June 16, 2026. It covers QQQ, VGT, GLD, TLT, SPY, VIG, and the SHV cash proxy
+from January 4, 2016 through December 31, 2025; the first 503 sessions are
+signal warm-up. The local adjusted-close CSV has SHA-256
+`efb384a62157e56a0cd8065abf45c1ed07d90ec26c681e5d54d74fe4cb9c55e1`.
 Permission is owner-asserted and not independently verified by the software.
 
 To generate the same report from an authorized file matching that digest:
 
 ```bash
 PYTHONPATH=. python scripts/generate_report.py \
-  --prices-csv local_data/rotation_prices.csv \
+  --prices-csv local_data/published_rotation_prices.csv \
+  --cash-proxy-symbol SHV \
   --start 2018 --end 2025 --n-trials 10 \
   --data-provider "$DATA_PROVIDER" \
   --permission-basis "$DATA_PERMISSION_BASIS" \
@@ -116,7 +127,7 @@ PYTHONPATH=. python scripts/generate_report.py \
   --adjustment-method "$DATA_ADJUSTMENT_METHOD"
 ```
 
-The command writes `reports/report.md` and the same nine-plot diagnostic set.
+The command writes `reports/report.md` and the same ten-plot diagnostic set.
 Metadata records owner-supplied assertions; the tool does not determine whether
 a license permits publication or redistribution.
 
@@ -136,22 +147,19 @@ broker SDKs, and storage clients remain lazy imports.
 git clone https://github.com/magnaquant/quantcortex.git
 cd quantcortex
 python3.11 -m venv .venv && source .venv/bin/activate
-python -m pip install --upgrade pip
 
-# Install the package and its scientific core.
-python -m pip install -e .
+# Reproduce the reviewed development environment.
+python -m pip install -r requirements/dev.lock
+python -m pip install --no-deps -e .
 
-# Development, CI, and notebook tools.
-python -m pip install pytest pytest-cov ruff jupyter nbconvert ipykernel
-
-# Optional accelerators / integrations (Poetry extras):
-python -m pip install -e '.[all]'   # or: poetry install -E all
+# Optional full stack (resolved from poetry.lock):
+poetry install --with test,dev -E all
 #   ml        -> xgboost, lightgbm, catboost       (GBDT cross-sectional alpha)
 #   nlp       -> transformers, torch               (FinBERT sentiment)
 #   rl        -> stable-baselines3, gymnasium       (PPO DRL allocator)
 #   regime    -> hmmlearn                           (HMM regime overlay)
 #   providers -> yfinance, polygon-api-client, fredapi, lxml (data + PIT parsing)
-#   brokers   -> legacy Alpaca/IB adapters plus ccxt (see caveat below)
+#   brokers   -> alpaca-py, ib_async, ccxt
 #   storage   -> redis, sqlalchemy, psycopg2-binary (feature cache + TimescaleDB)
 ```
 
@@ -190,7 +198,7 @@ that your use is permitted. Notebook outputs are intentionally not committed.
 ```bash
 python scripts/validate_performance.py --live-yfinance
 python scripts/validate_performance.py --live-yfinance --pit
-python scripts/generate_report.py --prices-csv local_data/rotation_prices.csv
+python scripts/generate_report.py --prices-csv local_data/published_rotation_prices.csv --cash-proxy-symbol SHV
 python scripts/generate_report.py --live-yfinance
 python scripts/survivorship_demo.py --live-yfinance # quantify survivorship bias
 python scripts/verify_brokers.py              # broker adapters vs faithful SDK mocks (no account)
@@ -200,26 +208,24 @@ python scripts/paper_trade_cycle.py --offline # labeled synthetic dry-run; no br
 `validate_performance.py` explicitly fetches live yfinance data; `--pit` uses a
 fixed start-date cohort from historical index membership. `generate_report.py`
 accepts either an owner-supplied wide CSV or explicit live yfinance, writes a
-Markdown report plus nine plots under ignored `reports/`, and prints source
+Markdown report plus ten plots under ignored `reports/`, and prints source
 metadata plus markdown tables. Its default report requires at least 274
 pre-evaluation sessions for full signal initialization; `--warmup-years 0`
 explicitly permits and labels a cold start. `survivorship_demo.py` requires the
 same explicit live-data opt-in and shows the current pricing gap for past index
 members. `verify_brokers.py` checks Alpaca/IB/CCXT request construction and
-response parsing against SDK-shaped mocks; it does not verify a live SDK or
-authenticated connection.
+response parsing against SDK-shaped mocks. CI separately constructs requests
+with the real `alpaca-py` and `ib_async` SDK classes without contacting a
+venue. Neither gate verifies credentials, transport, permissions, or venue
+behavior.
 `paper_trade_cycle.py` runs the full execution path (use
 `--live-yfinance --submit` with `ALPACA_*` set to place paper orders). It
 refuses unresolved open orders, records deterministic client order IDs before
-submission, and separates sell and buy phases across fresh account snapshots.
-
-The Alpaca adapter currently uses the deprecated
-[`alpaca-trade-api-python`](https://github.com/alpacahq/alpaca-trade-api-python)
-SDK, and the IB adapter uses archived
-[`ib_insync`](https://github.com/erdewit/ib_insync). Migrate and re-certify them
-against [`alpaca-py`](https://github.com/alpacahq/alpaca-py) and a maintained IB
-client such as [`ib_async`](https://github.com/ib-api-reloaded/ib_async) before
-any production or real-money deployment.
+submission, persists positions/orders/intents in one revisioned snapshot, and
+separates sell and buy phases across fresh account snapshots. Alpaca uses
+[`alpaca-py`](https://github.com/alpacahq/alpaca-py); Interactive Brokers uses
+[`ib_async`](https://github.com/ib-api-reloaded/ib_async). Authenticated paper
+handshakes remain an external release gate.
 
 ### Paper trading (Phase 4)
 
@@ -228,10 +234,10 @@ before a direct CLI run (`set -a; source .env; set +a` in a trusted shell).
 Then use `scripts/paper_trade_cycle.py --live-yfinance --submit` for the guarded
 Alpaca paper path. `research/05_live_trading_bridge.ipynb` demonstrates order
 translation and adapter wiring but does not establish authenticated live
-compatibility. Bring up local Redis and TimescaleDB with
-`docker compose up -d redis timescaledb`. The stack does not require a `.env`
-for offline use; when present, Compose reads it for explicitly forwarded
-credential variables.
+compatibility. Copy `.env.example` to `.env`, replace `POSTGRES_PASSWORD`, then
+bring up local Redis and TimescaleDB with
+`docker compose up -d redis timescaledb`. The pinned application image runs as
+a non-root user and consumes `requirements/runtime.lock`.
 
 ---
 
@@ -247,14 +253,15 @@ For a licensed local dataset, run:
 
 ```bash
 PYTHONPATH=. python scripts/generate_report.py \
-  --prices-csv local_data/rotation_prices.csv \
+  --prices-csv local_data/published_rotation_prices.csv \
+  --cash-proxy-symbol SHV \
   --n-trials 10  # replace 10 with the actual configurations tested
 ```
 
 The report records the file path, SHA-256 digest, observed date window, cost
 assumptions, signal warm-up, DSR trial count/variance assumption, and whether
 liquidity constraints are active.
-Each run writes `reports/report.md`, a compact `report_overview.png`, and eight
+Each run writes `reports/report.md`, a compact `report_overview.png`, and nine
 detailed diagnostics under ignored `reports/img/`. These remain local research
 evidence unless the owner explicitly approves publication and adds complete
 provenance plus artifact hashes. See [PERFORMANCE.md](PERFORMANCE.md) for the
@@ -366,6 +373,7 @@ quantcortex/                     # repo root
 │   │   ├── engines/
 │   │   │   ├── vectorized.py   # Fast NumPy/pandas vectorized engine
 │   │   │   ├── event_driven.py # Bar-by-bar positions and fill accounting
+│   │   │   ├── cash.py         # Strict residual-cash return alignment
 │   │   │   └── walk_forward.py # Expanding/rolling WFO with embargo
 │   │   ├── execution_models/
 │   │   │   ├── ideal_fill.py
@@ -385,7 +393,7 @@ quantcortex/                     # repo root
 │   │   ├── brokers/
 │   │   │   ├── base.py
 │   │   │   ├── alpaca_broker.py
-│   │   │   ├── ib_broker.py        # Interactive Brokers via ib_insync
+│   │   │   ├── ib_broker.py        # Interactive Brokers via ib_async
 │   │   │   └── ccxt_broker.py      # CCXT-supported crypto exchanges
 │   │   ├── order_manager.py
 │   │   ├── position_manager.py
@@ -428,11 +436,14 @@ quantcortex/                     # repo root
 ├── reports/                     # ignored generated charts and report output
 ├── docs/
 │   ├── img/                     # approved reference-run plots + hash manifest
-│   ├── production-readiness.md  # blockers before production capital
-│   └── history-rewrite-plan.md  # optional purge procedure; not executed
+│   └── production-readiness.md  # blockers before production capital
 ├── docker-compose.yml
 ├── Dockerfile
 ├── pyproject.toml
+├── poetry.lock
+├── requirements/              # exported locks by CI/runtime use case
+├── CONTRIBUTING.md
+├── SECURITY.md
 ├── .env.example
 ├── .dockerignore               # excludes secrets, local data, and reports
 ├── .gitignore
@@ -533,7 +544,7 @@ remaining broker, state, data, deployment, and operational controls.
 | **Phase 1** | Data layer + PIT enforcement + universe construction | Implemented; licensed data is still required for production research |
 | **Phase 2** | Alpha factor library + walk-forward validation harness | Implemented; empirical validation remains dataset-specific |
 | **Phase 3** | Portfolio construction + backtest engines + DSR reporting | Implemented; execution and cost assumptions remain model-dependent |
-| **Phase 4** | Paper-execution integration | SDK-shaped mocks cover 17 request/response mapping checks, and `scripts/paper_trade_cycle.py` runs the local dry-run plus an idempotent, paper-only submission path. The Alpaca and IB SDK migrations, authenticated connectivity, account permissions, and venue-side behavior remain unverified. |
+| **Phase 4** | Paper-execution integration | Current Alpaca/IB SDK request models, 17 broker mock checks, coherent revisioned state snapshots, and an idempotent paper-only submission path are implemented. Authenticated connectivity, account permissions, recovery drills, and venue-side behavior remain unverified. |
 | **Phase 5** | DRL allocator + configurable FinBERT/lexicon sentiment overlay | Implemented as research baselines |
 
 ---

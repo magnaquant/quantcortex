@@ -7,26 +7,34 @@ approved and accompanied by complete provenance and artifact hashes.
 
 ## Published Reference Run
 
-The README charts were generated on June 15, 2026 with yfinance 1.4.1 adjusted
-closes for QQQ, VGT, GLD, TLT, SPY, and VIG. The source spans January 4, 2016 to
-December 31, 2025; evaluation spans January 2, 2018 to December 31, 2025 after
-503 warm-up sessions. The owner confirms permission to publish the derived
-charts; that permission is not independently verified by the software.
+The README charts were generated on June 16, 2026 with yfinance 1.4.1 adjusted
+closes for QQQ, VGT, GLD, TLT, SPY, VIG, and SHV. The source spans January 4,
+2016 to December 31, 2025; evaluation spans January 2, 2018 to December 31,
+2025 after 503 warm-up sessions. SHV is the residual-cash return proxy. The
+owner confirms permission to publish the derived charts; that permission is
+not independently verified by the software.
 
 | Metric | Value |
 |---|---:|
-| CAGR | -0.07% |
-| Annualized volatility | 6.53% |
-| Sharpe | 0.02 |
-| Maximum drawdown | -14.22% |
+| Net nominal CAGR | +1.33% |
+| Gross nominal CAGR before modeled costs | +3.26% |
+| Annualized volatility | 6.54% |
+| Net cash-excess Sharpe | -0.14 |
+| Gross cash-excess Sharpe before modeled costs | +0.15 |
+| Maximum drawdown | -10.33% |
 | Annualized one-way turnover | 10.84x |
 | Sum of modeled cost fractions | 15.06% |
-| SPY Sharpe, gross | 0.78 |
-| Equal-weight six-ETF Sharpe, gross | 0.96 |
+| Mean active gross exposure | 34.76% |
+| Fully-cash session fraction | 41.92% |
+| Cash proxy CAGR | +2.50% |
+| Exposure-matched equal-weight cash-excess Sharpe, gross | +0.69 |
 
 Strategy returns are net of 3 bps commission and 10 bps flat slippage per
-trade; benchmarks are gross and the ADV cap is inactive. The DSR of 0.065 uses
-an assumed 10 trials and a single-series variance estimate. Because the true
+trade; benchmarks are gross and the ADV cap is inactive. Cash-aware accounting
+changes the interpretation: the strategy has positive nominal growth but
+negative return in excess of SHV after modeled costs, and it trails a passive
+benchmark matched to the same daily risky exposure. The DSR of 0.024 uses an
+assumed 10 trials and a single-series variance estimate. Because the true
 historical trial count is unknown, it is not a validated multiple-testing
 correction. Exact source and artifact hashes are in
 `docs/img/performance_manifest.json`.
@@ -37,7 +45,8 @@ Use a licensed or otherwise permitted wide adjusted-close CSV:
 
 ```bash
 PYTHONPATH=. python scripts/generate_report.py \
-  --prices-csv local_data/rotation_prices.csv \
+  --prices-csv local_data/published_rotation_prices.csv \
+  --cash-proxy-symbol SHV \
   --start 2018 --end 2025 --n-trials 10 \
   --data-provider "$DATA_PROVIDER" \
   --permission-basis "$DATA_PERMISSION_BASIS" \
@@ -77,6 +86,8 @@ The command writes `reports/report.md` plus these plots under `reports/img/`:
   compact review image.
 - `equity_vs_benchmarks.png`: strategy net of modeled costs versus gross SPY
   and equal-weight buy-and-hold benchmarks.
+- `performance_attribution.png`: strategy before and after modeled costs,
+  exposure-matched equal weight, and the cash proxy on one capital clock.
 - `drawdown.png`: the strategy underwater curve.
 - `rolling_sharpe.png`: trailing 126-session Sharpe.
 - `rolling_risk.png`: trailing 126-session annualized volatility and beta to
@@ -111,9 +122,10 @@ quality only from authenticated order and execution records.
   Pass the measured cross-trial variance of per-observation Sharpes with
   `--sr-variance`. Without it, the scripts disclose that they use the metric's
   simplifying single-series variance estimate.
-- Compare against relevant buy-and-hold and equal-weight benchmarks.
-- Label whether benchmarks are gross or cost-adjusted. The reference report's
-  buy-and-hold benchmarks are gross.
+- Compare against relevant buy-and-hold, equal-weight, cash, and
+  exposure-matched benchmarks.
+- Label whether benchmarks are gross or cost-adjusted and state the risk-free
+  or cash-return series used for Sharpe. The reference benchmarks are gross.
 - Report costs, turnover, maximum drawdown, and the Deflated Sharpe Ratio.
 - Keep failed variants in the trial count; do not tune until a target is met.
 
@@ -126,6 +138,8 @@ the reference report. The report supplies no ADV series, so its configured
 volume cap is also inactive. The vectorized engine holds target weights constant
 between explicit rebalances without charging for the implied re-pegging trades;
 use the event-driven engine when position drift and fill mechanics matter.
+Residual cash must be supplied explicitly when it earns a nonzero return; the
+engines reject missing cash-proxy bars rather than filling them silently.
 Single-name tests remain survivorship-biased unless the price feed includes
 delisted securities and the universe is point-in-time.
 `SP500Universe.from_wikipedia()` supplies approximate, coverage-limited

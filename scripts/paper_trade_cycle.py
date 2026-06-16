@@ -176,6 +176,85 @@ def _load_submission_ledger(store: StatePersistence) -> dict:
     return ledger
 
 
+def _persist_submission_state(
+    store: StatePersistence,
+    ledger: dict,
+    snapshot_context: dict | None,
+) -> None:
+    """Persist the submission ledger alone or as one coherent snapshot."""
+    if snapshot_context is None:
+        store.save_state(SUBMISSION_LEDGER_KEY, ledger)
+        return
+
+    snapshot = store.save_execution_snapshot(
+        positions=snapshot_context["positions"],
+        orders=snapshot_context["orders"],
+        intents=ledger,
+        metadata=snapshot_context["metadata"],
+        expected_revision=snapshot_context["revision"],
+    )
+    snapshot_context["revision"] = snapshot.revision
+    snapshot_context["positions"] = snapshot.positions
+    snapshot_context["orders"] = snapshot.orders
+    snapshot_context["metadata"] = snapshot.metadata
+
+
+def _remember_snapshot_order(snapshot_context: dict | None, order: Order) -> None:
+    if snapshot_context is None:
+        return
+    known_orders = {
+        known_order.order_id: known_order
+        for known_order in snapshot_context["orders"]
+    }
+    known_orders[order.order_id] = order
+    snapshot_context["orders"] = list(known_orders.values())
+
+
+def _initialise_submission_state(
+    store: StatePersistence,
+    *,
+    positions: dict,
+    orders: list[Order],
+    metadata: dict,
+) -> tuple[dict, dict | None]:
+    """Load or migrate submission state and persist the pre-submit snapshot."""
+    load_snapshot = getattr(store, "load_execution_snapshot", None)
+    save_snapshot = getattr(store, "save_execution_snapshot", None)
+    if not callable(load_snapshot) or not callable(save_snapshot):
+        return _load_submission_ledger(store), None
+
+    previous = load_snapshot()
+    if previous is None:
+        ledger = _load_submission_ledger(store)
+        known_orders = list(orders)
+        revision = None
+        prior_metadata = {}
+        migrated_legacy_ledger = bool(ledger)
+    else:
+        ledger = dict(previous.intents)
+        known_by_id = {order.order_id: order for order in previous.orders}
+        known_by_id.update({order.order_id: order for order in orders})
+        known_orders = list(known_by_id.values())
+        revision = previous.revision
+        prior_metadata = dict(previous.metadata)
+        migrated_legacy_ledger = bool(
+            prior_metadata.get("migrated_legacy_submission_ledger")
+        )
+
+    snapshot_context = {
+        "positions": positions,
+        "orders": known_orders,
+        "metadata": {
+            **prior_metadata,
+            **metadata,
+            "migrated_legacy_submission_ledger": migrated_legacy_ledger,
+        },
+        "revision": revision,
+    }
+    _persist_submission_state(store, ledger, snapshot_context)
+    return ledger, snapshot_context
+
+
 def _ledger_record(as_of, request: Order, state: str) -> dict:
     return {
         "as_of": pd.Timestamp(as_of).date().isoformat(),
@@ -213,6 +292,7 @@ def _reconcile_or_submit(
     intent: dict,
     *,
     retry_confirmed_missing: bool = False,
+    snapshot_context: dict | None = None,
 ) -> tuple[Order, bool, str]:
     """Reconcile a deterministic client id, then submit at most once."""
     request = _intent_request(intent)
@@ -223,7 +303,8 @@ def _reconcile_or_submit(
         record = _ledger_record(as_of, request, existing.status.value)
         record["broker_order_id"] = existing.order_id
         ledger[client_id] = record
-        store.save_state(SUBMISSION_LEDGER_KEY, ledger)
+        _remember_snapshot_order(snapshot_context, existing)
+        _persist_submission_state(store, ledger, snapshot_context)
         return existing, False, client_id
 
     prior = ledger.get(client_id)
@@ -243,7 +324,7 @@ def _reconcile_or_submit(
     ledger[client_id] = record
     # Persist before the network call. A crash or timeout must leave a durable
     # marker that prevents an automatic duplicate submission on the next run.
-    store.save_state(SUBMISSION_LEDGER_KEY, ledger)
+    _persist_submission_state(store, ledger, snapshot_context)
     try:
         placed = broker.submit_order(
             request.symbol,
@@ -255,7 +336,7 @@ def _reconcile_or_submit(
     except (BrokerError, OrderError):
         ledger[client_id] = _ledger_record(as_of, request, "UNKNOWN")
         try:
-            store.save_state(SUBMISSION_LEDGER_KEY, ledger)
+            _persist_submission_state(store, ledger, snapshot_context)
         except StatePersistenceError:
             pass
         raise
@@ -263,7 +344,8 @@ def _reconcile_or_submit(
     record = _ledger_record(as_of, request, placed.status.value)
     record["broker_order_id"] = placed.order_id
     ledger[client_id] = record
-    store.save_state(SUBMISSION_LEDGER_KEY, ledger)
+    _remember_snapshot_order(snapshot_context, placed)
+    _persist_submission_state(store, ledger, snapshot_context)
     return placed, True, client_id
 
 
@@ -349,7 +431,8 @@ def run_paper(
             return 1
 
         acct = broker.get_account()
-        positions = {p.symbol: p.quantity for p in broker.get_positions()}
+        broker_positions = broker.get_positions()
+        positions = {position.symbol: position.quantity for position in broker_positions}
         capital = float(acct.equity)
         if not np.isfinite(capital) or capital <= 0.0:
             raise BrokerError("Alpaca paper account returned non-positive equity")
@@ -377,7 +460,18 @@ def run_paper(
             return 0
 
         store = StatePersistence(namespace="qc-paper-cycle")
-        ledger = _load_submission_ledger(store)
+        ledger, snapshot_context = _initialise_submission_state(
+            store,
+            positions={position.symbol: position for position in broker_positions},
+            orders=open_orders,
+            metadata={
+                "broker": "alpaca-paper",
+                "cycle_as_of": pd.Timestamp(prices.index[-1]).date().isoformat(),
+                "account_equity": capital,
+                "position_observation": "pre-submission",
+                "order_records": "last-known broker state for submitted intents",
+            },
+        )
         om = OrderManager()
         failures = 0
         reconciled = False
@@ -397,6 +491,7 @@ def run_paper(
                     prices.index[-1],
                     order,
                     retry_confirmed_missing=retry_confirmed_missing,
+                    snapshot_context=snapshot_context,
                 )
                 if not submitted_now:
                     reconciled = True

@@ -11,6 +11,7 @@ from quantcortex.data.processors.calendar import (
     first_session_each_week,
     last_session_each_month,
 )
+from quantcortex.data.providers.alpaca_provider import AlpacaProvider
 from quantcortex.data.providers.base import DataProvider
 from quantcortex.data.providers.ccxt_provider import CCXTProvider
 from quantcortex.data.storage.redis_cache import RedisCache, RedisCacheError
@@ -403,3 +404,76 @@ def test_ccxt_pagination_fails_when_exchange_cursor_does_not_advance():
 
     with pytest.raises(RuntimeError, match="did not advance"):
         CCXTProvider()._fetch_symbol(Client(), "BTC/USD", "1d", 0, None)
+
+
+def test_alpaca_provider_uses_current_sdk_and_splits_multi_symbol_bars(monkeypatch):
+    index = pd.MultiIndex.from_product(
+        [["AAPL", "MSFT"], pd.to_datetime(["2024-01-02", "2024-01-03"])],
+        names=["symbol", "timestamp"],
+    )
+    frame = pd.DataFrame(
+        {
+            "open": [100.0, 101.0, 200.0, 202.0],
+            "high": [102.0, 103.0, 204.0, 205.0],
+            "low": [99.0, 100.0, 198.0, 201.0],
+            "close": [101.0, 102.0, 202.0, 204.0],
+            "volume": [1_000.0, 1_100.0, 2_000.0, 2_100.0],
+        },
+        index=index,
+    )
+
+    class Client:
+        instance = None
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            type(self).instance = self
+
+        def get_stock_bars(self, request):
+            self.request = request
+            return SimpleNamespace(df=frame)
+
+    class Request(SimpleNamespace):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+
+    class Unit:
+        Day = "day"
+        Hour = "hour"
+        Week = "week"
+        Month = "month"
+        Minute = "minute"
+
+    class Adjustment:
+        ALL = "all"
+
+    sdk = {
+        "Adjustment": Adjustment,
+        "StockHistoricalDataClient": Client,
+        "StockBarsRequest": Request,
+        "TimeFrame": lambda amount, unit: (amount, unit),
+        "TimeFrameUnit": Unit,
+    }
+    provider = AlpacaProvider("key", "secret", data_url="https://data.example")
+    monkeypatch.setattr(provider, "_load_sdk", lambda: sdk)
+
+    result = provider.fetch_ohlcv(
+        ["AAPL", "MSFT"],
+        start="2024-01-02",
+        end="2024-01-03",
+        timeframe="1d",
+    )
+
+    assert Client.instance.kwargs["url_override"] == "https://data.example"
+    assert Client.instance.request.symbol_or_symbols == ["AAPL", "MSFT"]
+    assert Client.instance.request.timeframe == (1, "day")
+    assert Client.instance.request.adjustment == "all"
+    assert result["AAPL"]["adj_close"].tolist() == [101.0, 102.0]
+    assert result["MSFT"]["volume"].tolist() == [2_000.0, 2_100.0]
+
+
+def test_alpaca_provider_does_not_reuse_trading_endpoint_environment(monkeypatch):
+    monkeypatch.setenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+    monkeypatch.delenv("ALPACA_DATA_URL", raising=False)
+
+    assert AlpacaProvider("key", "secret").data_url is None

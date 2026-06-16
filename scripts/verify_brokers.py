@@ -27,11 +27,49 @@ def _check(name, cond, detail=""):
 
 
 # --------------------------------------------------------------------------- #
-# Alpaca (alpaca_trade_api.REST shapes)
+# Alpaca (alpaca-py TradingClient shapes)
 # --------------------------------------------------------------------------- #
 class _Obj:
     def __init__(self, **kw):
         self.__dict__.update(kw)
+
+
+class _Request(_Obj):
+    pass
+
+
+class _OrderSide:
+    BUY = "buy"
+    SELL = "sell"
+
+
+class _OrderType:
+    MARKET = "market"
+    LIMIT = "limit"
+
+
+class _TimeInForce:
+    DAY = "day"
+
+
+class _QueryOrderStatus:
+    OPEN = "open"
+
+
+class _Sort:
+    ASC = "asc"
+
+
+_ALPACA_SDK = {
+    "MarketOrderRequest": _Request,
+    "LimitOrderRequest": _Request,
+    "GetOrdersRequest": _Request,
+    "OrderSide": _OrderSide,
+    "OrderType": _OrderType,
+    "TimeInForce": _TimeInForce,
+    "QueryOrderStatus": _QueryOrderStatus,
+    "Sort": _Sort,
+}
 
 
 class _FakeAlpacaREST:
@@ -52,22 +90,19 @@ class _FakeAlpacaREST:
             )
         ]
 
-    def submit_order(
-        self,
-        symbol,
-        qty,
-        side,
-        type,
-        time_in_force,
-        limit_price=None,
-        client_order_id=None,
-    ):
+    def submit_order(self, *, order_data):
+        symbol = order_data.symbol
+        qty = order_data.qty
+        side = order_data.side
+        order_type = order_data.type
+        limit_price = getattr(order_data, "limit_price", None)
+        client_order_id = order_data.client_order_id
         self.last = dict(
             symbol=symbol,
             qty=qty,
             side=side,
-            type=type,
-            time_in_force=time_in_force,
+            type=order_type,
+            time_in_force=order_data.time_in_force,
             limit_price=limit_price,
             client_order_id=client_order_id,
         )
@@ -80,35 +115,36 @@ class _FakeAlpacaREST:
             symbol=symbol,
             side=side,
             qty=str(qty),
-            type=type,
+            type=order_type,
             limit_price=limit_price,
         )
         if client_order_id is not None:
             self.orders_by_client_id[client_order_id] = raw
         return raw
 
-    def get_order_by_client_order_id(self, client_order_id):
+    def get_order_by_client_id(self, client_order_id):
         return self.orders_by_client_id[client_order_id]
 
-    def list_orders(self, status=None, limit=None, direction=None):
-        self.list_args = (status, limit, direction)
+    def get_orders(self, *, filter):
+        self.list_args = (filter.status, filter.limit, filter.direction)
         return self.open_orders
 
     def get_account(self):
         return _Obj(cash="50000", equity="100000", buying_power="200000",
                     currency="USD", portfolio_value="100000")
 
-    def list_positions(self):
+    def get_all_positions(self):
         return [_Obj(symbol="AAPL", qty="10", avg_entry_price="140.0",
                      current_price="150.0")]
 
-    def cancel_order(self, broker_order_id):
+    def cancel_order_by_id(self, broker_order_id):
         self.cancelled = broker_order_id
 
 
 def verify_alpaca():
     b = AlpacaBroker()
     b._api = _FakeAlpacaREST()  # inject; skip the network connect()
+    b._sdk = _ALPACA_SDK
     o = b.submit_order(
         "AAPL",
         OrderSide.BUY,
@@ -201,7 +237,7 @@ def verify_ccxt():
 
 
 # --------------------------------------------------------------------------- #
-# Interactive Brokers (ib_insync shapes)
+# Interactive Brokers (ib_async shapes)
 # --------------------------------------------------------------------------- #
 class _FakeContract:
     def __init__(self, symbol, exchange="SMART", currency="USD"):

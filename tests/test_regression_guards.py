@@ -64,6 +64,67 @@ def test_vectorized_empty_weights_is_all_cash():
     assert res.equity_curve.iloc[-1] == pytest.approx(1000.0)
 
 
+@pytest.mark.parametrize("engine", [VectorizedBacktest, EventDrivenBacktest])
+def test_backtest_cash_returns_compound_for_an_all_cash_book(engine):
+    dates = pd.bdate_range("2024-01-01", periods=3)
+    prices = pd.DataFrame({"A": [100.0, 100.0, 100.0]}, index=dates)
+    cash_returns = pd.Series([0.01, 0.02, 0.03], index=dates, name="cash proxy")
+
+    result = engine(TransactionCostModel(), capital=1_000.0).run(
+        pd.DataFrame(columns=["A"]),
+        prices,
+        cash_returns=cash_returns,
+    )
+
+    expected = 1_000.0 * 1.01 * 1.02 * 1.03
+    assert result.equity_curve.iloc[-1] == pytest.approx(expected)
+    assert result.gross_returns.to_list() == pytest.approx([0.01, 0.02, 0.03])
+    assert result.asset_contribution.to_list() == pytest.approx([0.0, 0.0, 0.0])
+    assert result.cash_contribution.to_list() == pytest.approx([0.01, 0.02, 0.03])
+    assert result.cash_weights.to_list() == pytest.approx([1.0, 1.0, 1.0])
+
+
+@pytest.mark.parametrize("engine", [VectorizedBacktest, EventDrivenBacktest])
+def test_backtest_cash_and_asset_contributions_reconcile(engine):
+    dates = pd.bdate_range("2024-01-01", periods=3)
+    prices = pd.DataFrame({"A": [100.0, 110.0, 121.0]}, index=dates)
+    weights = pd.DataFrame(
+        {"A": [0.5, 0.5, 0.5]},
+        index=[dates[0] - pd.Timedelta(days=1), dates[0], dates[1]],
+    )
+    cash_returns = pd.Series(0.01, index=dates, name="cash proxy")
+
+    result = engine(TransactionCostModel(), capital=1.0).run(
+        weights,
+        prices,
+        cash_returns=cash_returns,
+    )
+
+    assert result.gross_returns.to_list() == pytest.approx([0.01, 0.055, 0.055])
+    assert result.asset_contribution.to_list() == pytest.approx([0.0, 0.05, 0.05])
+    assert result.cash_contribution.to_list() == pytest.approx([0.01, 0.005, 0.005])
+    pd.testing.assert_series_equal(
+        result.gross_returns,
+        result.asset_contribution + result.cash_contribution,
+        check_names=False,
+    )
+    assert result.cash_weights.to_list() == pytest.approx([0.5, 0.5, 0.5])
+
+
+@pytest.mark.parametrize("engine", [VectorizedBacktest, EventDrivenBacktest])
+def test_backtest_cash_returns_fail_closed_on_missing_bars(engine):
+    dates = pd.bdate_range("2024-01-01", periods=3)
+    prices = pd.DataFrame({"A": [100.0, 101.0, 102.0]}, index=dates)
+    cash_returns = pd.Series([0.0, 0.0], index=dates[:2])
+
+    with pytest.raises(ValueError, match="cover every price bar"):
+        engine(TransactionCostModel()).run(
+            pd.DataFrame(columns=["A"]),
+            prices,
+            cash_returns=cash_returns,
+        )
+
+
 def test_vectorized_cost_uses_current_pretrade_nav_denominator():
     dates = pd.bdate_range("2024-01-01", periods=2)
     prices = pd.DataFrame({"A": [100.0, 110.0]}, index=dates)

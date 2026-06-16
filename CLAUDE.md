@@ -4,26 +4,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-A `.venv` holds the scientific core plus the optional stack; the core alone
-(numpy, pandas, scipy, scikit-learn, matplotlib, pyarrow) is enough for tests
-and lint. Run everything from the repo root.
+A `.venv` holds the scientific core plus the optional stack. Reproduce the
+reviewed development environment with `pip install -r requirements/dev.lock`
+and `pip install --no-deps -e .`. Run everything from the repo root.
 
 - Tests: `.venv/bin/python -m pytest tests/ -q` (pytest config sets
   `pythonpath = ["."]`, so the `quantcortex` package resolves from the root).
 - Single test: `.venv/bin/python -m pytest tests/test_weight_interface.py::test_equal_weight_sums_to_one -v`
 - Lint: `.venv/bin/ruff check .` (CI enforces this; must stay clean). Auto-fix: `ruff check . --fix`.
+- Dependency changes: edit `pyproject.toml`, then run
+  `scripts/update_dependency_locks.sh`; commit `poetry.lock` and every changed
+  export under `requirements/`.
 - Operational scripts import `quantcortex.*`, so run them with the root on the
   path: `PYTHONPATH=. .venv/bin/python scripts/<name>.py`
   (validate_performance, generate_report, survivorship_demo, verify_brokers,
   paper_trade_cycle). Performance commands require an explicit source:
-  `generate_report.py --prices-csv local_data/rotation_prices.csv` or
+  `generate_report.py --prices-csv local_data/published_rotation_prices.csv --cash-proxy-symbol SHV` or
   `generate_report.py --live-yfinance`; `validate_performance.py` requires
   `--live-yfinance`; `survivorship_demo.py` requires `--live-yfinance`;
   `paper_trade_cycle.py` requires either `--offline` or `--live-yfinance`.
 - CI (`.github/workflows/ci.yml`) runs ruff + pytest with a 60% coverage floor
-  on Python 3.11-3.14 using core deps only; optional extras are deliberately not
-  installed there. Separate jobs execute all notebooks on deterministic
-  test-only fixtures and build/smoke-install the wheel.
+  on Python 3.11-3.14 from exported locks. Separate jobs execute notebooks on
+  deterministic test-only fixtures, check real broker SDK request classes,
+  build/smoke-install the wheel, and reject dependency-lock drift.
 
 ## Working norms
 
@@ -80,8 +83,8 @@ or vol-scaled book is NOT required to sum to 1. Violations raise
 ## Conventions that are load-bearing (violating them breaks the build)
 
 - **Lazy imports.** Every heavy/optional dependency (torch, lightgbm/xgboost/
-  catboost, hmmlearn, transformers, stable-baselines3, gymnasium, alpaca-trade-
-  api, ib_insync, ccxt, yfinance, fredapi, polygon, redis, sqlalchemy, lxml) is
+  catboost, hmmlearn, transformers, stable-baselines3, gymnasium, alpaca-py,
+  ib_async, ccxt, yfinance, fredapi, polygon, redis, sqlalchemy, lxml) is
   imported *inside* the method that uses it, with an offline fallback or a clear
   ImportError. Modules must import with only the scientific core. Do not add a
   heavy import at module top level.
@@ -89,6 +92,10 @@ or vol-scaled book is NOT required to sum to 1. Violations raise
   if constructed without a `TransactionCostModel`. Slippage in that model is a
   flat per-trade rate; size/impact-aware costs live in
   `quantcortex/backtest/execution_models/market_impact.py`.
+- **Cash accounting.** Residual cash is `1 - sum(risky weights)` for the
+  published long-only strategy. Supply an aligned per-period cash-return series
+  when cash earns a return; missing bars fail closed. Sharpe and benchmark
+  comparisons must use the same explicit cash or risk-free series.
 - **Causality / PIT controls.** Research code must use only information
   available at the decision time. `pit_enforcer.py` validates fundamentals
   against `announcement_date`; date-only records use strict-before matching,
@@ -121,10 +128,10 @@ base.py): `submit_order/get_positions/get_account`, adapters lazy-load their SDK
 `OrderManager`: a NEW -> SUBMITTED -> FILLED state machine that validates the
 transition before mutating the order.
 
-The current Alpaca and IB adapters target deprecated/archived SDKs
-(`alpaca-trade-api` and `ib_insync`). Treat migration to `alpaca-py` and a
-maintained IB client, followed by authenticated conformance tests, as a release
-requirement rather than a cosmetic dependency update.
+The Alpaca and IB adapters target `alpaca-py` and `ib_async`. SDK-shaped mocks
+and real SDK model-construction tests do not establish authenticated transport,
+account permissions, reconnect behavior, or venue-side idempotency. Treat those
+paper-account checks as release requirements.
 
 ## Packaging
 

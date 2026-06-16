@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 
 from quantcortex.backtest.costs.transaction_costs import TransactionCostModel
+from quantcortex.backtest.engines.cash import align_cash_returns
 from quantcortex.backtest.engines.vectorized import BacktestResult
 from quantcortex.backtest.execution_models.ideal_fill import ExecutionModel, IdealFill
 from quantcortex.portfolio.base import enforce_exposure_contract
@@ -130,6 +131,7 @@ class EventDrivenBacktest:
         weights: "pd.DataFrame",
         prices: "pd.DataFrame",
         adv: Optional["pd.DataFrame"] = None,
+        cash_returns: Optional["pd.Series"] = None,
     ) -> BacktestResult:
         """Run the event-driven simulation.
 
@@ -145,6 +147,9 @@ class EventDrivenBacktest:
         adv:
             Optional ADV panel (date x symbol) for the cost model's liquidity
             cap and as volume context for the execution model.
+        cash_returns:
+            Optional per-period simple return earned by the explicit cash
+            balance. ``None`` means zero cash return.
 
         Returns
         -------
@@ -233,6 +238,8 @@ class EventDrivenBacktest:
                 name=f"EventDrivenBacktest target row {position}",
             )
         price_vals = prices.to_numpy(dtype=np.float64)
+        cash_return_series = align_cash_returns(cash_returns, index)
+        cash_ret_vals = cash_return_series.to_numpy(dtype=np.float64)
         adv_aligned = None
         if adv is not None:
             if not isinstance(adv, pd.DataFrame):
@@ -256,11 +263,23 @@ class EventDrivenBacktest:
 
         equity = np.empty(len(index), dtype=np.float64)
         gross_equity = np.empty(len(index), dtype=np.float64)
+        asset_contribution = np.zeros(len(index), dtype=np.float64)
+        cash_contribution = np.zeros(len(index), dtype=np.float64)
         turnover = np.zeros(len(index), dtype=np.float64)
         eff_weights = np.zeros((len(index), n_sym), dtype=np.float64)
 
         for i, dt in enumerate(index):
             px = price_vals[i]
+            previous_equity = self.capital if i == 0 else equity[i - 1]
+            previous_px = px if i == 0 else price_vals[i - 1]
+            cash_before_accrual = cash
+            cash *= 1.0 + cash_ret_vals[i]
+            cash_contribution[i] = (
+                cash_before_accrual * cash_ret_vals[i] / previous_equity
+            )
+            asset_contribution[i] = float(
+                np.dot(shares, px - previous_px) / previous_equity
+            )
             # Pre-trade NAV (mark current holdings at this bar's close).
             nav = cash + float(np.dot(shares, px))
             if not np.isfinite(nav):
@@ -363,6 +382,7 @@ class EventDrivenBacktest:
             "n_periods": int(len(index)),
             "n_rebalances": len(rebalance_bars),
             "execution_timing": "next_bar_close",
+            "cash_return_source": cash_return_series.name,
         }
 
         return BacktestResult(
@@ -373,4 +393,9 @@ class EventDrivenBacktest:
             costs=cost_series,
             turnover=pd.Series(turnover, index=index),
             metadata=metadata,
+            asset_contribution=pd.Series(asset_contribution, index=index),
+            cash_contribution=pd.Series(cash_contribution, index=index),
+            cash_weights=1.0 - pd.DataFrame(
+                eff_weights, index=index, columns=symbols
+            ).sum(axis=1),
         )

@@ -1,27 +1,29 @@
 # quantcortex application image (Python 3.11).
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm@sha256:e2d3af735aff6eeee600b1933bedd99da6645fedf572cc12ef4cc1331f2ceebe
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    MPLCONFIGDIR=/tmp/matplotlib \
+    XDG_CACHE_HOME=/tmp/cache \
+    XDG_STATE_HOME=/tmp/state
 
 WORKDIR /app
 
-# System deps for scientific wheels + psycopg2 (TimescaleDB).
+# Runtime library needed by LightGBM/XGBoost when optional models are mounted.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential git libgomp1 libpq-dev \
+        libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies first for better layer caching.
-COPY pyproject.toml README.md ./
-RUN pip install --upgrade pip poetry-core \
-    && pip install \
-        numpy pandas scipy scikit-learn matplotlib pyarrow \
-        redis sqlalchemy psycopg2-binary \
-        pytest pytest-cov
+# Install the locked operational stack first for deterministic layer caching.
+COPY requirements/runtime.lock requirements/runtime.lock
+RUN python -m pip install --no-cache-dir -r requirements/runtime.lock
 
-# Copy the source tree.
-COPY . .
+RUN groupadd --gid 10001 quantcortex \
+    && useradd --uid 10001 --gid quantcortex --create-home quantcortex
+
+COPY --chown=quantcortex:quantcortex . .
+USER quantcortex
 
 CMD ["python", "-c", "import quantcortex.alpha, quantcortex.backtest, quantcortex.data, quantcortex.execution, quantcortex.portfolio, quantcortex.strategies; print('quantcortex container ready')"]

@@ -20,7 +20,8 @@ import re
 import tempfile
 import threading
 from contextlib import contextmanager
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -28,13 +29,26 @@ from typing import Any, Dict, List, Optional
 from quantcortex.execution.brokers.base import BrokerError, Position
 from quantcortex.execution.order_manager import Order, OrderError, OrderStatus
 
-__all__ = ["StatePersistence", "StatePersistenceError"]
+__all__ = ["ExecutionSnapshot", "StatePersistence", "StatePersistenceError"]
 
 _NAMESPACE_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 class StatePersistenceError(RuntimeError):
     """Raised when execution state cannot be read or written safely."""
+
+
+@dataclass
+class ExecutionSnapshot:
+    """One coherent persisted view of execution and reconciliation state."""
+
+    schema_version: int
+    revision: int
+    updated_at: str
+    positions: Dict[str, Position]
+    orders: List[Order]
+    intents: Dict[str, Any]
+    metadata: Dict[str, Any]
 
 
 class StatePersistence:
@@ -57,6 +71,8 @@ class StatePersistence:
 
     POSITIONS_KEY = "positions"
     ORDERS_KEY = "orders"
+    EXECUTION_SNAPSHOT_KEY = "execution_snapshot"
+    EXECUTION_SNAPSHOT_SCHEMA = 1
 
     def __init__(
         self,
@@ -211,90 +227,127 @@ class StatePersistence:
     # ------------------------------------------------------------------ #
     def save_positions(self, positions: Dict[str, Position | float]) -> None:
         """Persist a ``symbol -> Position`` or signed-quantity mapping."""
-        if not isinstance(positions, dict):
-            raise StatePersistenceError("positions must be a dictionary")
-        serialised = {}
-        for symbol, position in positions.items():
-            if not isinstance(symbol, str) or not symbol.strip():
-                raise StatePersistenceError("position keys must be non-empty strings")
-            key = symbol.strip()
-            if key in serialised:
-                raise StatePersistenceError(f"duplicate position symbol {key!r}")
-            if isinstance(position, Position):
-                if position.symbol != key:
-                    raise StatePersistenceError(
-                        f"position key {key!r} does not match payload symbol "
-                        f"{position.symbol!r}"
-                    )
-                serialised[key] = _serialise(position)
-            else:
-                if isinstance(position, bool):
-                    raise StatePersistenceError("position quantities must be numeric")
-                try:
-                    validated = Position(symbol=key, quantity=position)
-                except (BrokerError, TypeError, ValueError) as exc:
-                    raise StatePersistenceError("position quantities are invalid") from exc
-                serialised[key] = validated.quantity
-        self.save_state(self.POSITIONS_KEY, serialised)
+        self.save_state(self.POSITIONS_KEY, _serialise_positions(positions))
 
     def load_positions(self) -> Dict[str, Position]:
         """Load positions back into a ``symbol -> Position`` mapping."""
-        raw = self.load_state(self.POSITIONS_KEY, default={}) or {}
-        if not isinstance(raw, dict):
-            raise StatePersistenceError("persisted positions must be a JSON object")
-        out: Dict[str, Position] = {}
-        try:
-            for symbol, data in raw.items():
-                if isinstance(data, dict):
-                    out[symbol] = Position(
-                        symbol=data.get("symbol", symbol),
-                        quantity=data.get("quantity", 0.0),
-                        avg_price=data.get("avg_price", 0.0),
-                        market_price=data.get("market_price", 0.0),
-                    )
-                else:
-                    # A bare scalar quantity was persisted (symbol -> qty mapping).
-                    out[symbol] = Position(symbol=symbol, quantity=data)
-        except (BrokerError, TypeError, ValueError) as exc:
-            raise StatePersistenceError("persisted positions are invalid") from exc
-        return out
+        return _deserialise_positions(
+            self.load_state(self.POSITIONS_KEY, default={}) or {}
+        )
 
     # ------------------------------------------------------------------ #
     # orders
     # ------------------------------------------------------------------ #
     def save_orders(self, orders) -> None:
         """Persist an iterable of :class:`Order` objects (or order dicts)."""
-        if isinstance(orders, (str, bytes, dict)):
-            raise StatePersistenceError("orders must be an iterable of order objects")
-        serialised = []
-        try:
-            iterator = iter(orders)
-        except TypeError as exc:
-            raise StatePersistenceError("orders must be iterable") from exc
-        try:
-            for order in iterator:
-                if isinstance(order, Order):
-                    order.validate()
-                    serialised.append(_serialise(order))
-                elif isinstance(order, dict):
-                    serialised.append(_serialise(_deserialise_order(order)))
-                else:
-                    raise StatePersistenceError(
-                        "orders must contain Order instances or order dictionaries"
-                    )
-        except (KeyError, OrderError, TypeError, ValueError) as exc:
-            raise StatePersistenceError("orders contain invalid state") from exc
-        self.save_state(self.ORDERS_KEY, serialised)
+        self.save_state(self.ORDERS_KEY, _serialise_orders(orders))
 
     def load_orders(self) -> List[Order]:
         """Load orders back into a list of :class:`Order` instances."""
-        raw = self.load_state(self.ORDERS_KEY, default=[]) or []
-        if not isinstance(raw, list) or any(not isinstance(item, dict) for item in raw):
-            raise StatePersistenceError("persisted orders must be a list of objects")
+        return _deserialise_orders(self.load_state(self.ORDERS_KEY, default=[]) or [])
+
+    # ------------------------------------------------------------------ #
+    # coherent execution snapshot
+    # ------------------------------------------------------------------ #
+    def load_execution_snapshot(self) -> Optional[ExecutionSnapshot]:
+        """Load the current versioned execution snapshot, if one exists."""
+        raw = self.load_state(self.EXECUTION_SNAPSHOT_KEY)
+        return None if raw is None else _deserialise_snapshot(raw)
+
+    def save_execution_snapshot(
+        self,
+        *,
+        positions: Dict[str, Position | float],
+        orders,
+        intents: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        expected_revision: Optional[int] = None,
+    ) -> ExecutionSnapshot:
+        """Atomically replace execution state with optimistic concurrency.
+
+        The first write uses ``expected_revision=None``. Every subsequent write
+        must supply the revision returned by :meth:`load_execution_snapshot` or
+        the prior save. A stale writer fails instead of silently losing state.
+        """
+        if expected_revision is not None and (
+            isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or expected_revision < 1
+        ):
+            raise StatePersistenceError("expected_revision must be a positive integer")
+        serialised_positions = _serialise_positions(positions)
+        serialised_orders = _serialise_orders(orders)
+        intents = {} if intents is None else intents
+        metadata = {} if metadata is None else metadata
+        if not isinstance(intents, dict) or not isinstance(metadata, dict):
+            raise StatePersistenceError("snapshot intents and metadata must be dictionaries")
         try:
-            return [_deserialise_order(item) for item in raw]
-        except (KeyError, OrderError, TypeError, ValueError) as exc:
-            raise StatePersistenceError("persisted orders are invalid") from exc
+            safe_intents = json.loads(
+                json.dumps(intents, default=_json_default, allow_nan=False)
+            )
+            safe_metadata = json.loads(
+                json.dumps(metadata, default=_json_default, allow_nan=False)
+            )
+        except (TypeError, ValueError) as exc:
+            raise StatePersistenceError("snapshot metadata is not JSON-safe") from exc
+
+        state_key = self.EXECUTION_SNAPSHOT_KEY
+        redis_key = self._key(state_key)
+
+        def build(current_raw: Any) -> dict[str, Any]:
+            current_revision = _snapshot_revision(current_raw)
+            _assert_snapshot_revision(current_revision, expected_revision)
+            return {
+                "schema_version": self.EXECUTION_SNAPSHOT_SCHEMA,
+                "revision": current_revision + 1,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "positions": serialised_positions,
+                "orders": serialised_orders,
+                "intents": safe_intents,
+                "metadata": safe_metadata,
+            }
+
+        if self._redis is not None:
+            try:
+                with self._redis.pipeline() as pipeline:
+                    pipeline.watch(redis_key)
+                    raw_text = pipeline.get(redis_key)
+                    current_raw = json.loads(raw_text) if raw_text is not None else None
+                    payload = build(current_raw)
+                    pipeline.multi()
+                    pipeline.set(
+                        redis_key,
+                        json.dumps(payload, allow_nan=False),
+                    )
+                    pipeline.execute()
+            except StatePersistenceError:
+                raise
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise StatePersistenceError(
+                    "Redis execution snapshot contains invalid JSON"
+                ) from exc
+            except Exception as exc:
+                if type(exc).__name__ == "WatchError":
+                    raise StatePersistenceError(
+                        "execution snapshot changed concurrently"
+                    ) from exc
+                raise StatePersistenceError(
+                    "Redis execution snapshot write failed"
+                ) from exc
+        else:
+            try:
+                with self._file_lock(exclusive=True):
+                    store = self._read_file()
+                    payload = build(store.get(state_key))
+                    store[state_key] = payload
+                    self._write_file(store)
+            except StatePersistenceError:
+                raise
+            except Exception as exc:
+                raise StatePersistenceError(
+                    "file execution snapshot write failed"
+                ) from exc
+        return _deserialise_snapshot(payload)
 
     # ------------------------------------------------------------------ #
     # file backend helpers
@@ -382,6 +435,170 @@ def _serialise(obj: Any) -> Any:
     if isinstance(obj, (list, tuple)):
         return [_serialise(v) for v in obj]
     return obj
+
+
+def _serialise_positions(
+    positions: Dict[str, Position | float],
+) -> Dict[str, Any]:
+    if not isinstance(positions, dict):
+        raise StatePersistenceError("positions must be a dictionary")
+    serialised: Dict[str, Any] = {}
+    for symbol, position in positions.items():
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise StatePersistenceError("position keys must be non-empty strings")
+        key = symbol.strip()
+        if key in serialised:
+            raise StatePersistenceError(f"duplicate position symbol {key!r}")
+        if isinstance(position, Position):
+            if position.symbol != key:
+                raise StatePersistenceError(
+                    f"position key {key!r} does not match payload symbol "
+                    f"{position.symbol!r}"
+                )
+            serialised[key] = _serialise(position)
+        else:
+            if isinstance(position, bool):
+                raise StatePersistenceError("position quantities must be numeric")
+            try:
+                validated = Position(symbol=key, quantity=position)
+            except (BrokerError, TypeError, ValueError) as exc:
+                raise StatePersistenceError("position quantities are invalid") from exc
+            serialised[key] = validated.quantity
+    return serialised
+
+
+def _deserialise_positions(raw: Any) -> Dict[str, Position]:
+    if not isinstance(raw, dict):
+        raise StatePersistenceError("persisted positions must be a JSON object")
+    out: Dict[str, Position] = {}
+    try:
+        for symbol, data in raw.items():
+            if not isinstance(symbol, str) or not symbol.strip():
+                raise ValueError("invalid position symbol")
+            if isinstance(data, dict):
+                out[symbol] = Position(
+                    symbol=data.get("symbol", symbol),
+                    quantity=data.get("quantity", 0.0),
+                    avg_price=data.get("avg_price", 0.0),
+                    market_price=data.get("market_price", 0.0),
+                )
+            else:
+                out[symbol] = Position(symbol=symbol, quantity=data)
+    except (BrokerError, TypeError, ValueError) as exc:
+        raise StatePersistenceError("persisted positions are invalid") from exc
+    return out
+
+
+def _serialise_orders(orders) -> List[dict[str, Any]]:
+    if isinstance(orders, (str, bytes, dict)):
+        raise StatePersistenceError("orders must be an iterable of order objects")
+    try:
+        iterator = iter(orders)
+    except TypeError as exc:
+        raise StatePersistenceError("orders must be iterable") from exc
+    serialised: List[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    try:
+        for order in iterator:
+            validated = order if isinstance(order, Order) else _deserialise_order(order)
+            if not isinstance(validated, Order):
+                raise StatePersistenceError(
+                    "orders must contain Order instances or order dictionaries"
+                )
+            validated.validate()
+            if validated.order_id in seen_ids:
+                raise StatePersistenceError(
+                    f"duplicate persisted order id {validated.order_id!r}"
+                )
+            seen_ids.add(validated.order_id)
+            serialised.append(_serialise(validated))
+    except StatePersistenceError:
+        raise
+    except (KeyError, OrderError, TypeError, ValueError) as exc:
+        raise StatePersistenceError("orders contain invalid state") from exc
+    return serialised
+
+
+def _deserialise_orders(raw: Any) -> List[Order]:
+    if not isinstance(raw, list) or any(not isinstance(item, dict) for item in raw):
+        raise StatePersistenceError("persisted orders must be a list of objects")
+    try:
+        orders = [_deserialise_order(item) for item in raw]
+    except (KeyError, OrderError, TypeError, ValueError) as exc:
+        raise StatePersistenceError("persisted orders are invalid") from exc
+    ids = [order.order_id for order in orders]
+    if len(ids) != len(set(ids)):
+        raise StatePersistenceError("persisted orders contain duplicate ids")
+    return orders
+
+
+def _snapshot_revision(raw: Any) -> int:
+    if raw is None:
+        return 0
+    if not isinstance(raw, dict):
+        raise StatePersistenceError("persisted execution snapshot must be an object")
+    revision = raw.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+        raise StatePersistenceError("persisted execution snapshot has invalid revision")
+    return revision
+
+
+def _assert_snapshot_revision(
+    current_revision: int,
+    expected_revision: Optional[int],
+) -> None:
+    if current_revision == 0:
+        if expected_revision is not None:
+            raise StatePersistenceError(
+                "execution snapshot revision conflict: no snapshot exists"
+            )
+        return
+    if expected_revision is None:
+        raise StatePersistenceError(
+            "expected_revision is required when replacing an execution snapshot"
+        )
+    if expected_revision != current_revision:
+        raise StatePersistenceError(
+            "execution snapshot revision conflict: "
+            f"expected {expected_revision}, found {current_revision}"
+        )
+
+
+def _deserialise_snapshot(raw: Any) -> ExecutionSnapshot:
+    if not isinstance(raw, dict):
+        raise StatePersistenceError("persisted execution snapshot must be an object")
+    schema_version = raw.get("schema_version")
+    if schema_version != StatePersistence.EXECUTION_SNAPSHOT_SCHEMA:
+        raise StatePersistenceError(
+            f"unsupported execution snapshot schema {schema_version!r}"
+        )
+    revision = _snapshot_revision(raw)
+    updated_at = raw.get("updated_at")
+    if not isinstance(updated_at, str):
+        raise StatePersistenceError("execution snapshot updated_at must be a string")
+    try:
+        parsed_updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise StatePersistenceError(
+            "execution snapshot updated_at is invalid"
+        ) from exc
+    if parsed_updated_at.tzinfo is None:
+        raise StatePersistenceError("execution snapshot updated_at must include timezone")
+    intents = raw.get("intents", {})
+    metadata = raw.get("metadata", {})
+    if not isinstance(intents, dict) or not isinstance(metadata, dict):
+        raise StatePersistenceError(
+            "execution snapshot intents and metadata must be objects"
+        )
+    return ExecutionSnapshot(
+        schema_version=schema_version,
+        revision=revision,
+        updated_at=updated_at,
+        positions=_deserialise_positions(raw.get("positions", {})),
+        orders=_deserialise_orders(raw.get("orders", [])),
+        intents=intents,
+        metadata=metadata,
+    )
 
 
 def _deserialise_order(data: Dict[str, Any]) -> Order:
