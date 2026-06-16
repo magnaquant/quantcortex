@@ -10,6 +10,12 @@ FORBIDDEN_ARTIFACTS = [
     "docs/img/equity_vs_benchmarks.png",
     "docs/img/drawdown.png",
     "docs/img/rolling_sharpe.png",
+    "docs/img/report_overview.png",
+    "docs/img/rolling_risk.png",
+    "docs/img/allocation_and_exposure.png",
+    "docs/img/turnover_and_costs.png",
+    "docs/img/monthly_returns.png",
+    "docs/img/return_distribution.png",
 ]
 
 

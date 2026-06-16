@@ -12,7 +12,11 @@ Use a licensed or otherwise permitted wide adjusted-close CSV:
 ```bash
 PYTHONPATH=. python scripts/generate_report.py \
   --prices-csv local_data/rotation_prices.csv \
-  --start 2018 --end 2025 --n-trials 10
+  --start 2018 --end 2025 --n-trials 10 \
+  --data-provider "$DATA_PROVIDER" \
+  --permission-basis "$DATA_PERMISSION_BASIS" \
+  --retrieved-at "$DATA_RETRIEVED_AT" \
+  --adjustment-method "$DATA_ADJUSTMENT_METHOD"
 ```
 
 The required columns are documented in `local_data/README.md`. The command
@@ -23,6 +27,9 @@ state into the requested evaluation window, and excludes the pre-roll returns
 from reported metrics. The source must contain at least 274 pre-evaluation
 sessions. Use `--warmup-years 0` only when a deliberately cold-started report
 is appropriate; that override is disclosed in the generated settings.
+The provenance options record owner-supplied facts and assertions; they do not
+constitute independent verification that publication or redistribution is
+permitted. Missing fields are labeled incomplete in the report.
 
 For an explicitly requested live download:
 
@@ -38,21 +45,34 @@ exact reproduction matters.
 
 ## Generated Artifacts
 
-The reference report currently produces three plots:
+The command writes `reports/report.md` plus these plots under `reports/img/`:
 
+- `report_overview.png`: equity, drawdown, allocation, turnover, and costs in a
+  compact review image.
 - `equity_vs_benchmarks.png`: strategy net of modeled costs versus gross SPY
   and equal-weight buy-and-hold benchmarks.
 - `drawdown.png`: the strategy underwater curve.
 - `rolling_sharpe.png`: trailing 126-session Sharpe.
+- `rolling_risk.png`: trailing 126-session annualized volatility and beta to
+  SPY.
+- `allocation_and_exposure.png`: post-trade asset weights, invested gross
+  exposure, and cash.
+- `turnover_and_costs.png`: executed one-way turnover and the cumulative sum of
+  modeled per-period cost fractions.
+- `monthly_returns.png`: monthly net-return heatmap.
+- `return_distribution.png`: daily net-return histogram, historical tail
+  markers, and a normal Q-Q diagnostic.
 
-It also prints performance metrics, evaluation settings, data provenance, and a
-monthly-return table. Outputs remain ignored under `reports/`; do not copy them
-into the README without a redistributable input dataset and complete provenance.
+The Markdown report links every plot and includes performance metrics,
+evaluation settings, data provenance, and the monthly-return table. Outputs
+remain ignored; do not copy them into the README without a redistributable input
+dataset and complete provenance.
 
-For an external investment review, also generate exposure/cash, turnover and
-cumulative cost, rolling volatility and beta, walk-forward boundary, and
-liquidity/capacity sensitivity diagnostics. Those plots require additional
-inputs or engine semantics and are not implied by the current report command.
+The current command must not fabricate diagnostics it cannot support. Add
+walk-forward or live-start boundaries only when the run records those regimes;
+capacity and slippage curves only with spread, volume, and order-size inputs;
+factor attribution only with validated factor returns/exposures; and fill
+quality only from authenticated order and execution records.
 
 ## Reporting Requirements
 

@@ -29,6 +29,11 @@ For a performance report, include at least the requested pre-evaluation warm-up
 history (two calendar years by default); the loader cannot reconstruct signal
 history that is absent from the file.
 
+For a report intended for external review, also pass `--data-provider`,
+`--permission-basis`, `--retrieved-at`, and `--adjustment-method`. These fields
+record the owner's provenance assertions but do not independently establish
+that redistribution is permitted.
+
 ## Single-Symbol OHLCV CSV
 
 Notebook 02 also requires actual OHLCV data when using local files:
