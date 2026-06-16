@@ -355,6 +355,18 @@ def test_macro_publication_lag_is_nonnegative_and_alias_aware():
     assert prepared.loc["2024-01-08", "ISM"] == 50.0
 
 
+def test_macro_default_pmi_lag_does_not_release_month_start_data_early():
+    macro = pd.DataFrame(
+        {"ISM": [50.0, 51.0], "DGS10": [4.0, 4.1]},
+        index=pd.to_datetime(["2024-01-01", "2024-02-01"]),
+    )
+
+    prepared = MacroFeatures()._prepare(macro)
+
+    assert pd.isna(prepared.loc["2024-02-02", "ISM"])
+    assert prepared.loc["2024-02-05", "ISM"] == 50.0
+
+
 def test_macro_features_reject_malformed_or_ambiguous_observations():
     index = pd.DatetimeIndex(["2024-01-01"])
 

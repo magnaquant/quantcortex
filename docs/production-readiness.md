@@ -30,6 +30,9 @@ the controls below before any real-money deployment.
   prices for production single-name research.
 - Validate corporate actions, calendars, stale-price policy, and symbol mapping
   against the intended venues.
+- The paper CLI rejects incomplete panels and requires the latest finalized
+  NYSE daily session. Replace its conservative 17:00 New York cutoff with an
+  authoritative venue or data-vendor completion signal before production use.
 - Replace flat slippage with calibrated spread, volatility, size, and capacity
   models when expected order size makes market impact material.
 
@@ -44,10 +47,13 @@ the controls below before any real-money deployment.
   alerting, and immutable audit records before production deployment.
 - Define kill switches, exposure limits, incident ownership, rollback steps,
   and independent release approval.
+- Do not infer live fill quality from the research backtest. Paper market orders
+  submitted after a finalized close fill no earlier than the next session,
+  whereas the reference experiment models execution at the next bar's close.
 
 ## Release Evidence
 
 Archive the exact code revision, environment, data digest, configuration,
-research trial count, validation report, paper-certification evidence, and
-sign-off for each release. Treat unresolved checklist items as release blockers,
-not documentation caveats.
+research trial count, validation report, paper-account certification evidence,
+and sign-off for each release. Treat unresolved checklist items as release
+blockers, not documentation caveats.

@@ -28,7 +28,10 @@ installed editable. Set `MPLCONFIGDIR` to a writable directory when required.
 
 ## Coding Style & Naming Conventions
 
-Target Python 3.11-3.14. Use 4-space indentation, `snake_case` modules/functions, `PascalCase` classes, and source ASCII unless an existing file uses otherwise. Keep comments concise and only for non-obvious logic. Prefer existing layer boundaries and helpers, especially `quantcortex.portfolio.base` contracts.
+Target Python 3.11-3.14. Use 4-space indentation, `snake_case`
+modules/functions, `PascalCase` classes, and source ASCII unless an existing
+file uses otherwise. Keep comments concise and only for non-obvious logic.
+Prefer existing layer boundaries and `quantcortex.portfolio.base` contracts.
 
 ## Testing Guidelines
 
@@ -46,11 +49,19 @@ stay point-in-time and causal. Optional integrations stay lazy imports.
 
 ## Commit & Pull Request Guidelines
 
-Use conventional commit prefixes (`feat:`, `fix:`, `docs:`, `ci:`); keep messages short and imperative. PRs should explain behavior changes, list verification commands, call out data or API assumptions, and link issues. Include screenshots only for generated charts or notebook/report changes.
+Use conventional commit prefixes (`feat:`, `fix:`, `docs:`, `ci:`); keep
+messages short and imperative. PRs should explain behavior changes, list
+verification commands, call out data or API assumptions, and link issues.
+Include screenshots only for generated chart or notebook/report changes.
 
 ## Agent-Specific Instructions
 
-`CLAUDE.md` is the authoritative agent guide; this file is the short orientation and must stay consistent with it. Read `CLAUDE.md` for depth. Work from the requested change and verify it directly. State assumptions when ambiguity affects correctness. Keep edits surgical, avoid speculative abstractions, and do not refactor unrelated code. For money-path code, add or update regression tests.
+`CLAUDE.md` is the authoritative agent guide; this file is the short
+orientation and must stay consistent with it. Read `CLAUDE.md` for depth. Work
+from the requested change and verify it directly. State assumptions when
+ambiguity affects correctness. Keep edits surgical, avoid speculative
+abstractions, and do not refactor unrelated code. For money-path code, add or
+update regression tests.
 
 ## Security & Configuration Tips
 

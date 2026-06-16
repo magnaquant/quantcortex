@@ -28,7 +28,10 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from quantcortex.backtest.costs.transaction_costs import TransactionCostModel
+from quantcortex.backtest.costs.transaction_costs import (
+    CostResult,
+    TransactionCostModel,
+)
 from quantcortex.backtest.engines.cash import align_cash_returns
 from quantcortex.backtest.engines.vectorized import BacktestResult
 from quantcortex.backtest.execution_models.ideal_fill import ExecutionModel, IdealFill
@@ -63,14 +66,13 @@ class EventDrivenBacktest:
     in that case; set ``slippage=0`` in the cost model when using an explicit
     fill model.
 
-    **Cost-aware sizing.**  Target share counts are sized off the investable
-    NAV net of the *estimated* rebalance cost so the post-trade cash balance
-    cannot go (materially) negative.  The estimate uses the cost model's
-    charge for the full target trade, while the scaled-down trades actually
-    executed cost slightly less, so a few dollars of residual cash typically
-    remain. Execution-model price impact is not part of the estimate; if it
-    would require negative cash for an unlevered long-only target, the engine
-    fails instead of silently financing the trade.
+    **Cost-aware sizing.**  Target share counts are solved against post-cost
+    NAV. A fixed point makes the modeled cost equal to the charge on the shares
+    actually exchanged at the reference close, rather than charging the
+    unscaled target and then buying slightly fewer shares. Execution-model
+    price impact is not part of that fixed point; if adverse fills would require
+    negative cash for an unlevered long-only target, the engine fails instead of
+    silently financing the trade.
     """
 
     def __init__(
@@ -266,6 +268,7 @@ class EventDrivenBacktest:
         asset_contribution = np.zeros(len(index), dtype=np.float64)
         cash_contribution = np.zeros(len(index), dtype=np.float64)
         turnover = np.zeros(len(index), dtype=np.float64)
+        traded_notional = np.zeros(len(index), dtype=np.float64)
         eff_weights = np.zeros((len(index), n_sym), dtype=np.float64)
 
         for i, dt in enumerate(index):
@@ -294,24 +297,15 @@ class EventDrivenBacktest:
 
                 # Cost model decides what can actually be executed (ADV cap).
                 row_adv = None if adv_aligned is None else adv_aligned[i]
-                cost_res = self.cost_model.apply_costs(
+                cost_res, post_cost_nav_fraction = self._cost_aware_rebalance(
                     prev_w,
                     new_w,
                     prices=px,
                     adv=row_adv,
                     capital=nav,
-                    max_gross=self.max_gross,
                 )
-                # Size targets off the investable NAV net of the estimated
-                # rebalance cost so the post-trade cash cannot go negative
-                # (no free implicit financing of the cost charge).  Residual
-                # approximation: the estimate prices the full target trade,
-                # while the scaled (slightly smaller) trades cost marginally
-                # less, leaving a small positive cash remainder.
-                est_cost_cash = cost_res.total_cost * nav
-                investable = max(nav - est_cost_cash, 0.0)
                 target_shares = np.where(
-                    px > 0, cost_res.executed_weights * investable / px, shares
+                    px > 0, cost_res.executed_weights * nav / px, shares
                 )
                 delta_shares = target_shares - shares
 
@@ -351,6 +345,20 @@ class EventDrivenBacktest:
                 shares = target_shares
 
                 turnover[i] = cost_res.turnover
+                traded_notional[i] = cost_res.traded_notional
+
+                if isinstance(self.execution_model, IdealFill):
+                    expected_post_nav = nav * post_cost_nav_fraction
+                    actual_post_nav = cash + float(np.dot(shares, px))
+                    if not np.isclose(
+                        actual_post_nav,
+                        expected_post_nav,
+                        rtol=0.0,
+                        atol=1e-10 * max(nav, 1.0),
+                    ):
+                        raise AssertionError(
+                            "cost-aware sizing did not reconcile post-cost NAV"
+                        )
 
             post_nav = cash + float(np.dot(shares, px))
             if not np.isfinite(post_nav) or post_nav <= 0.0:
@@ -383,6 +391,7 @@ class EventDrivenBacktest:
             "n_rebalances": len(rebalance_bars),
             "execution_timing": "next_bar_close",
             "cash_return_source": cash_return_series.name,
+            "cost_aware_sizing": "fixed_point_post_cost_nav",
         }
 
         return BacktestResult(
@@ -392,6 +401,7 @@ class EventDrivenBacktest:
             gross_returns=gross,
             costs=cost_series,
             turnover=pd.Series(turnover, index=index),
+            traded_notional=pd.Series(traded_notional, index=index),
             metadata=metadata,
             asset_contribution=pd.Series(asset_contribution, index=index),
             cash_contribution=pd.Series(cash_contribution, index=index),
@@ -399,3 +409,59 @@ class EventDrivenBacktest:
                 eff_weights, index=index, columns=symbols
             ).sum(axis=1),
         )
+
+    def _cost_aware_rebalance(
+        self,
+        previous_weights: np.ndarray,
+        target_weights: np.ndarray,
+        *,
+        prices: np.ndarray,
+        adv: Optional[np.ndarray],
+        capital: float,
+    ) -> tuple[CostResult, float]:
+        """Solve the rebalance against post-cost NAV.
+
+        The cost model expresses trades as fractions of pre-trade NAV, while a
+        target allocation is naturally a fraction of post-cost NAV. If ``q``
+        is post-cost NAV divided by pre-trade NAV, the desired pre-trade-NAV
+        asset vector is ``target_weights * q`` and ``q = 1 - cost``. Iteration
+        resolves this scalar fixed point, including asymmetric rates and ADV
+        caps.
+        """
+        post_cost_fraction = 1.0
+        for _ in range(100):
+            result = self.cost_model.apply_costs(
+                previous_weights,
+                target_weights * post_cost_fraction,
+                prices=prices,
+                adv=adv,
+                capital=capital,
+                max_gross=self.max_gross * post_cost_fraction,
+            )
+            updated = 1.0 - result.total_cost
+            if not np.isfinite(updated) or updated <= 0.0:
+                raise ValueError("transaction costs exhausted portfolio NAV")
+            if abs(updated - post_cost_fraction) <= 1e-14:
+                post_cost_fraction = updated
+                break
+            post_cost_fraction = updated
+        else:
+            raise ValueError("cost-aware rebalance sizing did not converge")
+
+        result = self.cost_model.apply_costs(
+            previous_weights,
+            target_weights * post_cost_fraction,
+            prices=prices,
+            adv=adv,
+            capital=capital,
+            max_gross=self.max_gross * post_cost_fraction,
+        )
+        reconciled = 1.0 - result.total_cost
+        if not np.isclose(
+            reconciled,
+            post_cost_fraction,
+            rtol=0.0,
+            atol=1e-13,
+        ):
+            raise ValueError("cost-aware rebalance sizing did not reconcile")
+        return result, post_cost_fraction

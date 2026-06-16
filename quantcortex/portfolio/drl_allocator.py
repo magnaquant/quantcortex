@@ -25,7 +25,7 @@ The class subclasses :class:`~quantcortex.portfolio.base.PortfolioOptimizer`, so
 
 from __future__ import annotations
 
-from typing import Optional, Union
+from typing import ClassVar, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -182,7 +182,7 @@ class DRLAllocator(PortfolioOptimizer):
                 multiplied by ``risk_aversion``.
             """
 
-            metadata = {"render_modes": []}
+            metadata: ClassVar[dict[str, list[str]]] = {"render_modes": []}
 
             def __init__(self) -> None:
                 super().__init__()

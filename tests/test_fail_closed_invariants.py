@@ -27,6 +27,7 @@ from quantcortex.data.providers.base import DataProvider
 from quantcortex.data.providers.fmp_provider import FMPProvider
 from quantcortex.data.providers.polygon_provider import PolygonProvider
 from quantcortex.data.storage.parquet_store import ParquetStore
+from quantcortex.data.universe.sp500_wikipedia import fetch_sp500_tables
 from quantcortex.portfolio.base import (
     PortfolioMode,
     WeightContractViolationError,
@@ -53,7 +54,7 @@ from quantcortex.strategies.macro_timing import MacroTimingStrategy
 from quantcortex.strategies.momentum_ml import MomentumMLStrategy
 from quantcortex.strategies.multi_asset_rotation import MultiAssetRotation
 from quantcortex.strategies.sentiment_nlp import SentimentNLPStrategy
-from quantcortex.timing.hmm_regime import HMMRegime
+from quantcortex.timing.hmm_regime import BEAR, BULL, SIDEWAYS, HMMRegime
 from quantcortex.timing.kama import KAMA
 from quantcortex.timing.tsmom import TSMomentum
 from quantcortex.timing.vix_scaler import VIXScaler
@@ -195,7 +196,39 @@ def test_event_engine_cost_series_reconciles_gross_and_net_returns():
         result.returns + result.costs,
         check_names=False,
     )
-    assert result.costs.iloc[1] == pytest.approx(0.001)
+    expected_cost = 0.001 / 1.001
+    assert result.costs.iloc[1] == pytest.approx(expected_cost)
+    assert result.turnover.iloc[1] == pytest.approx(1.0 / 1.001)
+    assert result.traded_notional.iloc[1] == pytest.approx(1.0 / 1.001)
+    assert result.weights.iloc[1, 0] == pytest.approx(1.0)
+    assert result.cash_weights.iloc[1] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_event_engine_cost_drag_reconciles_to_pretrade_notional_after_a_move():
+    dates = pd.bdate_range("2024-01-01", periods=4)
+    prices = pd.DataFrame(
+        {
+            "A": [100.0, 100.0, 110.0, 110.0],
+            "B": [100.0, 100.0, 100.0, 100.0],
+        },
+        index=dates,
+    )
+    weights = pd.DataFrame(
+        {"A": [1.0, 0.0], "B": [0.0, 1.0]},
+        index=dates[:2],
+    )
+    rate = 0.001
+    result = EventDrivenBacktest(
+        TransactionCostModel(commission=rate, slippage=0.0, tax=0.0),
+        capital=1_000.0,
+    ).run(weights, prices)
+
+    expected_drag = (
+        rate
+        * result.traded_notional.iloc[2]
+        * (1.0 + result.gross_returns.iloc[2])
+    )
+    assert result.costs.iloc[2] == pytest.approx(expected_drag)
 
 
 def test_event_engine_rejects_implicit_financing_from_adverse_fills():
@@ -275,6 +308,16 @@ def test_providers_do_not_backdate_missing_filing_dates():
     )
     polygon = PolygonProvider()._melt_financial("AAA", polygon_report, None)
     assert polygon.empty
+
+
+def test_standard_library_http_helpers_reject_non_https_urls():
+    fmp = FMPProvider(api_key="not-a-real-key")
+    fmp._BASE_URL = "file:///tmp"  # type: ignore[attr-defined]
+
+    with pytest.raises(ValueError, match="HTTPS"):
+        fmp._get("prices")
+    with pytest.raises(ValueError, match="HTTPS"):
+        fetch_sp500_tables("file:///etc/passwd")
 
 
 def test_ohlcv_standardization_rejects_duplicate_normalized_columns():
@@ -367,6 +410,21 @@ def test_factor_limiter_rejects_nan_and_records_post_adjustment_exposure():
     )
     assert adjusted[0] == pytest.approx(0.2)
     assert limiter.last_exposures.loc["beta"] == pytest.approx(0.2)
+
+
+def test_factor_limiter_does_not_create_new_positions_by_default():
+    loadings = pd.DataFrame({"beta": [1.0, -1.0]})
+    weights = np.array([1.0, 0.0])
+
+    preserved = FactorExposureLimiter(max_exposure=0.2).apply(weights, loadings)
+    unconstrained = FactorExposureLimiter(
+        max_exposure=0.2,
+        preserve_signs=False,
+    ).apply(weights, loadings)
+
+    assert preserved[0] >= 0.0
+    assert preserved[1] == pytest.approx(0.0)
+    assert unconstrained[1] > 0.0
 
 
 def test_var_estimators_floor_gain_quantiles_at_zero_loss():
@@ -480,6 +538,41 @@ def test_rotation_does_not_invest_when_all_fallback_momentum_is_negative():
     scores = MultiAssetRotation(regime=False, vix_scale=False)._fallback_momentum(
         prices
     )
+
+    assert scores.empty
+
+
+def test_rotation_holds_cash_when_selected_residual_scores_are_nonpositive():
+    dates = pd.bdate_range("2024-01-01", periods=8)
+    base = np.arange(len(dates), dtype=float)
+    prices = pd.DataFrame(
+        {
+            "QQQ": 100.0 + base,
+            "VGT": 100.0 + 1.2 * base,
+            "GLD": 100.0 + 0.8 * base,
+            "TLT": 100.0 + 0.6 * base,
+            "SPY": 100.0 + 0.9 * base,
+            "VIG": 100.0 + 0.7 * base,
+        },
+        index=dates,
+    )
+    returns = prices.pct_change(fill_method=None).dropna()
+    strategy = MultiAssetRotation(
+        ir_lookback=3,
+        mom_lookback=2,
+        mom_gap=0,
+        regime=False,
+        vix_scale=False,
+    )
+    strategy._residual_momentum = lambda members, benchmark: pd.Series(
+        -1.0,
+        index=members.columns,
+    )
+    strategy._fallback_momentum = lambda frame: (_ for _ in ()).throw(
+        AssertionError("whole-universe fallback must not replace a mature signal")
+    )
+
+    scores = strategy.select(StrategyContext(dates[-1], prices, returns))
 
     assert scores.empty
 
@@ -639,6 +732,8 @@ def test_timing_overlays_reject_malformed_shapes_and_parameters():
         KAMA().apply(np.array([1.0]), np.ones((2, 2, 2)))
     with pytest.raises(TypeError, match="boolean"):
         TSMomentum(allow_short="false")
+    with pytest.raises(TypeError, match="booleans"):
+        KAMA(er_window=True)
 
 
 def test_drl_risk_penalty_uses_portfolio_return_variance():
@@ -860,6 +955,71 @@ def test_regime_model_rejects_ambiguous_clock_and_integer_parameters():
         HMMRegime(n_iter=1.5)
     with pytest.raises(ValueError, match="seed"):
         HMMRegime(seed=True)
+    with pytest.raises(ValueError, match="reg_covar"):
+        HMMRegime(reg_covar=-1.0)
+    with pytest.raises(ValueError, match="reg_covar"):
+        HMMRegime(reg_covar="invalid")
+
+
+def test_regime_state_labels_rank_observed_return_means():
+    states = np.array([0, 0, 1, 1, 2, 2])
+    returns = np.array([0.00, 0.01, 0.08, 0.10, -0.08, -0.06])
+
+    labels = HMMRegime(n_states=3)._label_states(states, returns)
+
+    assert labels == {0: SIDEWAYS, 1: BULL, 2: BEAR}
+
+
+def test_regime_state_labels_leave_unobserved_states_neutral():
+    states = np.array([0, 0, 2, 2])
+    returns = np.array([-0.05, -0.03, 0.04, 0.06])
+
+    labels = HMMRegime(n_states=3)._label_states(states, returns)
+
+    assert labels == {0: BEAR, 1: SIDEWAYS, 2: BULL}
+
+
+def test_regime_state_labels_leave_tied_state_means_neutral():
+    states = np.array([0, 0, 1, 1, 2, 2])
+    returns = np.array([-0.01, 0.01, -0.02, 0.02, -0.03, 0.03])
+
+    labels = HMMRegime(n_states=3)._label_states(states, returns)
+
+    assert labels == {0: SIDEWAYS, 1: SIDEWAYS, 2: SIDEWAYS}
+
+
+def test_rotation_strategy_rejects_invalid_volatility_lookbacks():
+    with pytest.raises(ValueError, match="regime_feature_vol_lookback"):
+        MultiAssetRotation(regime_feature_vol_lookback=1)
+    with pytest.raises(ValueError, match="vix_proxy_lookback"):
+        MultiAssetRotation(vix_proxy_lookback=1)
+
+
+def test_regime_features_honor_configured_volatility_lookback():
+    returns = pd.Series([0.00, 0.02, 0.06])
+
+    features = HMMRegime._features_from_returns(
+        returns,
+        realized_vol_lookback=2,
+    )
+
+    assert features.loc[2, "realized_vol"] == pytest.approx(
+        returns.iloc[-2:].std()
+    )
+    with pytest.raises(ValueError, match="realized_vol_lookback"):
+        HMMRegime._features_from_returns(returns, realized_vol_lookback=1)
+
+
+def test_rotation_strategy_honors_two_session_proxy_lookback():
+    dates = pd.bdate_range("2024-01-01", periods=3)
+    prices = pd.DataFrame({"QQQ": [100.0, 101.0, 104.03]}, index=dates)
+    returns = prices.pct_change(fill_method=None).dropna()
+    ctx = StrategyContext(dates[-1], prices, returns)
+
+    proxy = MultiAssetRotation(vix_proxy_lookback=2)._realized_vol_proxy(ctx)
+
+    expected = returns["QQQ"].std(ddof=0) * np.sqrt(252.0) * 100.0
+    assert proxy == pytest.approx(expected)
 
 
 def test_macro_strategy_treats_missing_regime_history_as_bear():

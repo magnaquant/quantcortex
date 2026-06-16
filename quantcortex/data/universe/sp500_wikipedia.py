@@ -28,6 +28,7 @@ feed. Network + ``lxml`` are required (imported lazily).
 from __future__ import annotations
 
 import io
+import urllib.parse
 import urllib.request
 from collections import defaultdict
 from typing import Optional, Tuple
@@ -54,8 +55,20 @@ def _normalize_ticker(t: object) -> Optional[str]:
 
 def fetch_sp500_tables(url: str = WIKI_SP500_URL, timeout: int = 30) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Return ``(current_constituents, change_log)`` DataFrames from Wikipedia."""
+    parsed = urllib.parse.urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError("Wikipedia table source must be a credential-free HTTPS URL")
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted URL)
+    # The URL is constrained to credential-free HTTPS immediately above.
+    with urllib.request.urlopen(  # nosec B310
+        req,
+        timeout=timeout,
+    ) as resp:
         html = resp.read().decode("utf-8", "replace")
     try:
         tables = pd.read_html(io.StringIO(html))

@@ -8,7 +8,7 @@ Fundamentals and macro series are not applicable to crypto.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Union
+from typing import ClassVar, Dict, List, Optional, Sequence, Union
 
 import pandas as pd
 
@@ -23,7 +23,7 @@ class CCXTProvider(DataProvider):
     name = "ccxt"
 
     #: map canonical timeframes -> ccxt timeframe strings
-    _TIMEFRAME_MAP: Dict[str, str] = {
+    _TIMEFRAME_MAP: ClassVar[Dict[str, str]] = {
         "1d": "1d",
         "1h": "1h",
         "1wk": "1w",

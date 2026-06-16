@@ -14,8 +14,8 @@ original weights.  Because it only ever removes/reduces a factor tilt it never
 adds gross exposure, so it composes safely with the platform's exposure
 contract.
 
-Strictly causal: loadings and weights are point-in-time inputs; nothing here
-looks ahead.
+Causality is conditional on the caller supplying point-in-time loadings. The
+overlay itself does not access future data.
 """
 
 from __future__ import annotations
@@ -40,6 +40,10 @@ class FactorExposureLimiter:
     factors:
         Optional explicit list of factor names to police.  If ``None`` (the
         default) every column of the supplied loadings frame is policed.
+    preserve_signs:
+        Keep every asset on its original side of zero and leave initially flat
+        assets flat. This prevents a risk overlay from creating new long or
+        short positions. Disable only when sign-changing hedges are intended.
     """
 
     def __init__(
@@ -47,12 +51,16 @@ class FactorExposureLimiter:
         max_exposure: float = 0.2,
         *,
         factors: Optional[Sequence[str]] = None,
+        preserve_signs: bool = True,
     ) -> None:
         if isinstance(max_exposure, (bool, np.bool_)):
             raise TypeError("max_exposure must be numeric, not boolean")
         if not np.isfinite(max_exposure) or max_exposure < 0:
             raise ValueError("max_exposure must be non-negative.")
         self.max_exposure = float(max_exposure)
+        if not isinstance(preserve_signs, bool):
+            raise TypeError("preserve_signs must be a boolean")
+        self.preserve_signs = preserve_signs
         self.factors = list(factors) if factors is not None else None
         if self.factors is not None and (
             len(set(self.factors)) != len(self.factors)
@@ -211,6 +219,11 @@ class FactorExposureLimiter:
             # stable than forming the normal-equation Gram matrix.
             delta, *_ = np.linalg.lstsq(L.T, rhs, rcond=None)
             adjusted = adjusted + delta
+
+        if self.preserve_signs:
+            lower = np.where(w < 0.0, -1.0, 0.0)
+            upper = np.where(w > 0.0, 1.0, 0.0)
+            adjusted = np.clip(adjusted, lower, upper)
 
         # Neutralising a tilt can, in principle, nudge gross above the input.
         # An exposure overlay must never *add* gross, so if that happens we

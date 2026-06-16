@@ -696,6 +696,50 @@ def test_paper_order_builder_places_sells_before_buys():
     ]
 
 
+def _live_price_panel(last_session: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        {symbol: [100.0] for symbol in paper_trade_cycle.UNIVERSE},
+        index=pd.DatetimeIndex([last_session]),
+    )
+
+
+def test_live_price_validation_uses_only_finalized_sessions():
+    before_cutoff = pd.Timestamp("2024-01-08 16:30", tz="America/New_York")
+    after_cutoff = pd.Timestamp("2024-01-08 17:00", tz="America/New_York")
+
+    prior = paper_trade_cycle.validate_live_price_matrix(
+        _live_price_panel("2024-01-05"),
+        now=before_cutoff,
+    )
+    current = paper_trade_cycle.validate_live_price_matrix(
+        _live_price_panel("2024-01-08"),
+        now=after_cutoff,
+    )
+
+    assert prior.index[-1] == pd.Timestamp("2024-01-05")
+    assert current.index[-1] == pd.Timestamp("2024-01-08")
+    with pytest.raises(ValueError, match="unfinalized"):
+        paper_trade_cycle.validate_live_price_matrix(
+            _live_price_panel("2024-01-08"),
+            now=before_cutoff,
+        )
+    with pytest.raises(ValueError, match="stale"):
+        paper_trade_cycle.validate_live_price_matrix(
+            _live_price_panel("2024-01-05"),
+            now=after_cutoff,
+        )
+
+
+def test_live_price_validation_rejects_incomplete_universe_without_filling():
+    panel = _live_price_panel("2024-01-08").drop(columns=["VIG"])
+
+    with pytest.raises(ValueError, match="missing=.*VIG"):
+        paper_trade_cycle.validate_live_price_matrix(
+            panel,
+            now=pd.Timestamp("2024-01-08 17:00", tz="America/New_York"),
+        )
+
+
 def test_paper_client_order_ids_are_stable_and_intent_specific():
     intent = {"symbol": "QQQ", "side": OrderSide.BUY, "quantity": 5.0}
     first = paper_trade_cycle.make_client_order_id("2024-01-02", intent)

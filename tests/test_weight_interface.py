@@ -30,6 +30,11 @@ def test_equal_weight_from_n_assets():
     assert w.sum() == pytest.approx(1.0)
 
 
+def test_equal_weight_rejects_fractional_asset_count():
+    with pytest.raises(TypeError, match="integer"):
+        EqualWeight().optimize(None, n_assets=5.5)
+
+
 def test_violation_when_sum_is_1_1():
     bad = np.array([0.6, 0.5], dtype=np.float64)  # sums to 1.1
     with pytest.raises(WeightContractViolationError):

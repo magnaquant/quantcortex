@@ -80,6 +80,8 @@ class HMMRegime:
         Maximum EM iterations.
     seed:
         Random seed for reproducible fits.
+    reg_covar:
+        Non-negative diagonal covariance regularization used by the GMM backend.
     backend:
         ``"hmm"``, ``"gmm"``, or ``"auto"``. Strategies in this repository
         choose ``"gmm"`` explicitly so optional packages cannot change results.
@@ -92,6 +94,7 @@ class HMMRegime:
         covariance_type: str = "full",
         n_iter: int = 100,
         seed: int = 42,
+        reg_covar: float = 1e-5,
         backend: str = "auto",
     ) -> None:
         if (
@@ -110,10 +113,19 @@ class HMMRegime:
             seed, (int, np.integer)
         ):
             raise ValueError("seed must be an integer")
+        if isinstance(reg_covar, (bool, np.bool_)):
+            raise ValueError("reg_covar must be finite and non-negative")
+        try:
+            reg_covar = float(reg_covar)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("reg_covar must be finite and non-negative") from exc
+        if not np.isfinite(reg_covar) or reg_covar < 0.0:
+            raise ValueError("reg_covar must be finite and non-negative")
         self.n_states = int(n_states)
         self.covariance_type = str(covariance_type)
         self.n_iter = int(n_iter)
         self.seed = int(seed)
+        self.reg_covar = reg_covar
         self.backend = str(backend)
         if self.covariance_type not in {"full", "diag", "tied", "spherical"}:
             raise ValueError("unsupported covariance_type")
@@ -195,7 +207,7 @@ class HMMRegime:
                 covariance_type=self.covariance_type,
                 max_iter=self.n_iter,
                 random_state=self.seed,
-                reg_covar=1e-5,
+                reg_covar=self.reg_covar,
             ),
             "gmm",
         )
@@ -222,9 +234,10 @@ class HMMRegime:
         sentinel mean such as ``-inf`` would always win the bear rank and
         displace the genuinely lowest-mean observed state).
 
-        If only a single state is observed it maps to SIDEWAYS: with one
-        cluster there is no cross-sectional spread to provide evidence that
-        the regime is bearish or bullish, so we stay neutral.
+        If only a single state is observed, or all observed state means are
+        equal within floating-point precision, every state maps to SIDEWAYS:
+        without return dispersion there is no evidence for a bearish or
+        bullish ordering.
         """
         present = [int(s) for s in np.unique(states)]
         # Mean return per OBSERVED state; rank only what the model predicted.
@@ -232,6 +245,17 @@ class HMMRegime:
         ranked = sorted(present, key=lambda s: means[s])
 
         labels: Dict[int, int] = {}
+        if len(ranked) >= 2:
+            lowest_mean = means[ranked[0]]
+            highest_mean = means[ranked[-1]]
+            numerical_tolerance = (
+                8.0
+                * np.finfo(np.float64).eps
+                * max(1.0, abs(lowest_mean), abs(highest_mean))
+            )
+            if highest_mean - lowest_mean <= numerical_tolerance:
+                ranked = []
+
         if len(ranked) >= 2:
             last = len(ranked) - 1
             for rank, s in enumerate(ranked):
@@ -269,7 +293,8 @@ class HMMRegime:
 
     def _raw_predict(self, X: np.ndarray) -> np.ndarray:
         """Backend-agnostic raw state prediction."""
-        assert self.model_ is not None
+        if self.model_ is None:
+            raise RuntimeError("regime model is not fitted")
         return np.asarray(self.model_.predict(X), dtype=int)
 
     def _map_labels(self, raw: np.ndarray) -> np.ndarray:
@@ -362,20 +387,33 @@ class HMMRegime:
         )
 
     @staticmethod
-    def _features_from_returns(returns: Any) -> pd.DataFrame:
+    def _features_from_returns(
+        returns: Any,
+        realized_vol_lookback: int = 20,
+    ) -> pd.DataFrame:
         """Construct a minimal feature frame from a return series/DataFrame.
 
         Builds ``returns`` (portfolio-level mean if multi-asset), a trailing
-        ``realized_vol`` (20-obs rolling std) and a ``vix`` proxy (annualised
-        realized vol scaled to volatility points).
+        ``realized_vol`` and a ``vix`` proxy (annualised realized volatility
+        scaled to volatility points).
         """
+        if (
+            isinstance(realized_vol_lookback, (bool, np.bool_))
+            or not isinstance(realized_vol_lookback, (int, np.integer))
+            or realized_vol_lookback < 2
+        ):
+            raise ValueError("realized_vol_lookback must be an integer >= 2")
         r = returns
         if isinstance(r, pd.DataFrame):
             series = r.mean(axis=1)
         else:
             series = pd.Series(np.asarray(r, dtype=np.float64).ravel())
         series = series.astype(np.float64)
-        rv = series.rolling(20, min_periods=1).std().fillna(0.0)
+        rv = (
+            series.rolling(int(realized_vol_lookback), min_periods=1)
+            .std()
+            .fillna(0.0)
+        )
         vix_proxy = (rv * np.sqrt(252.0) * 100.0).fillna(0.0)
         return pd.DataFrame(
             {

@@ -11,33 +11,75 @@ The README charts were generated on June 16, 2026 with yfinance 1.4.1 adjusted
 closes for QQQ, VGT, GLD, TLT, SPY, VIG, and SHV. The source spans January 4,
 2016 to December 31, 2025; evaluation spans January 2, 2018 to December 31,
 2025 after 503 warm-up sessions. SHV is the residual-cash return proxy. The
-owner confirms permission to publish the derived charts; that permission is
-not independently verified by the software.
+owner authorizes publication of the derived charts, but the project does not
+independently establish that the provider's terms permit publication. When the
+mature selected-group residual-momentum signal has no positive member, the
+strategy holds cash.
 
 | Metric | Value |
 |---|---:|
-| Net nominal CAGR | +1.33% |
-| Gross nominal CAGR before modeled costs | +3.26% |
-| Annualized volatility | 6.54% |
-| Net cash-excess Sharpe | -0.14 |
-| Gross cash-excess Sharpe before modeled costs | +0.15 |
-| Maximum drawdown | -10.33% |
-| Annualized one-way turnover | 10.84x |
-| Sum of modeled cost fractions | 15.06% |
-| Mean active gross exposure | 34.76% |
-| Fully-cash session fraction | 41.92% |
+| Net nominal CAGR | +1.40% |
+| Gross nominal CAGR before modeled costs | +3.17% |
+| Annualized volatility | 5.86% |
+| Net cash-excess Sharpe | -0.15 |
+| Gross cash-excess Sharpe before modeled costs | +0.14 |
+| Maximum drawdown | -9.83% |
+| Annualized one-way turnover | 10.30x |
+| Annualized gross traded notional | 13.25x |
+| Arithmetic sum of modeled transaction-cost return drag | 13.75% |
+| Mean active gross exposure | 30.14% |
+| Fully-cash session fraction | 47.94% |
 | Cash proxy CAGR | +2.50% |
-| Exposure-matched equal-initial-weight basket cash-excess Sharpe, gross | +0.69 |
+| Exposure-matched equal-initial-weight basket cash-excess Sharpe, gross | +0.80 |
 
-Strategy returns are net of 3 bps commission and 10 bps flat slippage per
-trade; benchmarks are gross and the ADV cap is inactive. Cash-aware accounting
-changes the interpretation: the strategy has positive nominal growth but
-negative return in excess of SHV after modeled costs, and it trails a passive
-benchmark matched to the same daily risky exposure. The DSR of 0.024 uses an
-assumed 10 trials and a single-series variance estimate. Because the true
-historical trial count is unknown, it is not a validated multiple-testing
-correction. Exact source and artifact hashes are in
-`docs/img/performance_manifest.json`.
+Strategy returns are net of the platform default: 3 bps commission plus 10 bps
+flat slippage per dollar traded. The paper experiment encodes the same 13 bps
+as one all-in symmetric charge; the two representations are numerically
+identical under this linear model. Benchmarks are gross and the ADV cap is
+inactive. One-way turnover is useful for portfolio-change reporting; the 13 bps
+charge is applied to gross two-sided traded notional measured against pre-trade
+NAV. The 13.75% aggregate is instead the arithmetic sum of daily return drag
+against prior-close NAV, so the two quantities differ slightly on rebalance
+days with nonzero returns. Cash-aware accounting changes the interpretation: the strategy has
+positive nominal growth but negative return in excess of SHV after modeled
+costs, and it trails a passive benchmark matched to the same daily risky
+exposure. The DSR of 0.022 uses an assumed 10 trials and a single-series
+variance estimate. Because the true historical trial count is unknown, it is
+not a validated multiple-testing correction. Exact source and artifact hashes
+are in `docs/img/performance_manifest.json`.
+
+### Exact return attribution
+
+The paper experiment decomposes each daily net return in excess of SHV into an
+exposure-matched active-allocation effect, exposure timing around the
+full-sample mean, passive risky exposure, and modeled cost. The identity holds
+on every date; annualized arithmetic means therefore add exactly before
+rounding. The active-allocation effect combines group selection, within-risky
+weighting, and the event engine's between-rebalance share drift;
+it is not a pure security-selection effect.
+
+| Component | Annualized mean | 21-session bootstrap interval |
+|---|---:|---:|
+| Active risky allocation | -3.38% | [-5.85%, -0.90%] |
+| Dynamic exposure timing | +0.30% | [-2.57%, +3.26%] |
+| Passive risky exposure | +3.90% | [+0.82%, +6.85%] |
+| Modeled implementation cost | -1.72% | [-2.08%, -1.38%] |
+| Net excess over SHV | -0.90% | [-4.77%, +3.14%] |
+
+The constant-exposure series is an ex-post diagnostic, not a tradable
+benchmark, and the intervals are unstudentized percentile intervals
+conditional on this historical path. `paper/results/return_decomposition.csv`
+contains 5-, 21-, and 63-session results.
+
+### Protocol diagnostics
+
+One-assumption diagnostics hold the target weights and input matrix fixed. The
+audited SHV-excess Sharpe is -0.15. Setting modeled costs to zero raises it to
++0.14; deliberately applying a close-derived target to the return ending at
+that same close raises it to +0.03. The same-close result is look-ahead and is
+never an executable path. Assigning zero return to residual cash lowers the
+consistently measured SHV-excess Sharpe to -0.42. See
+`paper/results/protocol_switches.csv`.
 
 ## Generate a Report
 
@@ -48,13 +90,15 @@ PYTHONPATH=. python scripts/generate_report.py \
   --prices-csv local_data/published_rotation_prices.csv \
   --cash-proxy-symbol SHV \
   --start 2018 --end 2025 --n-trials 10 \
+  --manifest-out reports/performance_manifest.json \
   --data-provider "$DATA_PROVIDER" \
   --permission-basis "$DATA_PERMISSION_BASIS" \
   --retrieved-at "$DATA_RETRIEVED_AT" \
   --adjustment-method "$DATA_ADJUSTMENT_METHOD"
 ```
 
-The required columns are documented in `local_data/README.md`. The command
+The required columns are documented in
+[local_data/README.md](local_data/README.md). The command
 writes charts to ignored `reports/img/` and prints markdown tables containing
 the local file path, SHA-256 digest, and observed date window. By default it
 loads two years before `--start` to warm the signals, carries that strategy
@@ -64,7 +108,12 @@ sessions. Use `--warmup-years 0` only when a deliberately cold-started report
 is appropriate; that override is disclosed in the generated settings.
 The provenance options record owner-supplied facts and assertions; they do not
 constitute independent verification that publication or redistribution is
-permitted. Missing fields are labeled incomplete in the report.
+permitted. Missing fields are labeled incomplete in the report. The requested
+manifest records the input, source tree, settings, and artifact hashes.
+
+The fixed paper experiment is stricter than the general report: it accepts no
+missing price rows, performs no forward fill, and requires at least 274 signal
+warm-up sessions before the evaluation window.
 
 For an explicitly requested live download:
 
@@ -89,16 +138,16 @@ The command writes `reports/report.md` plus these plots under `reports/img/`:
 - `performance_attribution.png`: strategy before and after modeled costs,
   the exposure-matched passive basket, and the cash proxy on one capital clock.
 - `drawdown.png`: the strategy underwater curve.
-- `rolling_sharpe.png`: trailing 126-session Sharpe.
+- `rolling_sharpe.png`: trailing 126-session cash-excess Sharpe.
 - `rolling_risk.png`: trailing 126-session annualized volatility and beta to
   SPY.
-- `allocation_and_exposure.png`: post-trade asset weights, invested gross
-  exposure, and cash.
-- `turnover_and_costs.png`: executed one-way turnover and the cumulative sum of
-  modeled per-period cost fractions.
+- `allocation_and_exposure.png`: realized asset weights, invested gross
+  exposure, and cash under the share-based event engine.
+- `turnover_and_costs.png`: executed one-way turnover, gross traded notional,
+  and cumulative modeled transaction-cost return drag.
 - `monthly_returns.png`: monthly net-return heatmap.
-- `return_distribution.png`: daily net-return histogram, historical tail
-  markers, and a normal Q-Q diagnostic.
+- `return_distribution.png`: log-count daily net-return histogram, historical
+  tail markers, and a normal Q-Q diagnostic.
 
 The Markdown report links every plot and includes performance metrics,
 evaluation settings, data provenance, and the monthly-return table. Outputs
@@ -126,7 +175,9 @@ quality only from authenticated order and execution records.
   exposure-matched benchmarks.
 - Label whether benchmarks are gross or cost-adjusted and state the risk-free
   or cash-return series used for Sharpe. The reference benchmarks are gross.
-- Report costs, turnover, maximum drawdown, and the Deflated Sharpe Ratio.
+- Report costs, turnover, and maximum drawdown. Report the Deflated Sharpe
+  Ratio only when its trial-count and Sharpe-variance assumptions are
+  defensible; otherwise omit it or label it exploratory with those assumptions.
 - Keep failed variants in the trial count; do not tune until a target is met.
 
 ## Known Limitations
@@ -135,9 +186,12 @@ The default transaction-cost model uses flat commission and slippage rates.
 Size-, spread-, and volatility-aware impact is available in
 `quantcortex/backtest/execution_models/market_impact.py` but is not wired into
 the reference report. The report supplies no ADV series, so its configured
-volume cap is also inactive. The vectorized engine holds target weights constant
-between explicit rebalances without charging for the implied re-pegging trades;
-use the event-driven engine when position drift and fill mechanics matter.
+volume cap is also inactive. The reference report uses the event-driven engine,
+which holds adjusted-close pseudo-shares and sizes targets against post-cost
+NAV. These are total-return accounting units, not nominal broker shares. The
+vectorized engine remains available for approximations and sweeps but holds
+target weights constant between explicit rebalances without charging for the
+implied re-pegging trades.
 Residual cash must be supplied explicitly when it earns a nonzero return; the
 engines reject missing cash-proxy bars rather than filling them silently.
 Single-name tests remain survivorship-biased unless the price feed includes
@@ -154,6 +208,6 @@ the week. Monthly validation decisions use the last observed session of each
 month. Report any separate signal warm-up period; using the evaluation window
 itself for model warm-up can materially bias comparisons.
 
-Design targets in the README are aspirational. They are not evidence that a
-strategy is profitable, deployable, or expected to meet the target on unseen
-data.
+No metric threshold in this repository is evidence that a strategy is
+profitable or deployable. Interpret every result against its data vintage,
+comparator, costs, exposure, uncertainty, and recorded research trial history.

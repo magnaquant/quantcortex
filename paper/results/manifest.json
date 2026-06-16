@@ -1,18 +1,29 @@
 {
   "artifacts": {
-    "figures/accounting_summary.pdf": "85ad2c1ba6ab38f9f1feb921e71a409860d4e6a64ea03d7e684ac4cf5c893bd9",
-    "figures/accounting_summary.png": "3a8e591b099840867a429f16995e629a4b20817aa66f3228e82f991f27d7918e",
-    "figures/engine_comparison.pdf": "fda185d2a80bfc0c34fadb977ce02078c2f65c1fc75a900f786ce88b36269e7e",
-    "figures/engine_comparison.png": "bfdade3b211ba95e6e7b236a3a3fc5f77c681b0310d612ff7e0d2e4d22371ce5",
-    "figures/sensitivity_and_ablation.pdf": "023a5c68fdeddfb32345709aaba1607c40f5bc563a1320737b26ed1b1f958bd1",
-    "figures/sensitivity_and_ablation.png": "004888ae45221753e7b530f9ea2bef262bfc8a2bc8f4bc823bbb691086f3fab2",
-    "results/ablation.csv": "6f53d2cdd1e1c86379dd28ceae04122542460eca4bbc715a184d8b1759c1df64",
-    "results/accounting.csv": "910c83adfcc2e6360589892c61fc16c4f0a326c8e1c833fd96b5f8c6d5e8cf02",
-    "results/cost_sensitivity.csv": "c154e37ba52c6451cd74397285efed412f11656d579b790af7e9077fffe9734c",
-    "results/engine_comparison.csv": "d62b49b8418618fae41e207d1c8cefa16bcb04419f9b99d915f3ba4cde7daba3",
-    "results/subperiods.csv": "6501a6f65db32416c66a2a747de00b2571de2c66c4ac391bacc72d1f1f4db5a7",
-    "results/uncertainty.json": "cb1a8baefa4034f79edd84d4522339cba04de6967400182aa4bf5de153b5f2bf",
-    "results/yearly_returns.csv": "1241839e1f158bc887db91e0339889935509f9d80d88b71cea3e8b3cae3da8a4"
+    "figures/accounting_summary.pdf": "663dbef02f7d3445f74e1848529dc722544b5e50cc5271b8645a889d782bed19",
+    "figures/accounting_summary.png": "5bb880803444ac1ff25fa3922317918aa3a869770d5a362fb7c865f208ee8d25",
+    "figures/audit_protocol.pdf": "b139e6a00b9fe47f1fd09486fa02b848e1adcfd3549984a07beac15fc3572fec",
+    "figures/audit_protocol.png": "c913daeb90062dbf08708341fc981360bd938be8ada7de1f8d19f98c1b3f665d",
+    "figures/bootstrap_robustness.pdf": "ce74282c781d5a745f79897f517c0fe7506e54a3b5c56d04008d0351e12467d6",
+    "figures/bootstrap_robustness.png": "66aa52bd5dcc91a1277f5718970c8012eefda8db67a80732b040d7ffc780ed43",
+    "figures/engine_comparison.pdf": "2fcff122e306fb2824842d8e3b63b3b0639a6791e476b0b01329feeed5e3a711",
+    "figures/engine_comparison.png": "56415822c097727eb61f72869c6d6bb705c44df5d0f4e4faaa46e5b2e77f2578",
+    "figures/return_attribution_and_protocol_switches.pdf": "6eb5380a36035e3c22ad7c1801551edcdc2ab57b5def122031113492e5725d03",
+    "figures/return_attribution_and_protocol_switches.png": "e394d5d68c57fd9b87bf5d251a11ba56fccbc9468dc51776731784855ee6207f",
+    "figures/sensitivity_and_ablation.pdf": "0b3c1296f6b747243ae74659ed0a1b2382ed7e5e2b291e803a514b83e38b0d38",
+    "figures/sensitivity_and_ablation.png": "bb8cd93e788f7b218eecfe8d59b7f5e014060c79a0bb6eef489359f685dc7dfb",
+    "results/ablation.csv": "a75be6ff0a0279f87c20b00dbdd94a9f5d05525b0bf0ef501394d88b4dd6ac27",
+    "results/ablation_uncertainty.csv": "b1768f4d86267ca318ce29b7ee5612dcadbe817ff5a69d2d7a4f0d42f54b6af0",
+    "results/accounting.csv": "b6957f625b55889e174ba239f6c8ea5f7a29795ffa5a4d6093d07943bf672479",
+    "results/bootstrap_sensitivity.csv": "792cc0e5711fe81d2c9d887f4a2263510476f048d568a05059bdcb5445beffd4",
+    "results/cost_sensitivity.csv": "25b9969cf8ecdabd19e7761ad2973252c9f5b9f994b6dc147595a2a112c24d88",
+    "results/engine_comparison.csv": "ea0322dcd2aa4a1eb3b5996045c3a4b2ed25a85684a578ee788b013b99b643cd",
+    "results/generated_values.tex": "9fa76ac12497d4b1cbe5e691a9409c0f4cabed1306e62c8f0a46cfe3ac3d1725",
+    "results/protocol_switches.csv": "20d5a0dc37e07a20c1f2772c8e9940ff6464ef1da98692edd5fdb06531bc2393",
+    "results/return_decomposition.csv": "53a84aa9b91c92f0037e48dc09154807cbf003ccf0038f39da8406108bf709cc",
+    "results/subperiods.csv": "a8f4f36e86502f3b21abae3324d76870fdac45d518025d574ebaf7d56b559a36",
+    "results/uncertainty.json": "5326b321346e3b96937173004eb0055925552ee3a2c2e3a581d05a1110d64ed6",
+    "results/yearly_returns.csv": "5d88e2d04106492de485dc282c4ee11d5adc5e3c7f7c8d89c223045885e18884"
   },
   "design": {
     "all_in_cost_levels_bps": [
@@ -24,17 +35,79 @@
     ],
     "baseline_all_in_cost_bps": 13.0,
     "bootstrap": {
+      "ablation_intervals": "joint across all named variants at the primary block length",
       "block_length_sessions": 21,
-      "method": "paired circular blocks",
+      "interval": "two-sided unstudentized percentile interval",
+      "method": "joint paired circular blocks",
       "replications": 5000,
-      "seed": 42
+      "seed": 42,
+      "sensitivity_block_lengths_sessions": [
+        5,
+        21,
+        63
+      ]
+    },
+    "cash_account": "residual weight earns SHV adjusted-close return",
+    "comparator": "equal-initial-weight buy-and-hold basket scaled by the strategy's daily risky exposure; residual weight earns the cash proxy",
+    "cost_model": {
+      "all_in_proportional_cost_bps_per_dollar_traded": 13.0,
+      "market_impact": "not modeled",
+      "reported_cost_series_basis": "daily return drag against prior-close NAV; gross minus net return",
+      "traded_notional_basis": "pre-trade NAV",
+      "transaction_cost_charge_basis": "all-in rate times executed buy and sell notional"
     },
     "engines": [
       "vectorized",
       "event_driven"
     ],
     "evaluation_window": "2018-01-02 to 2025-12-31",
-    "selection_rule": "none; all predefined variants are reported",
+    "input_validation": {
+      "complete_rows_required": true,
+      "max_forward_fill_sessions": 0
+    },
+    "primary_engine": "event_driven",
+    "primary_engine_semantics": "explicit adjusted-close pseudo-shares drift between rebalances; targets are sized against post-cost NAV",
+    "protocol_switches": {
+      "purpose": "diagnose one-assumption sensitivity; counterfactuals are not candidate strategies, and same-close capture is causally invalid",
+      "variants": [
+        "zero_return_cash",
+        "zero_modeled_costs",
+        "invalid_same_close"
+      ]
+    },
+    "rebalance_rule": "first observed session of each calendar week",
+    "return_decomposition": {
+      "annualization": "252 times the arithmetic daily mean",
+      "components": {
+        "active_risky_allocation": "gross strategy minus daily exposure-matched passive basket",
+        "dynamic_exposure_timing": "daily exposure-matched passive basket minus passive basket held at the full-sample mean risky exposure",
+        "implementation_cost": "net strategy minus gross strategy",
+        "passive_risky_exposure": "passive basket held at mean risky exposure minus cash"
+      },
+      "method": "exact daily arithmetic identity",
+      "total": "net strategy minus cash"
+    },
+    "selection_rule": "all four named audit variants are reported; the audit run does not select a winner; earlier research trial history is unknown",
+    "signal_fallback": "hold cash when mature selected-group residual scores are all non-positive; plain momentum is used only when the benchmark, group signal, or regression estimate is unavailable",
+    "signal_timing": "close-derived targets execute on the first strictly later bar",
+    "strategy_parameters": {
+      "ir_lookback": 126,
+      "max_position_weight": 0.6,
+      "mom_gap": 21,
+      "mom_lookback": 126,
+      "regime_backend": "gmm",
+      "regime_covariance_type": "full",
+      "regime_feature_vol_lookback": 20,
+      "regime_n_iter": 100,
+      "regime_n_states": 3,
+      "regime_reg_covar": 1e-05,
+      "regime_seed": 42,
+      "target_vix": 20.0,
+      "top_n_groups": 2,
+      "vix_cap": 1.0,
+      "vix_floor": 0.3,
+      "vix_proxy_lookback": 21
+    },
     "strategy_variants": {
       "full": {
         "regime": true,
@@ -52,11 +125,43 @@
         "regime": false,
         "vix_scale": false
       }
+    },
+    "universe": {
+      "benchmark": "QQQ",
+      "groups": {
+        "defensive": [
+          "SPY",
+          "VIG"
+        ],
+        "growth": [
+          "QQQ",
+          "VGT"
+        ],
+        "real_assets": [
+          "GLD",
+          "TLT"
+        ]
+      },
+      "symbols": [
+        "QQQ",
+        "VGT",
+        "GLD",
+        "TLT",
+        "SPY",
+        "VIG"
+      ]
+    },
+    "warmup": {
+      "available_sessions": 503,
+      "required_sessions": 274
     }
   },
-  "generated_at": "2026-06-16T08:24:28+00:00",
+  "generated_at": "2026-06-16T16:42:29+00:00",
   "generator": {
-    "git_commit": "133af8e0ffe6b819b7236fd5ee13ece7844caef5",
+    "git": {
+      "base_commit": "b435b4bc3fd17caca6dbd01211b778c46935c5c2",
+      "worktree_clean": false
+    },
     "packages": {
       "matplotlib": "3.10.9",
       "numpy": "2.4.6",
@@ -68,15 +173,127 @@
     "path": "scripts/run_paper_experiments.py",
     "platform": "macOS-26.4-arm64-arm-64bit-Mach-O",
     "python": "3.14.4",
-    "script_sha256": "8bba3c2cb7e4777191139bb61ded91ff72a3755df8da70afe03a4e6d0992fd64"
+    "script_sha256": "6cc9c3bc200a6baacb9bce9f5b43f345200cdd76ca5188364485f890e614e338",
+    "source_tree": {
+      "file_count": 106,
+      "files": {
+        "poetry.lock": "fa8904674c2b24f3141acae607fd0a49d97125bc109c18def9fccbb2256c8de0",
+        "pyproject.toml": "175abd743d38f6b6c1cc8ae42471d62d83c86beb245d93fea231c666f51b2643",
+        "quantcortex/__init__.py": "14bf1ebdacd054c3738e4704d33da6709a39206463df8b8ced5376da342c4036",
+        "quantcortex/alpha/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/alpha/factors/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/alpha/factors/classical/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/alpha/factors/classical/_cross_section.py": "6288960a3801e9bcb15c2d9d90ee09b7ab7a6d110468b9af3e4fbf0bc2105ddc",
+        "quantcortex/alpha/factors/classical/_fundamentals.py": "6d3176904fb2e3f1ae8b3f02aa62e911a8bead70672185d1cf310478877f466c",
+        "quantcortex/alpha/factors/classical/low_vol.py": "c851dbbde448eb57b1d4b03bdedd605c0aa757334e6d4300e08ec3a904de6ffd",
+        "quantcortex/alpha/factors/classical/momentum.py": "87c73fa5726ed213ee0ba777cc2d13e88ace39ae8f7a5dbf2e802864976f2bd6",
+        "quantcortex/alpha/factors/classical/quality.py": "cf380e4279cb3ff44012c586b25a8acb2e70d9c45f536999f7d295aea582d4c2",
+        "quantcortex/alpha/factors/classical/value.py": "55bf8b6cfe1c5ee4682018898dfdeb6d1e76431775759846949ada561719e3b4",
+        "quantcortex/alpha/factors/ml/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/alpha/factors/ml/gbdt_factor.py": "72ad0019df2c2fb01753b537c539107dda294e04b6423aa2a30993a641eb6517",
+        "quantcortex/alpha/factors/ml/neural_factor.py": "52f106e5e2fac20c3c042425e0909bc7afd66fed6b720ffb1e933fae3b7bfcc0",
+        "quantcortex/alpha/factors/nlp/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/alpha/factors/nlp/finbert_sentiment.py": "3e96f7fbdb2828742b7ca5c1e8200740cb29fda9d3b288b20d31875d33db051d",
+        "quantcortex/alpha/factors/nlp/news_scorer.py": "6bdb4d9719106ef615d15739ea3ae22c22a1e009fba4ff575bcd3c37ae8c4864",
+        "quantcortex/alpha/feature_engineering/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/alpha/feature_engineering/alpha158.py": "764f25a8c4bc8b17abe394cc7ddeb5c9ead35105d57b5c712ed3ad447cfac63e",
+        "quantcortex/alpha/feature_engineering/macro_features.py": "95e0e6b256245fcd8a3118fc9b33f622e7f518fa4241290f260aee0d9e28551f",
+        "quantcortex/alpha/validation/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/alpha/validation/alphalens_report.py": "8463289117add78a576e37a5b99a539be5c808fca86100e26deb29e8060aa60d",
+        "quantcortex/alpha/validation/factor_decay.py": "9e6e049165f014db2122d9ed57415e45e48142b475dfb7221247d447d9a50397",
+        "quantcortex/backtest/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/backtest/costs/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/backtest/costs/transaction_costs.py": "48200419f37004c58df6f89041e31516d9ad98f66c22f75d11a0b9342474d5c7",
+        "quantcortex/backtest/engines/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/backtest/engines/cash.py": "878c84ba05f715cd3586f4a7016552776108e355de415be94a4a95d01f7e802b",
+        "quantcortex/backtest/engines/event_driven.py": "8a4d3b8c47fca30477035e92bfbe6c56dbb21ccf24cb1afcc365e11319ad24c5",
+        "quantcortex/backtest/engines/vectorized.py": "37521c25a3cfbd54b0ccf99122773671ae05381fca0bdddd7f35d66cb9e43737",
+        "quantcortex/backtest/engines/walk_forward.py": "4e1fe771434e02adb0c33b5aae3cfd4a4ac125ec382808510b5cbf84add64d75",
+        "quantcortex/backtest/execution_models/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/backtest/execution_models/ideal_fill.py": "760e2a7dd145784204d0881bffea1a312db8150aa4f27e5fd60f9e174b46d95f",
+        "quantcortex/backtest/execution_models/market_impact.py": "1978e447260bf69757d733e747b1034046d3568dc0f5f84e84ace092c6743c32",
+        "quantcortex/backtest/execution_models/vwap_fill.py": "cb0c49474058b69c3190eb6ffc9d28b23cdff0267ca025bf2c8d453ad36a6090",
+        "quantcortex/backtest/metrics/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/backtest/metrics/plotting.py": "edd7efb4c36300998db75fd418575ee97f4bd8cc670f1421e1fe9104d7c9ea8b",
+        "quantcortex/backtest/metrics/tearsheet.py": "0815563560696e3faca85533e940c8a947eccb956bb2fdee7312c50bdb01fdff",
+        "quantcortex/backtest/validation/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/backtest/validation/deflated_sharpe.py": "f0fb5fd81277c985225f66e3817af54eb668cc96b32afc505b6bbdf034b5bc0e",
+        "quantcortex/backtest/validation/lookahead_audit.py": "670f36817a672e2ff4d762a73119eeed09950cd1879ba2537a707a3ede6a6b11",
+        "quantcortex/backtest/validation/multiple_testing.py": "6b68f6f150dcc8fb90213dcf769307454c0c506e99666a533d5d07ae3ccb0b5d",
+        "quantcortex/backtest/validation/survivorship_check.py": "5b772bd6b40ffe44f590ec0ddb00b7e3dc61a1aba9cae8831227325f4f53beff",
+        "quantcortex/data/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/data/local_csv.py": "30c11c3200530810b3345f8e29fdf966f35671e30c94fc5bb1b2db656e6df79b",
+        "quantcortex/data/processors/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/data/processors/adjustments.py": "ae2d4d0362e3484b89b5a5c57a7fd6320973b208ee0cd5a6be9a3f29d2544e2c",
+        "quantcortex/data/processors/calendar.py": "e591bccc3e7f632501b068e7abec1ece182d0ef930589381776fe89158d1df51",
+        "quantcortex/data/processors/lookahead_detector.py": "9979ac8db2e6b860c2a4d8e8d2e59ea946f65451a10f4b7e9f8af71c7b0fd4a0",
+        "quantcortex/data/processors/pit_enforcer.py": "8adada8cb485f049323d4f2fdf47ed0678ddf746cc71996e078c61bc0e159507",
+        "quantcortex/data/providers/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/data/providers/alpaca_provider.py": "02c1bc239c31c1577663f9316f8c98e034988405ea94b25054036a4d864ce97f",
+        "quantcortex/data/providers/base.py": "0890637fec612f69c7632a764dd0808a7f457ddd9010060327f041d1d4eef072",
+        "quantcortex/data/providers/ccxt_provider.py": "e362a767512ccbc980e738c471cddd4744fe3e9cc02b8c9ea63e1b4ac7b2ad3d",
+        "quantcortex/data/providers/fmp_provider.py": "f1b2a5b5ca6ff440c12c00b5aa143463cdb8840d4359a8482b6f18a97a881039",
+        "quantcortex/data/providers/fred_provider.py": "82f1c174e811c282a18d564fd409c85092fb6c832dda1394f1900fe3a53ec468",
+        "quantcortex/data/providers/polygon_provider.py": "6d39895ca7de2b83ef2dc2a249134ca46c339c6b3ea8dfae9d0b454ed2bc62bf",
+        "quantcortex/data/providers/yfinance_provider.py": "2d5d0d5d9d19a850cd66038acf17b8ac522115d5c9341c3417f8a2db442ed256",
+        "quantcortex/data/storage/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/data/storage/parquet_store.py": "a724eeaf865ef2708f124d9016917d4e6b83b31f71239709fe52096a128cdfd5",
+        "quantcortex/data/storage/redis_cache.py": "2643b09a813a2c11f21690f2cfac19a9dfee246f7df13676aa17695b984fab56",
+        "quantcortex/data/storage/timescale_store.py": "c5ba85d3b4a133a2568eff5c807535184732b40bba11ca11fb84b888da450aef",
+        "quantcortex/data/universe/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/data/universe/base.py": "4d43a1b35ea923a6d289e073f8be22d01e97bfb6e69446e07af3ad965308033f",
+        "quantcortex/data/universe/nasdaq100_universe.py": "b3916b13948aa8c516ee24be07713847b9f441f2193deeffc5169df71b52672e",
+        "quantcortex/data/universe/sp500_universe.py": "99debed68bb82331483d174dc92617c3106a5c27c9b21d32e71c14a1bc7b3ff1",
+        "quantcortex/data/universe/sp500_wikipedia.py": "66180a77bd70edb7d047fb787c2a863050105c0827d0d0dbe733e8525470f734",
+        "quantcortex/execution/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/execution/brokers/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/execution/brokers/alpaca_broker.py": "25f1c69d6791d9a21dbb11684ab1ee2e38f54f1a62a797cb8dad102a6964f864",
+        "quantcortex/execution/brokers/base.py": "691f4e26555e5581e41e53e3001b814616ddf92397926e29c69ef04ea4e6650f",
+        "quantcortex/execution/brokers/ccxt_broker.py": "cb7fd56ddfba4428da9e3a5147f506c0f6ea4038fcf569ff65a61748fb9ddd03",
+        "quantcortex/execution/brokers/ib_broker.py": "d7a76993ee54e95b312431eaff18745178db8a27d766f50b1ba0198ca395651c",
+        "quantcortex/execution/order_manager.py": "e5f2868c01bc49e9ddcd1e5f529f31f7c9b6a0684ba20246fc6bb16396b58ee9",
+        "quantcortex/execution/position_manager.py": "e20af146a362f8192966caaa716cf1d48df870f4413be83d453d6f56f5df24b1",
+        "quantcortex/execution/pre_trade_risk.py": "d23fef346531c6019bf2c8574840e23372c14d1796ff2bbf6f97ac5c8b7cc9e4",
+        "quantcortex/execution/state_persistence.py": "de8bc1d210de62eebdd1a027cb5a6d38e57850bd632ad730f7a5d20980a43393",
+        "quantcortex/portfolio/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/portfolio/base.py": "d11cdd7301b33e169c624653c1fbde7b132c394d6a6bf269b73e85fefd1bcf6f",
+        "quantcortex/portfolio/black_litterman.py": "760d99295bac31b1edafa28b50301eff97c442bd489f2e86df3e6f1833fed3fe",
+        "quantcortex/portfolio/drl_allocator.py": "3d2cadc8b249213ac36165f3973c4e2ab80f62b5ae6189cf93c40dcad4e237e0",
+        "quantcortex/portfolio/equal_weight.py": "f4c2c84ad3d86bc9f24d24123f2c2db4d255750e452beaf7ac5a55794a472fd2",
+        "quantcortex/portfolio/hrp.py": "20a0b28744d71d28a0f0f4e872d550e71507850da5ec41209016ca71b025ea35",
+        "quantcortex/portfolio/mean_variance.py": "235a8917e107ab6274ee68891a489a130ae61fe36d359dc43e049d256453d80d",
+        "quantcortex/portfolio/minimum_variance.py": "253a9d80fe6dc6e4c95219b76a8965230b408093d1521a72587505ae0ddfc739",
+        "quantcortex/portfolio/risk_parity.py": "ed371437655ae980fabfc4ae450ca2100d90f304d9ce225c306f904ce1e32e91",
+        "quantcortex/risk/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/risk/circuit_breaker.py": "65cf205e7303cff5ce4785a64fadc6b29ba8b85e31913e001330fb084e502ff1",
+        "quantcortex/risk/factor_exposure.py": "5503426c590338b57512adf409e873751929464459d464f2b6940db8cadbf0ad",
+        "quantcortex/risk/kelly.py": "18138e2be1734792c1942e19d6f483dce20f573a4ee67006e094482200bcd839",
+        "quantcortex/risk/var_cvar.py": "ed57b06b2df061d48814779974a36c926f6dfa24f58e90666cbf6b5f94fdaab1",
+        "quantcortex/risk/vol_targeting.py": "f71477acb3ce07578444d43ab851759ad2301185f3fc3672004eb1cae9debbdd",
+        "quantcortex/strategies/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/strategies/base_strategy.py": "31367d5652f6f73a433e41c2b1b752f9654caa420dafa45bd64e693836cbbb90",
+        "quantcortex/strategies/drl_portfolio.py": "7fdcbc0d1439fdd5d81783ffef6870f90749c3a0e0c3f01782fb5c18203a0127",
+        "quantcortex/strategies/macro_timing.py": "15977b8958ebb578d96d0f7f72ff9c28a872be4f6b8b667e88f43ffb45ffbbb5",
+        "quantcortex/strategies/momentum_ml.py": "1f3b14446b8d0441e469083150067eeb4de27a91b30f02d60e5787dd61550b11",
+        "quantcortex/strategies/multi_asset_rotation.py": "a056839d41801abeb12be1fffd15cd3e3feeb84997f68e33b67432902fb990f0",
+        "quantcortex/strategies/sentiment_nlp.py": "acb4ea692d5707f84146d9045fb9325e8e35db451c30c1c0c21c5f9b1ff93a03",
+        "quantcortex/timing/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/timing/hmm_regime.py": "f8f6f03184e3f6d191ba8011fb201b99527ad07a66e32a4b9e179b4de45633db",
+        "quantcortex/timing/kama.py": "ffb848ba93041af1e04f2b7896ea7a8f33ac7e5e3e53db1e44f53af111829eda",
+        "quantcortex/timing/tsmom.py": "c78ac313268091f45e0e589067f12e07e8a340fa243b8fae2853778ef4ba8ea9",
+        "quantcortex/timing/vix_scaler.py": "a3667424e5573fb289e63c26c69da6a68d6c943742359f0466d29b25c56e3686",
+        "scripts/run_paper_experiments.py": "6cc9c3bc200a6baacb9bce9f5b43f345200cdd76ca5188364485f890e614e338"
+      },
+      "sha256": "1f41a76040a8fbcc64fcfc66e212c9e0944c25ffa9f4ef7b8cc6092d57822c83"
+    }
   },
-  "schema_version": 1,
+  "schema_version": 3,
   "source": {
     "adjustment_method": "yfinance adjusted close with auto_adjust=False",
     "cash_proxy": "SHV",
     "file_name": "published_rotation_prices.csv",
     "input_sha256": "efb384a62157e56a0cd8065abf45c1ed07d90ec26c681e5d54d74fe4cb9c55e1",
-    "permission_basis": "Repository owner confirms permission to publish derived aggregate results",
+    "permission_basis": "Repository owner authorizes publication of derived aggregate results; provider terms not independently verified",
     "price_window": "2016-01-04 to 2025-12-31",
     "provider": "Yahoo Finance via yfinance 1.4.1",
     "raw_input_committed": false,

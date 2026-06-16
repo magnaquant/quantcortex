@@ -1,0 +1,5 @@
+protocol,display_name,changed_assumption,diagnostic_class,causally_valid,nominal_cagr,shv_excess_sharpe,max_drawdown,annualized_arithmetic_shv_excess
+audited,Audited,none,reference,True,0.01404992867,-0.1549008935,-0.09830543263,-0.009042098135
+zero_return_cash,Cash return omitted,residual cash earns zero instead of SHV,economic_counterfactual,True,-0.001702871473,-0.4234954892,-0.1515035057,-0.02470643538
+zero_modeled_costs,Modeled costs omitted,all proportional trading costs set to zero,economic_counterfactual,True,0.03167729852,0.1405276029,-0.08598560609,0.008185044204
+invalid_same_close,Invalid same-close return capture,close-derived target earns the return ending at that close,causally_invalid,False,0.02491070382,0.02601404483,-0.1292554837,0.001441700084

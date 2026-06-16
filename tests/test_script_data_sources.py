@@ -4,12 +4,26 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from scripts import generate_report, validate_performance
+
+
+def test_monthly_markdown_normalizes_signed_zero():
+    monthly = pd.DataFrame(
+        [[-0.0001, 0.001, -0.001]],
+        index=[2024],
+        columns=["Jan", "Feb", "Mar"],
+    )
+
+    markdown = generate_report.markdown_monthly({"monthly": monthly})
+
+    assert "| 2024 | 0.0 | +0.1 | -0.1 |" in markdown
+    assert "-0.0" not in markdown
 
 
 def run_script(
@@ -229,16 +243,19 @@ def test_report_cash_attribution_and_exposure_matching_are_causal():
         strategy=HalfInvestedStrategy(),
     )
 
+    drifted_exposure = 0.5 / 1.005
     assert report["active_risky_exposure"].tolist() == pytest.approx(
-        [0.0, 0.0, 0.5, 0.5]
+        [0.0, 0.0, 0.5, drifted_exposure]
     )
     assert report["gross_returns"].tolist() == pytest.approx(
-        [0.01, 0.01, 0.005, 0.005]
+        [0.01, 0.01, 0.005, 0.01 * (1.0 - drifted_exposure)]
     )
     assert report["exposure_matched_spy_returns"].tolist() == pytest.approx(
-        [0.01, 0.01, 0.005, 0.005]
+        [0.01, 0.01, 0.005, 0.01 * (1.0 - drifted_exposure)]
     )
-    assert report["m"]["cash_contribution_sum"] == pytest.approx(0.03)
+    assert report["m"]["cash_contribution_sum"] == pytest.approx(
+        0.025 + 0.01 * (1.0 - drifted_exposure)
+    )
 
 
 def test_report_generates_complete_local_diagnostic_gallery(tmp_path):
@@ -304,10 +321,39 @@ def test_report_generates_complete_local_diagnostic_gallery(tmp_path):
         assert f"img/{filename}" in report
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == 3
     assert manifest["source"]["input_sha256"]
     assert manifest["evaluation"]["dsr_trials_assumed"] == 3
+    assert manifest["evaluation"]["engine"] == "event_driven"
     assert manifest["evaluation"]["sharpe_basis"].startswith("per-period return")
+    generator = manifest["generator"]
+    assert set(generator["git"]) == {"base_commit", "worktree_clean"}
+    source_tree = generator["source_tree"]
+    assert source_tree["file_count"] == len(source_tree["files"])
+    assert len(source_tree["sha256"]) == 64
+    assert {
+        "scripts/generate_report.py",
+        "quantcortex/backtest/costs/transaction_costs.py",
+        "quantcortex/backtest/engines/vectorized.py",
+        "quantcortex/strategies/multi_asset_rotation.py",
+    } <= set(source_tree["files"])
+    repo_root = Path(__file__).resolve().parent.parent
+    package_sources = {
+        path.relative_to(repo_root).as_posix()
+        for path in (repo_root / "quantcortex").rglob("*.py")
+        if path.is_file()
+    }
+    assert package_sources <= set(source_tree["files"])
+    strategy_configuration = manifest["evaluation"]["strategy_configuration"]
+    assert strategy_configuration["regime_backend"] == "gmm"
+    assert strategy_configuration["regime_backend_used"] == "gmm"
+    assert strategy_configuration["regime_n_states"] == 3
+    assert strategy_configuration["regime_covariance_type"] == "full"
+    assert strategy_configuration["regime_n_iter"] == 100
+    assert strategy_configuration["regime_seed"] == 42
+    assert strategy_configuration["regime_reg_covar"] == pytest.approx(1e-5)
+    assert strategy_configuration["regime_feature_vol_lookback"] == 20
+    assert strategy_configuration["vix_proxy_lookback"] == 21
     assert set(manifest["artifacts"]) == {
         filename for filename, _ in generate_report.REPORT_ARTIFACTS
     }

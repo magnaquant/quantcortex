@@ -28,7 +28,27 @@ regression tests.
 
 Do not commit credentials, account data, raw or cached market data, executed
 notebook outputs, local state, or generated reports. Published derived figures
-must include provenance and be reproducible from an owner-supplied input.
+must include provenance and be regenerable from a permitted owner-supplied
+input identified by its digest.
+
+## Integration and Evidence Changes
+
+Broker-adapter changes require the real SDK contract test in addition to the
+mock behavior script:
+
+```bash
+.venv/bin/python -m pip install -r requirements/brokers.lock
+.venv/bin/python -m pytest tests/test_broker_sdk_conformance.py -q
+PYTHONPATH=. .venv/bin/python scripts/verify_brokers.py
+```
+
+For report or paper changes, regenerate artifacts only from a permitted local
+input, run the focused artifact tests, rebuild the PDF, and inspect every page.
+Do not hand-edit generated tables, figures, manifests, or checksums.
+Use `quantcortex.backtest.metrics.plotting` for repository figures. Do not rely
+on color alone: pair important series with distinct line styles, markers, or
+hatching. Review paper figures at their final 5.5-inch text width and retain
+vector PDF output.
 
 ## Dependencies
 

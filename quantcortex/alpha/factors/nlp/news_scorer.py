@@ -242,7 +242,7 @@ class NewsScorer:
         scores = np.asarray(scores, dtype=float)
         if scores.shape != (len(unique_headlines),) or not np.all(np.isfinite(scores)):
             raise ValueError("sentiment backend returned malformed scores")
-        score_map = dict(zip(unique_headlines, scores))
+        score_map = dict(zip(unique_headlines, scores, strict=True))
         df["sentiment"] = df["headline"].astype(str).map(score_map).astype(float)
 
         symbols = pd.Index(sorted(pd.unique(df["symbol"])))

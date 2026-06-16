@@ -11,7 +11,7 @@ API key is only required when a network method is actually invoked.
 from __future__ import annotations
 
 import os
-from typing import Dict, List, Optional, Sequence, Union
+from typing import ClassVar, Dict, List, Optional, Sequence, Union
 
 import pandas as pd
 
@@ -32,7 +32,7 @@ class PolygonProvider(DataProvider):
     name = "polygon"
 
     #: map canonical timeframes -> (multiplier, timespan) for aggregates
-    _TIMESPAN_MAP: Dict[str, tuple] = {
+    _TIMESPAN_MAP: ClassVar[Dict[str, tuple]] = {
         "1d": (1, "day"),
         "1h": (1, "hour"),
         "1wk": (1, "week"),

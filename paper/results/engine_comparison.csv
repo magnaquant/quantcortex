@@ -1,3 +1,3 @@
-engine,net_cagr,gross_cagr,net_cash_excess_sharpe,gross_cash_excess_sharpe,annualized_volatility,max_drawdown,annualized_one_way_turnover,sum_cost_fractions,mean_gross_exposure,fully_cash_fraction
-vectorized,0.01325237205,0.03255872444,-0.1441502243,0.145300998,0.0654117108,-0.10330715,10.84416723,0.1505664627,0.347551825,0.4191944306
-event_driven,0.01327757433,0.0326039773,-0.144017962,0.1460690172,0.0653335227,-0.1035172213,10.86602539,0.1507179657,0.3476590123,0.4191944306
+engine,net_cagr,gross_cagr,net_cash_excess_sharpe,gross_cash_excess_sharpe,annualized_volatility,max_drawdown,annualized_one_way_turnover,annualized_gross_traded_notional,arithmetic_sum_transaction_cost_return_drag,mean_gross_exposure,fully_cash_fraction
+vectorized,0.01404197272,0.03165613942,-0.1547214748,0.140057544,0.05866366233,-0.09812690093,10.27691796,13.24053802,0.1373737932,0.3012704429,0.4793635007
+event_driven,0.01404992867,0.03167729852,-0.1549008935,0.1405276029,0.05857707312,-0.09830543263,10.29570133,13.25028777,0.1374753303,0.301354773,0.4793635007

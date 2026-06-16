@@ -23,6 +23,9 @@ Choose the price source explicitly:
 
 It never touches a live (real-money) endpoint: it forces a paper broker and
 refuses to submit unless the configured base URL is a paper endpoint.
+
+The operational market orders fill no earlier than the next venue session and
+are not performance-equivalent to the research protocol's next-close fills.
 """
 
 from __future__ import annotations
@@ -46,7 +49,10 @@ logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 # an existing override and matches the single-threaded determinism elsewhere).
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
-from quantcortex.data.processors.calendar import first_session_each_week
+from quantcortex.data.processors.calendar import (
+    TradingCalendar,
+    first_session_each_week,
+)
 from quantcortex.execution.brokers.alpaca_broker import is_alpaca_paper_endpoint
 from quantcortex.execution.brokers.base import BrokerError
 from quantcortex.execution.order_manager import (
@@ -75,6 +81,77 @@ YFINANCE_NOTICE = (
     "Live Yahoo Finance data is fetched through yfinance. Review Yahoo's terms "
     "and yfinance's legal disclaimer at https://ranaroussi.github.io/yfinance/."
 )
+LIVE_BAR_FINALIZATION_HOUR_ET = 17
+
+
+def validate_live_price_matrix(
+    prices: pd.DataFrame,
+    *,
+    now=None,
+    calendar: TradingCalendar | None = None,
+) -> pd.DataFrame:
+    """Validate a complete panel ending at the latest finalized NYSE session.
+
+    Daily provider bars are rejected before a conservative 17:00 New York
+    cutoff on the current session. Missing values are never forward-filled: a
+    stale or incomplete symbol must stop the cycle before target generation.
+    """
+    if not isinstance(prices, pd.DataFrame) or prices.empty:
+        raise ValueError("live prices must be a non-empty DataFrame")
+    if prices.columns.has_duplicates:
+        raise ValueError("live price symbols must be unique")
+    missing = sorted(set(UNIVERSE) - set(prices.columns))
+    unexpected = sorted(set(prices.columns) - set(UNIVERSE))
+    if missing or unexpected:
+        raise ValueError(
+            f"live price symbols do not match the strategy universe; "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    if not isinstance(prices.index, pd.DatetimeIndex):
+        raise TypeError("live prices must use a DatetimeIndex")
+    if prices.index.hasnans or prices.index.has_duplicates:
+        raise ValueError("live price dates must be unique and valid")
+
+    panel = prices.loc[:, UNIVERSE].copy()
+    index = panel.index
+    if index.tz is not None:
+        index = index.tz_convert("America/New_York").tz_localize(None)
+    if not index.equals(index.normalize()):
+        raise ValueError("live prices must contain finalized daily bars, not intraday data")
+    if not index.is_monotonic_increasing:
+        raise ValueError("live price dates must be sorted in increasing order")
+    panel.index = index
+    panel = panel.apply(pd.to_numeric, errors="coerce")
+    values = panel.to_numpy(dtype=float)
+    if not np.all(np.isfinite(values)) or np.any(values <= 0.0):
+        raise ValueError("live prices must be complete, finite, and strictly positive")
+
+    now_et = pd.Timestamp.now(tz="America/New_York") if now is None else pd.Timestamp(now)
+    if pd.isna(now_et):
+        raise ValueError("current time must be valid")
+    if now_et.tz is None:
+        now_et = now_et.tz_localize("America/New_York")
+    else:
+        now_et = now_et.tz_convert("America/New_York")
+    today = now_et.tz_localize(None).normalize()
+    trading_calendar = calendar or TradingCalendar("NYSE")
+    after_finalize = now_et.hour >= LIVE_BAR_FINALIZATION_HOUR_ET
+    if trading_calendar.is_trading_day(today) and after_finalize:
+        expected = today
+    else:
+        expected = trading_calendar.previous_session(today)
+
+    last = panel.index[-1]
+    if last < expected:
+        raise ValueError(
+            f"live price panel is stale: last bar {last.date()}, expected {expected.date()}"
+        )
+    if last > expected:
+        raise ValueError(
+            f"live price panel includes an unfinalized or future bar {last.date()}; "
+            f"latest allowed session is {expected.date()}"
+        )
+    return panel
 
 
 def load_prices(offline: bool = False) -> pd.DataFrame:
@@ -97,7 +174,7 @@ def load_prices(offline: bool = False) -> pd.DataFrame:
     prices = YFinanceProvider().get_prices(UNIVERSE, start="2022-01-01")
     if prices is None or prices.empty or prices.shape[0] <= 200:
         raise RuntimeError("yfinance returned insufficient price history")
-    return prices.dropna(how="all").ffill(limit=5).dropna()
+    return validate_live_price_matrix(prices)
 
 
 def latest_target(prices: pd.DataFrame) -> pd.Series:
@@ -363,7 +440,10 @@ def run_offline(prices, target, forced: bool = False) -> int:
     print(f"MODE: offline dry-run ({reason})\n")
     capital = DEFAULT_CAPITAL
     w_vec = target.reindex(UNIVERSE).fillna(0.0).to_numpy()
-    risk = PreTradeRiskCheck(max_position_weight=MAX_POSITION_WEIGHT)
+    risk = PreTradeRiskCheck(
+        max_position_weight=MAX_POSITION_WEIGHT,
+        allowed_symbols=UNIVERSE,
+    )
     ok, violations = risk.check_weights(
         w_vec, mode=PortfolioMode.LONG_ONLY
     )
@@ -390,7 +470,8 @@ def run_offline(prices, target, forced: bool = False) -> int:
         om.fill(oid, fill_price=float(last_px[o["symbol"]]))
     states = {o.order_id: o.status.value for o in om.orders}
     if states:
-        assert all(s == "FILLED" for s in states.values())
+        if not all(s == "FILLED" for s in states.values()):
+            raise RuntimeError("simulated lifecycle did not fill every order")
         print(f"\nsimulated lifecycle: {len(states)} orders NEW -> SUBMITTED -> FILLED")
     print(
         "\nSet ALPACA_API_KEY / ALPACA_SECRET_KEY (paper), rerun with "
@@ -442,7 +523,10 @@ def run_paper(
         )
 
         w_vec = target.reindex(UNIVERSE).fillna(0.0).to_numpy()
-        risk = PreTradeRiskCheck(max_position_weight=MAX_POSITION_WEIGHT)
+        risk = PreTradeRiskCheck(
+            max_position_weight=MAX_POSITION_WEIGHT,
+            allowed_symbols=UNIVERSE,
+        )
         orders = build_orders(target, prices, capital, current=positions)
         risk.assert_safe(
             weights=w_vec,

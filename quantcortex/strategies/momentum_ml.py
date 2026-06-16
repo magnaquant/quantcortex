@@ -323,8 +323,9 @@ class MomentumMLStrategy(Strategy):
         engine = Alpha158()
         per_symbol = []
         for sym in prices.columns:
-            df = ohlcv.get(sym)
-            assert isinstance(df, pd.DataFrame)
+            df = ohlcv[sym]
+            if not isinstance(df, pd.DataFrame):
+                raise TypeError(f"OHLCV payload for {sym} must be a DataFrame")
             try:
                 feats = engine.compute(df)
             except Exception as exc:

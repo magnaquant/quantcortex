@@ -2,6 +2,7 @@
 name = "quantcortex"
 version = "0.1.0"
 description = "Modular quantitative research and paper-execution platform"
+keywords = ["quantitative-finance", "backtesting", "portfolio", "research"]
 authors = [
     { name = "Kevin Lee", email = "kevinlee69720@g.ucla.edu" },
 ]
@@ -16,6 +17,12 @@ dependencies = [
     "matplotlib>=3.8",
     "pyarrow>=14.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/magnaquant/quantcortex"
+Issues = "https://github.com/magnaquant/quantcortex/issues"
+Documentation = "https://github.com/magnaquant/quantcortex#readme"
+Paper = "https://github.com/magnaquant/quantcortex/blob/main/paper/quantcortex_audit_neurips2026.pdf"
 
 [project.optional-dependencies]
 ml = [
@@ -116,7 +123,7 @@ target-version = "py311"
 extend-exclude = ["research", ".venv"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W"]
+select = ["E", "F", "I", "W", "B", "RUF012"]
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]

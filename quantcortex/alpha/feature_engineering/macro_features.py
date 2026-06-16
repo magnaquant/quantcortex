@@ -16,8 +16,8 @@ Design principles
   no lag. Monthly survey/labour series, however, are *published* well after
   their observation date (e.g. May's UNRATE arrives around the first Friday of
   June), so each lagged series' index is shifted forward by a configurable
-  number of calendar days (``publication_lags``) *before* forward-filling onto
-  the business-day index. The default lags (UNRATE: 35 days, PMI/NAPM: 5 days)
+    number of calendar days (``publication_lags``) *before* forward-filling onto
+    the business-day index. The default lags (UNRATE: 35 days, PMI/NAPM: 35 days)
   are approximations of typical release schedules, not exact release-calendar
   dates. Forward-filling only propagates the last *published* value forward;
   we never back-fill.
@@ -52,7 +52,7 @@ _BDAYS_PER_YEAR = 252
 # unemployment rate for month M is published around the first Friday of M+1
 # (~35 days after the observation date the series is stamped with); ISM PMI is
 # released on the first business day(s) of the following month.
-_DEFAULT_PUBLICATION_LAGS: Dict[str, int] = {"UNRATE": 35, "PMI": 5, "NAPM": 5}
+_DEFAULT_PUBLICATION_LAGS: Dict[str, int] = {"UNRATE": 35, "PMI": 35, "NAPM": 35}
 
 # Canonical name -> list of accepted source aliases (compared case-folded).
 _ALIASES: Dict[str, List[str]] = {
@@ -95,7 +95,7 @@ class MacroFeatures:
         named series' index is shifted forward by its lag before forward
         filling, approximating the date the value actually became public.
         Entries are merged over the defaults
-        ``{"UNRATE": 35, "PMI": 5, "NAPM": 5}`` (pass ``{"UNRATE": 0}`` etc.
+        ``{"UNRATE": 35, "PMI": 35, "NAPM": 35}`` (pass ``{"UNRATE": 0}`` etc.
         to disable a default). Names are matched case-insensitively against
         the raw input columns.
     """

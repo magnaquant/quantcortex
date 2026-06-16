@@ -353,53 +353,120 @@ class Tearsheet:
         matplotlib.figure.Figure
         """
         import matplotlib.pyplot as plt  # lazy import
+        from matplotlib.ticker import PercentFormatter
 
-        fig, axes = plt.subplots(2, 2, figsize=(14, 9))
-        ax_eq, ax_dd, ax_rs, ax_hm = axes.ravel()
+        from quantcortex.backtest.metrics.plotting import (
+            INK,
+            NEGATIVE_RED,
+            REFERENCE_BLUE,
+            contrasting_text_color,
+            plot_style_context,
+            return_diverging_colormap,
+            style_axis,
+        )
 
-        # Equity curve.
-        equity = self.equity_curve()
-        ax_eq.plot(equity.index, equity.to_numpy(), color="C0")
-        ax_eq.set_title("Equity curve")
-        ax_eq.set_ylabel("Growth of 1")
-        ax_eq.grid(True, alpha=0.3)
+        with plot_style_context("notebook"):
+            fig, axes = plt.subplots(2, 2, figsize=(13, 8))
+            ax_eq, ax_dd, ax_rs, ax_hm = axes.ravel()
 
-        # Drawdown.
-        dd = self.drawdown_series()
-        ax_dd.fill_between(dd.index, dd.to_numpy(), 0.0, color="C3", alpha=0.5)
-        ax_dd.set_title("Drawdown")
-        ax_dd.set_ylabel("Drawdown")
-        ax_dd.grid(True, alpha=0.3)
+            equity = self.equity_curve()
+            ax_eq.plot(equity.index, equity.to_numpy(), color=REFERENCE_BLUE)
+            ax_eq.axhline(1.0, color=INK, linewidth=0.8)
+            ax_eq.set_title("Equity curve")
+            ax_eq.set_ylabel("Growth of $1")
+            style_axis(ax_eq, grid="y")
 
-        # Rolling Sharpe.
-        rs = self.rolling_sharpe(window)
-        ax_rs.plot(rs.index, rs.to_numpy(), color="C2")
-        ax_rs.axhline(0.0, color="k", linewidth=0.8)
-        ax_rs.set_title(f"Rolling Sharpe ({window})")
-        ax_rs.set_ylabel("Sharpe")
-        ax_rs.grid(True, alpha=0.3)
+            dd = self.drawdown_series()
+            ax_dd.fill_between(
+                dd.index,
+                dd.to_numpy(),
+                0.0,
+                color=NEGATIVE_RED,
+                alpha=0.28,
+            )
+            ax_dd.plot(dd.index, dd.to_numpy(), color=NEGATIVE_RED, lw=0.8)
+            ax_dd.set_title("Underwater drawdown")
+            ax_dd.set_ylabel("Drawdown")
+            ax_dd.yaxis.set_major_formatter(PercentFormatter(1.0))
+            style_axis(ax_dd, grid="y")
 
-        # Monthly heatmap.
-        try:
-            table = self.monthly_returns_table()
-        except TypeError:
-            table = pd.DataFrame()
-        if not table.empty:
-            data = table.drop(columns=["YTD"], errors="ignore")
-            mat = data.to_numpy(dtype=float)
-            im = ax_hm.imshow(mat, aspect="auto", cmap="RdYlGn", vmin=-np.nanmax(
-                np.abs(mat)) if np.isfinite(mat).any() else -1.0,
-                vmax=np.nanmax(np.abs(mat)) if np.isfinite(mat).any() else 1.0)
-            ax_hm.set_xticks(range(len(data.columns)))
-            ax_hm.set_xticklabels(data.columns, rotation=45, ha="right")
-            ax_hm.set_yticks(range(len(data.index)))
-            ax_hm.set_yticklabels(data.index)
-            ax_hm.set_title("Monthly returns")
-            fig.colorbar(im, ax=ax_hm, fraction=0.046, pad=0.04)
-        else:
-            ax_hm.text(0.5, 0.5, "Monthly heatmap\n(requires DatetimeIndex)",
-                       ha="center", va="center", transform=ax_hm.transAxes)
-            ax_hm.set_axis_off()
+            rs = self.rolling_sharpe(window)
+            ax_rs.plot(rs.index, rs.to_numpy(), color="#AA3377")
+            ax_rs.axhline(0.0, color=INK, linewidth=0.8)
+            ax_rs.set_title(f"Rolling excess-return Sharpe ({window} periods)")
+            ax_rs.set_ylabel("Sharpe")
+            style_axis(ax_rs, grid="y")
 
-        fig.tight_layout()
+            try:
+                table = self.monthly_returns_table()
+            except TypeError:
+                table = pd.DataFrame()
+            if not table.empty:
+                data = table.drop(columns=["YTD"], errors="ignore")
+                mat = data.to_numpy(dtype=float)
+                finite = np.isfinite(mat)
+                limit = (
+                    max(float(np.nanmax(np.abs(mat[finite]))), 0.01)
+                    if finite.any()
+                    else 1.0
+                )
+                colormap = return_diverging_colormap()
+                im = ax_hm.imshow(
+                    np.ma.masked_invalid(mat),
+                    aspect="auto",
+                    cmap=colormap,
+                    vmin=-limit,
+                    vmax=limit,
+                )
+                ax_hm.set_xticks(range(len(data.columns)))
+                ax_hm.set_xticklabels(data.columns)
+                ax_hm.set_yticks(range(len(data.index)))
+                ax_hm.set_yticklabels(data.index)
+                ax_hm.set_title("Monthly returns")
+                ax_hm.set_xticks(
+                    np.arange(-0.5, len(data.columns), 1.0),
+                    minor=True,
+                )
+                ax_hm.set_yticks(
+                    np.arange(-0.5, len(data.index), 1.0),
+                    minor=True,
+                )
+                ax_hm.grid(False)
+                ax_hm.grid(which="minor", color="white", linewidth=0.7)
+                ax_hm.tick_params(which="minor", bottom=False, left=False)
+                for row in range(mat.shape[0]):
+                    for column in range(mat.shape[1]):
+                        value = mat[row, column]
+                        if not np.isfinite(value):
+                            continue
+                        normalized = (value + limit) / (2.0 * limit)
+                        rounded_percent = round(value * 100.0, 1)
+                        label = (
+                            "0.0%"
+                            if rounded_percent == 0.0
+                            else f"{rounded_percent:+.1f}%"
+                        )
+                        ax_hm.text(
+                            column,
+                            row,
+                            label,
+                            ha="center",
+                            va="center",
+                            fontsize=6.5,
+                            color=contrasting_text_color(colormap(normalized)),
+                        )
+                colorbar = fig.colorbar(im, ax=ax_hm, fraction=0.046, pad=0.04)
+                colorbar.ax.yaxis.set_major_formatter(PercentFormatter(1.0))
+            else:
+                ax_hm.text(
+                    0.5,
+                    0.5,
+                    "Monthly heatmap\n(requires DatetimeIndex)",
+                    ha="center",
+                    va="center",
+                    transform=ax_hm.transAxes,
+                )
+                ax_hm.set_axis_off()
+
+            fig.tight_layout()
         return fig

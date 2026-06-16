@@ -60,8 +60,20 @@ class FMPProvider(DataProvider):
         query = {k: v for k, v in params.items() if v is not None}
         query["apikey"] = self.api_key
         url = f"{self._BASE_URL}/{path}?{urllib.parse.urlencode(query)}"
+        parsed = urllib.parse.urlsplit(url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise ValueError("FMPProvider requires HTTPS without URL userinfo")
         request = urllib.request.Request(url, headers={"User-Agent": "quantcortex"})
-        with urllib.request.urlopen(request, timeout=self._TIMEOUT) as resp:
+        # The URL is constrained to HTTPS without URL userinfo immediately above.
+        with urllib.request.urlopen(  # nosec B310
+            request,
+            timeout=self._TIMEOUT,
+        ) as resp:
             payload = resp.read().decode("utf-8")
         return json.loads(payload)
 

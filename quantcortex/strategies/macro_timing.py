@@ -17,7 +17,7 @@ date ``t`` use only data observed on or before ``t``.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import ClassVar, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -50,7 +50,7 @@ class MacroTimingStrategy(Strategy):
     """
 
     #: Asset-class proxy ETFs.  Tolerant of whichever symbols are present.
-    GROUPS: Dict[str, List[str]] = {
+    GROUPS: ClassVar[Dict[str, List[str]]] = {
         "equities": ["SPY", "QQQ"],
         "bonds": ["TLT", "IEF"],
         "commodities": ["GLD", "DBC"],

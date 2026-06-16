@@ -189,7 +189,11 @@ class Order:
             )
         if not self.history or self.history[-1] is not self.status:
             raise OrderError("Order history must end at the current status.")
-        for previous, current in zip(self.history, self.history[1:]):
+        for previous, current in zip(
+            self.history,
+            self.history[1:],
+            strict=False,
+        ):
             if current not in _VALID_TRANSITIONS[previous]:
                 raise OrderError(
                     f"Order history contains illegal transition "

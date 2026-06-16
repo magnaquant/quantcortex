@@ -78,6 +78,17 @@ class CostResult:
         sells = float(np.abs(np.clip(self.executed_change, None, 0.0)).sum())
         return max(buys, sells)
 
+    @property
+    def traded_notional(self) -> float:
+        """Gross two-sided traded notional as a fraction of pre-trade NAV.
+
+        Unlike one-way turnover, this sums buys and sells. It is therefore the
+        denominator that reconciles directly to a symmetric per-dollar cost
+        rate: ``total_cost == traded_notional * rate`` when buy and sell rates
+        are equal.
+        """
+        return float(np.abs(self.executed_change).sum())
+
 
 class TransactionCostModel:
     """Commission + slippage + tax cost model with an ADV liquidity cap."""

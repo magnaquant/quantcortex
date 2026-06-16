@@ -67,6 +67,9 @@ jobs:
         run: |
           jupyter nbconvert --execute --ExecutePreprocessor.timeout=180 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir /tmp/quantcortex-notebook-output research/*.ipynb
 
+      - name: Verify notebook figures rendered
+        run: python tests/verify_notebook_outputs.py /tmp/quantcortex-notebook-output
+
   broker-sdks:
     name: optional broker SDK conformance (py3.12)
     runs-on: ubuntu-latest

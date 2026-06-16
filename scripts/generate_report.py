@@ -1,16 +1,17 @@
 """Generate charts and markdown tables from an explicit real-data source.
 
-Runs the multi_asset_rotation strategy on real data through the mandatory-cost
-engine and emits a local Markdown report plus separate diagnostic plots:
+Runs the multi_asset_rotation strategy on real data through the share-based,
+mandatory-cost event engine and emits a local Markdown report plus separate
+diagnostic plots:
 
 * ``report_overview.png`` - compact four-panel review image
 * ``equity_vs_benchmarks.png`` - growth of $1 vs SPY and an equal-initial-weight basket
 * ``performance_attribution.png`` - gross, net, cash, and exposure matching
 * ``drawdown.png`` - underwater drawdown
-* ``rolling_sharpe.png`` - rolling 126-day Sharpe
+* ``rolling_sharpe.png`` - rolling 126-session cash-excess Sharpe
 * ``rolling_risk.png`` - rolling volatility and beta to SPY
-* ``allocation_and_exposure.png`` - post-trade weights, gross exposure, cash
-* ``turnover_and_costs.png`` - turnover and cumulative cost fractions
+* ``allocation_and_exposure.png`` - realized risky weights, gross exposure, cash
+* ``turnover_and_costs.png`` - trading intensity and cumulative modeled return drag
 * ``monthly_returns.png`` - monthly net-return heatmap
 * ``return_distribution.png`` - daily return distribution and normal Q-Q
 * a **performance metrics** markdown table (printed to stdout)
@@ -51,7 +52,20 @@ logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 from quantcortex.backtest.costs.transaction_costs import TransactionCostModel
-from quantcortex.backtest.engines.vectorized import VectorizedBacktest
+from quantcortex.backtest.engines.event_driven import EventDrivenBacktest
+from quantcortex.backtest.metrics.plotting import (
+    BRIGHT_COLORS,
+    CASH,
+    COUNTERFACTUAL_AMBER,
+    INK,
+    MUTED_INK,
+    NEGATIVE_RED,
+    REFERENCE_BLUE,
+    apply_plot_style,
+    contrasting_text_color,
+    return_diverging_colormap,
+    style_axis,
+)
 from quantcortex.backtest.metrics.tearsheet import Tearsheet
 from quantcortex.backtest.validation.deflated_sharpe import compute_dsr
 from quantcortex.data.local_csv import load_price_matrix, sha256_file
@@ -63,15 +77,20 @@ REPORT_ARTIFACTS = (
     ("equity_vs_benchmarks.png", "Net growth versus gross benchmarks"),
     ("performance_attribution.png", "Performance and exposure attribution"),
     ("drawdown.png", "Underwater drawdown"),
-    ("rolling_sharpe.png", "Rolling 126-session Sharpe"),
+    ("rolling_sharpe.png", "Rolling 126-session cash-excess Sharpe"),
     ("rolling_risk.png", "Rolling volatility and beta to SPY"),
-    ("allocation_and_exposure.png", "Post-trade allocation, exposure, and cash"),
+    ("allocation_and_exposure.png", "Realized allocation, exposure, and cash"),
     (
         "turnover_and_costs.png",
-        "Executed turnover and cumulative sum of modeled cost fractions",
+        "Executed one-way and gross trading intensity with modeled return drag",
     ),
     ("monthly_returns.png", "Monthly net returns"),
     ("return_distribution.png", "Daily return distribution and normal Q-Q"),
+)
+SOURCE_TREE_FIXED_FILES = (
+    "scripts/generate_report.py",
+    "pyproject.toml",
+    "poetry.lock",
 )
 YFINANCE_NOTICE = (
     "Live Yahoo Finance data is fetched through yfinance. Review Yahoo's terms "
@@ -145,7 +164,9 @@ def _strategy_configuration(strategy) -> dict[str, object]:
         "mom_gap",
         "max_position_weight",
         "regime_enabled",
+        "regime_feature_vol_lookback",
         "vix_scale_enabled",
+        "vix_proxy_lookback",
         "max_gross",
     ):
         if hasattr(strategy, name):
@@ -153,9 +174,12 @@ def _strategy_configuration(strategy) -> dict[str, object]:
     regime = getattr(strategy, "_hmm", None)
     if regime is not None:
         configuration["regime_backend"] = regime.backend
-        configuration["regime_states"] = regime.n_states
+        configuration["regime_backend_used"] = regime.backend_
+        configuration["regime_n_states"] = regime.n_states
+        configuration["regime_covariance_type"] = regime.covariance_type
+        configuration["regime_n_iter"] = regime.n_iter
         configuration["regime_seed"] = regime.seed
-        configuration["regime_max_iterations"] = regime.n_iter
+        configuration["regime_reg_covar"] = regime.reg_covar
     vix_scaler = getattr(strategy, "_vix_scaler", None)
     if vix_scaler is not None:
         configuration["target_vix"] = vix_scaler.target_vix
@@ -294,7 +318,7 @@ def compute(
     if weights.empty:
         raise ValueError("strategy produced no target weights")
     cost_model = TransactionCostModel()
-    result = VectorizedBacktest(cost_model, capital=1.0).run(
+    result = EventDrivenBacktest(cost_model, capital=1.0).run(
         weights,
         prices,
         cash_returns=cash_returns,
@@ -324,7 +348,12 @@ def compute(
     m["annualized_turnover"] = float(
         result.turnover.reindex(rets.index).mean() * 252
     )
-    m["summed_cost_fraction"] = float(result.costs.reindex(rets.index).sum())
+    m["annualized_gross_traded_notional"] = float(
+        result.traded_notional.reindex(rets.index).mean() * 252
+    )
+    m["transaction_cost_return_drag_sum"] = float(
+        result.costs.reindex(rets.index).sum()
+    )
     spy, ew = _buy_hold_returns(prices, rets.index)
     active_weights = result.weights.shift(1).reindex(rets.index).fillna(0.0)
     if (active_weights < -1e-10).any(axis=None):
@@ -407,6 +436,7 @@ def compute(
         "allocation": allocation,
         "gross_exposure": report_weights.abs().sum(axis=1),
         "turnover": result.turnover.reindex(rets.index).fillna(0.0),
+        "traded_notional": result.traded_notional.reindex(rets.index).fillna(0.0),
         "costs": result.costs.reindex(rets.index).fillna(0.0),
         "monthly": ts.monthly_returns_table(),
         "cost_model": cost_model,
@@ -425,11 +455,11 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
     from scipy.stats import norm
 
     imgdir.mkdir(parents=True, exist_ok=True)
-    plt.style.use("seaborn-v0_8-darkgrid")
+    apply_plot_style("report")
 
     def save(fig, name: str) -> Path:
         path = imgdir / name
-        fig.savefig(path, dpi=140, bbox_inches="tight")
+        fig.savefig(path, dpi=180, bbox_inches="tight")
         plt.close(fig)
         return path
 
@@ -438,63 +468,68 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
             d["strat_g"].index,
             d["strat_g"].to_numpy(),
             label="Multi-Asset Rotation (net)",
-            color="C0",
-            lw=1.7,
+            color=REFERENCE_BLUE,
+            lw=2.0,
         )
         ax.plot(
             d["spy_g"].index,
             d["spy_g"].to_numpy(),
             label="SPY buy-and-hold (gross)",
-            color="C7",
-            lw=1.1,
-            alpha=0.85,
+            color=MUTED_INK,
+            lw=1.35,
+            ls="--",
         )
         ax.plot(
             d["ew_g"].index,
             d["ew_g"].to_numpy(),
             label="Equal-initial-weight 6-ETF basket (gross)",
-            color="C2",
-            lw=1.1,
-            alpha=0.85,
+            color=COUNTERFACTUAL_AMBER,
+            lw=1.45,
+            ls="-.",
         )
-        ax.axhline(1.0, color="black", lw=0.7, alpha=0.5)
-        ax.set_title("Growth of $1: net strategy versus gross benchmarks")
+        ax.axhline(1.0, color=INK, lw=0.8, alpha=0.75)
+        ax.set_title("Growth of $1: net strategy and gross benchmarks")
         ax.set_ylabel("Growth of $1")
-        ax.legend(loc="best", framealpha=0.9)
+        style_axis(ax, grid="y")
+        ax.legend(loc="upper left")
 
     def plot_attribution(ax) -> None:
         ax.plot(
             d["strat_gross_g"].index,
             d["strat_gross_g"].to_numpy(),
             label="Strategy before modeled costs",
-            color="C2",
-            lw=1.5,
+            color=BRIGHT_COLORS[0],
+            lw=1.55,
+            ls="--",
         )
         ax.plot(
             d["strat_g"].index,
             d["strat_g"].to_numpy(),
             label="Strategy after modeled costs",
-            color="C0",
-            lw=1.7,
+            color=REFERENCE_BLUE,
+            lw=2.0,
         )
         ax.plot(
             d["exposure_matched_ew_g"].index,
             d["exposure_matched_ew_g"].to_numpy(),
             label="Exposure-matched passive basket (gross)",
-            color="C1",
-            lw=1.2,
+            color=COUNTERFACTUAL_AMBER,
+            lw=1.45,
+            ls="-.",
         )
         ax.plot(
             d["cash_g"].index,
             d["cash_g"].to_numpy(),
             label="Cash proxy",
-            color="C7",
-            lw=1.1,
+            color=MUTED_INK,
+            lw=1.3,
+            ls=":",
         )
-        ax.axhline(1.0, color="black", lw=0.7, alpha=0.5)
+        ax.axhline(1.0, color=INK, lw=0.8, alpha=0.75)
         ax.set_title("Performance attribution: costs, exposure, and cash")
         ax.set_ylabel("Growth of $1")
-        ax.legend(loc="best", framealpha=0.9)
+        style_axis(ax, grid="y")
+        ax.legend(loc="upper left")
 
     def plot_drawdown(ax) -> None:
         drawdown = d["ts"].drawdown_series()
@@ -502,64 +537,93 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
             drawdown.index,
             drawdown.to_numpy(),
             0.0,
-            color="C3",
-            alpha=0.45,
+            color=NEGATIVE_RED,
+            alpha=0.28,
+        )
+        ax.plot(drawdown.index, drawdown.to_numpy(), color=NEGATIVE_RED, lw=0.85)
+        trough_date = drawdown.idxmin()
+        trough = float(drawdown.loc[trough_date])
+        ax.scatter([trough_date], [trough], s=22, color=NEGATIVE_RED, zorder=3)
+        ax.annotate(
+            f"Max {trough:.1%}\n{trough_date:%b %Y}",
+            xy=(trough_date, trough),
+            xytext=(10, 12),
+            textcoords="offset points",
+            ha="left",
+            va="bottom",
+            fontsize=8.5,
+            color=INK,
+            arrowprops={"arrowstyle": "-", "color": MUTED_INK, "lw": 0.8},
         )
         ax.set_title("Underwater drawdown")
         ax.set_ylabel("Drawdown")
         ax.yaxis.set_major_formatter(PercentFormatter(1.0))
+        style_axis(ax, grid="y")
 
     def plot_allocation(ax, *, include_legend: bool = True) -> None:
         allocation = d["allocation"]
-        colors = list(plt.get_cmap("tab20").colors[: len(allocation.columns) - 1])
-        colors.append((0.72, 0.72, 0.72))
+        asset_count = len(allocation.columns) - 1
+        colors = [*BRIGHT_COLORS[:asset_count], CASH]
         ax.stackplot(
             allocation.index,
             *[allocation[column].to_numpy() for column in allocation.columns],
             labels=allocation.columns,
             colors=colors,
-            alpha=0.88,
+            alpha=0.94,
         )
         ax.set_ylim(0.0, 1.0)
-        ax.set_title("Post-trade target weights and cash")
+        ax.set_title("Realized risky weights and residual cash")
         ax.set_ylabel("NAV weight")
         ax.yaxis.set_major_formatter(PercentFormatter(1.0))
+        style_axis(ax, grid="y")
         if include_legend:
             ax.legend(
                 loc="upper center",
                 bbox_to_anchor=(0.5, -0.15),
                 ncol=4,
-                framealpha=0.9,
             )
 
     def plot_turnover_costs(ax) -> None:
         turnover = d["turnover"]
-        nonzero = turnover[turnover > 0.0]
+        traded_notional = d["traded_notional"]
+        nonzero = traded_notional[traded_notional > 0.0]
         ax.bar(
             nonzero.index,
             nonzero.to_numpy(),
             width=3.0,
-            color="C1",
-            alpha=0.65,
-            label="Executed one-way turnover",
+            color=COUNTERFACTUAL_AMBER,
+            alpha=0.55,
+            label="Gross traded notional",
         )
-        ax.set_title("Executed turnover and cumulative sum of modeled cost fractions")
-        ax.set_ylabel("Turnover")
+        ax.plot(
+            turnover.index,
+            turnover.to_numpy(),
+            color=REFERENCE_BLUE,
+            lw=1.0,
+            label="One-way turnover",
+        )
+        ax.set_title("Trading intensity and cumulative modeled return drag")
+        ax.set_ylabel("Fraction of NAV")
         ax.yaxis.set_major_formatter(PercentFormatter(1.0))
+        style_axis(ax, grid="y")
         cost_axis = ax.twinx()
         cumulative_cost = d["costs"].cumsum()
         cost_axis.plot(
             cumulative_cost.index,
             cumulative_cost.to_numpy(),
-            color="C3",
-            lw=1.5,
-            label="Cumulative sum of modeled cost fractions",
+            color=NEGATIVE_RED,
+            lw=1.7,
+            label="Cumulative modeled return drag",
         )
-        cost_axis.set_ylabel("Cumulative sum of cost fractions")
+        cost_axis.set_ylabel("Cumulative return drag")
         cost_axis.yaxis.set_major_formatter(PercentFormatter(1.0))
+        cost_axis.grid(False)
+        cost_axis.spines["top"].set_visible(False)
+        cost_axis.spines["right"].set_color(MUTED_INK)
+        cost_axis.tick_params(axis="y", colors=MUTED_INK)
         handles, labels = ax.get_legend_handles_labels()
         cost_handles, cost_labels = cost_axis.get_legend_handles_labels()
-        ax.legend(handles + cost_handles, labels + cost_labels, loc="best")
+        ax.legend(handles + cost_handles, labels + cost_labels, loc="upper left")
 
     def plot_monthly_heatmap(ax, *, annotate: bool = True) -> None:
         month_order = [
@@ -575,10 +639,11 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
             ax.set_axis_off()
             return
         limit = max(float(np.nanmax(np.abs(matrix))), 0.01)
+        colormap = return_diverging_colormap()
         image = ax.imshow(
             np.ma.masked_invalid(matrix),
             aspect="auto",
-            cmap="RdYlGn",
+            cmap=colormap,
             vmin=-limit,
             vmax=limit,
         )
@@ -587,28 +652,41 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
         ax.set_yticks(range(len(table.index)))
         ax.set_yticklabels(table.index.astype(str))
         ax.set_title("Monthly net returns")
+        ax.set_xticks(np.arange(-0.5, len(month_order), 1.0), minor=True)
+        ax.set_yticks(np.arange(-0.5, len(table.index), 1.0), minor=True)
+        ax.grid(False)
+        ax.grid(which="minor", color="white", linewidth=0.8)
+        ax.tick_params(which="minor", bottom=False, left=False)
         if annotate:
             for row in range(matrix.shape[0]):
                 for column in range(matrix.shape[1]):
                     value = matrix[row, column]
                     if not np.isfinite(value):
                         continue
-                    color = "white" if abs(value) > 0.6 * limit else "black"
+                    normalized = (value + limit) / (2.0 * limit)
+                    color = contrasting_text_color(colormap(normalized))
+                    rounded_percent = round(value * 100.0, 1)
+                    label = (
+                        "0.0%"
+                        if rounded_percent == 0.0
+                        else f"{rounded_percent:+.1f}%"
+                    )
                     ax.text(
                         column,
                         row,
-                        f"{value * 100:.1f}",
+                        label,
                         ha="center",
                         va="center",
-                        fontsize=7,
+                        fontsize=7.5,
                         color=color,
                     )
         colorbar = ax.figure.colorbar(image, ax=ax, fraction=0.025, pad=0.02)
         colorbar.ax.yaxis.set_major_formatter(PercentFormatter(1.0))
+        colorbar.set_label("Monthly return")
 
     paths: list[Path] = []
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 8.5))
+    fig, axes = plt.subplots(2, 2, figsize=(13.5, 8.2))
     plot_attribution(axes[0, 0])
     plot_drawdown(axes[0, 1])
     plot_allocation(axes[1, 0], include_legend=False)
@@ -626,31 +704,42 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
     fig.suptitle(
         f"Multi-Asset Rotation diagnostic overview | {window}",
         fontsize=14,
+        fontweight="semibold",
     )
     fig.tight_layout(rect=(0.0, 0.07, 1.0, 0.97))
     paths.append(save(fig, "report_overview.png"))
 
-    fig, ax = plt.subplots(figsize=(11, 4.2))
+    fig, ax = plt.subplots(figsize=(11, 4.1))
     plot_equity(ax)
     fig.tight_layout()
     paths.append(save(fig, "equity_vs_benchmarks.png"))
 
-    fig, ax = plt.subplots(figsize=(11, 4.2))
+    fig, ax = plt.subplots(figsize=(11, 4.1))
     plot_attribution(ax)
     fig.tight_layout()
     paths.append(save(fig, "performance_attribution.png"))
 
-    fig, ax = plt.subplots(figsize=(11, 3.4))
+    fig, ax = plt.subplots(figsize=(11, 3.5))
     plot_drawdown(ax)
     fig.tight_layout()
     paths.append(save(fig, "drawdown.png"))
 
-    fig, ax = plt.subplots(figsize=(11, 3.4))
+    fig, ax = plt.subplots(figsize=(11, 3.5))
     rs = d["ts"].rolling_sharpe(126)
-    ax.plot(rs.index, rs.to_numpy(), color="C4", lw=1.3)
-    ax.axhline(0.0, color="k", lw=0.8)
-    ax.set_title("Rolling Sharpe (126-day)")
+    ax.plot(rs.index, rs.to_numpy(), color=BRIGHT_COLORS[5], lw=1.5)
+    ax.axhline(0.0, color=INK, lw=0.85)
+    ax.fill_between(
+        rs.index,
+        0.0,
+        rs.to_numpy(),
+        where=rs.to_numpy() < 0.0,
+        color=NEGATIVE_RED,
+        alpha=0.08,
+        interpolate=True,
+    )
+    ax.set_title("Rolling cash-excess Sharpe (126 sessions)")
     ax.set_ylabel("Sharpe")
+    style_axis(ax, grid="y")
     fig.tight_layout()
     paths.append(save(fig, "rolling_sharpe.png"))
 
@@ -660,55 +749,111 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
     axes[0].plot(
         rolling_strategy_vol.index,
         rolling_strategy_vol.to_numpy(),
-        color="C0",
+        color=REFERENCE_BLUE,
+        lw=1.7,
         label="Strategy (net)",
     )
     axes[0].plot(
         rolling_spy_vol.index,
         rolling_spy_vol.to_numpy(),
-        color="C7",
-        alpha=0.85,
+        color=MUTED_INK,
+        lw=1.35,
+        ls="--",
         label="SPY (gross)",
     )
     axes[0].set_title("Rolling annualized volatility (126 sessions)")
     axes[0].set_ylabel("Volatility")
     axes[0].yaxis.set_major_formatter(PercentFormatter(1.0))
-    axes[0].legend(loc="best")
+    style_axis(axes[0], grid="y")
+    axes[0].legend(loc="upper right")
     rolling_beta = _rolling_beta(d["rets"], d["spy_returns"], 126)
     axes[1].plot(
         rolling_beta.index,
         rolling_beta.to_numpy(),
-        color="C5",
+        color=BRIGHT_COLORS[5],
+        lw=1.5,
         label="Beta to SPY",
     )
-    axes[1].axhline(0.0, color="black", lw=0.8)
-    axes[1].axhline(1.0, color="C7", lw=0.8, ls="--")
+    axes[1].axhline(0.0, color=INK, lw=0.8)
+    axes[1].axhline(1.0, color=MUTED_INK, lw=0.8, ls="--")
     axes[1].set_title("Rolling beta to SPY (126 sessions)")
     axes[1].set_ylabel("Beta")
-    axes[1].legend(loc="best")
+    style_axis(axes[1], grid="y")
     fig.tight_layout()
     paths.append(save(fig, "rolling_risk.png"))
 
     fig, axes = plt.subplots(2, 1, figsize=(11, 7.0), sharex=True)
     plot_allocation(axes[0])
-    axes[1].plot(
-        d["gross_exposure"].index,
-        d["gross_exposure"].to_numpy(),
-        color="C0",
-        label="Gross exposure",
-    )
     cash = d["allocation"]["Cash"]
-    axes[1].plot(cash.index, cash.to_numpy(), color="C7", label="Cash")
+    gross_exposure = d["gross_exposure"]
+    axes[1].fill_between(
+        gross_exposure.index,
+        0.0,
+        gross_exposure.to_numpy(),
+        step="post",
+        color=REFERENCE_BLUE,
+        alpha=0.55,
+        label="Risky exposure",
+    )
+    axes[1].fill_between(
+        cash.index,
+        gross_exposure.to_numpy(),
+        1.0,
+        step="post",
+        color=CASH,
+        alpha=0.65,
+        label="Cash",
+    )
+    axes[1].plot(
+        gross_exposure.index,
+        gross_exposure.to_numpy(),
+        color=REFERENCE_BLUE,
+        lw=0.8,
+    )
     axes[1].set_ylim(0.0, 1.0)
     axes[1].set_title("Invested exposure and cash")
     axes[1].set_ylabel("NAV fraction")
     axes[1].yaxis.set_major_formatter(PercentFormatter(1.0))
-    axes[1].legend(loc="best")
+    style_axis(axes[1], grid="y")
+    axes[1].legend(loc="upper right", ncol=2)
     fig.tight_layout()
     paths.append(save(fig, "allocation_and_exposure.png"))
 
-    fig, ax = plt.subplots(figsize=(11, 4.0))
-    plot_turnover_costs(ax)
+    fig, axes = plt.subplots(2, 1, figsize=(11, 5.8), sharex=True)
+    turnover = d["turnover"]
+    traded_notional = d["traded_notional"]
+    nonzero = traded_notional[traded_notional > 0.0]
+    axes[0].bar(
+        nonzero.index,
+        nonzero.to_numpy(),
+        width=3.0,
+        color=COUNTERFACTUAL_AMBER,
+        alpha=0.62,
+        label="Gross traded notional",
+    )
+    axes[0].plot(
+        turnover.index,
+        turnover.to_numpy(),
+        color=REFERENCE_BLUE,
+        lw=1.0,
+        label="One-way turnover",
+    )
+    axes[0].set_title("Executed trading intensity")
+    axes[0].set_ylabel("Fraction of NAV")
+    axes[0].yaxis.set_major_formatter(PercentFormatter(1.0))
+    style_axis(axes[0], grid="y")
+    axes[0].legend(loc="upper right", ncol=2)
+    cumulative_cost = d["costs"].cumsum()
+    axes[1].plot(
+        cumulative_cost.index,
+        cumulative_cost.to_numpy(),
+        color=NEGATIVE_RED,
+        lw=1.8,
+    )
+    axes[1].set_title("Cumulative modeled return drag")
+    axes[1].set_ylabel("Return drag")
+    axes[1].yaxis.set_major_formatter(PercentFormatter(1.0))
+    style_axis(axes[1], grid="y")
     fig.tight_layout()
     paths.append(save(fig, "turnover_and_costs.png"))
 
@@ -717,35 +862,38 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
     fig.tight_layout()
     paths.append(save(fig, "monthly_returns.png"))
 
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.3))
     returns_pct = d["rets"].to_numpy(dtype=float) * 100.0
     axes[0].hist(
         returns_pct,
-        bins="fd",
-        color="C0",
-        alpha=0.72,
+        bins=80,
+        color=BRIGHT_COLORS[0],
+        alpha=0.78,
         edgecolor="white",
+        linewidth=0.35,
     )
     fifth_percentile = float(d["rets"].quantile(0.05)) * 100.0
     tail = d["rets"][d["rets"] <= d["rets"].quantile(0.05)]
     expected_shortfall = float(tail.mean()) * 100.0
     axes[0].axvline(
         fifth_percentile,
-        color="C1",
-        lw=1.4,
-        label="5th percentile",
+        color=COUNTERFACTUAL_AMBER,
+        lw=1.5,
+        label=f"5th percentile ({fifth_percentile:.2f}%)",
     )
     axes[0].axvline(
         expected_shortfall,
-        color="C3",
-        lw=1.4,
+        color=NEGATIVE_RED,
+        lw=1.5,
         ls="--",
-        label="Tail mean",
+        label=f"Tail mean ({expected_shortfall:.2f}%)",
     )
-    axes[0].set_title("Daily net return distribution")
+    axes[0].set_yscale("log")
+    axes[0].set_title("Daily net returns (log count)")
     axes[0].set_xlabel("Return (%)")
-    axes[0].set_ylabel("Observations")
-    axes[0].legend(loc="best")
+    axes[0].set_ylabel("Observations (log scale)")
+    style_axis(axes[0], grid="y")
+    axes[0].legend(loc="upper left")
 
     sorted_returns = np.sort(d["rets"].to_numpy(dtype=float))
     standard_deviation = float(np.std(sorted_returns, ddof=1))
@@ -753,12 +901,19 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
         standardized = (sorted_returns - float(np.mean(sorted_returns))) / standard_deviation
         probabilities = (np.arange(len(standardized)) + 0.5) / len(standardized)
         theoretical = norm.ppf(probabilities)
-        axes[1].scatter(theoretical, standardized, s=8, alpha=0.55, color="C4")
+        axes[1].scatter(
+            theoretical,
+            standardized,
+            s=8,
+            alpha=0.55,
+            color=BRIGHT_COLORS[5],
+            edgecolors="none",
+        )
         bounds = [
             min(float(theoretical.min()), float(standardized.min())),
             max(float(theoretical.max()), float(standardized.max())),
         ]
-        axes[1].plot(bounds, bounds, color="black", lw=0.8, ls="--")
+        axes[1].plot(bounds, bounds, color=MUTED_INK, lw=0.9, ls="--")
     else:
         axes[1].text(
             0.5,
@@ -771,6 +926,7 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
     axes[1].set_title("Normal Q-Q diagnostic")
     axes[1].set_xlabel("Theoretical normal quantile")
     axes[1].set_ylabel("Standardized observed return")
+    style_axis(axes[1], grid="both")
     fig.tight_layout()
     paths.append(save(fig, "return_distribution.png"))
 
@@ -793,7 +949,14 @@ def markdown_metrics(d: dict) -> str:
         ("Calmar", f"{m['calmar']:+.2f}"),
         ("Max drawdown", f"{m['max_drawdown']:+.2%}"),
         ("Annualized one-way turnover", f"{m['annualized_turnover']:.2f}x"),
-        ("Sum of modeled cost fractions", f"{m['summed_cost_fraction']:.2%}"),
+        (
+            "Annualized gross traded notional",
+            f"{m['annualized_gross_traded_notional']:.2f}x",
+        ),
+        (
+            "Arithmetic sum of modeled transaction-cost return drag",
+            f"{m['transaction_cost_return_drag_sum']:.2%}",
+        ),
         (
             "Arithmetic sum of cash return contributions",
             f"{m['cash_contribution_sum']:.2%}",
@@ -848,7 +1011,13 @@ def markdown_monthly(d: dict) -> str:
         cells = []
         for c in cols:
             v = row[c]
-            cells.append("" if pd.isna(v) else f"{v*100:+.1f}")
+            if pd.isna(v):
+                cells.append("")
+                continue
+            rounded_percent = round(float(v) * 100.0, 1)
+            cells.append(
+                "0.0" if rounded_percent == 0.0 else f"{rounded_percent:+.1f}"
+            )
         lines.append(f"| {year} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
@@ -896,6 +1065,7 @@ def markdown_settings(d: dict) -> str:
             "Rebalance",
             "first available session each week; close signal executes next bar close",
         ),
+        ("Engine", "event-driven adjusted-close pseudo-shares"),
         ("Commission", f"{cost_model.commission * 10_000:.1f} bps per trade"),
         ("Slippage", f"{cost_model.slippage * 10_000:.1f} bps per trade"),
         ("Transfer tax", f"{cost_model.tax * 10_000:.1f} bps on sells"),
@@ -990,17 +1160,66 @@ def _installed_version(distribution: str) -> str | None:
         return None
 
 
-def _git_commit() -> str | None:
+def _git_metadata(repo_root: Path) -> dict[str, str | bool]:
     try:
-        return subprocess.run(
+        commit = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=Path(__file__).resolve().parent.parent,
+            cwd=repo_root,
             check=True,
             capture_output=True,
             text=True,
         ).stdout.strip()
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return None
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return {"base_commit": "unavailable", "worktree_clean": False}
+    return {"base_commit": commit, "worktree_clean": not status.strip()}
+
+
+def source_tree_manifest(
+    repo_root: Path,
+    relative_paths: list[str] | None = None,
+) -> dict[str, object]:
+    """Fingerprint the complete project source tree relevant to the report."""
+    if relative_paths is None:
+        discovered = set(SOURCE_TREE_FIXED_FILES)
+        package_root = repo_root / "quantcortex"
+        if not package_root.is_dir():
+            raise ValueError(f"report package root is missing: {package_root}")
+        discovered.update(
+            path.relative_to(repo_root).as_posix()
+            for path in package_root.rglob("*.py")
+            if path.is_file()
+        )
+        relative_paths = sorted(discovered)
+
+    paths = [repo_root / relative_path for relative_path in relative_paths]
+    missing = [path for path in paths if not path.is_file()]
+    if missing:
+        missing_names = ", ".join(path.as_posix() for path in missing)
+        raise ValueError(f"report source-tree fingerprint is missing: {missing_names}")
+    if not paths:
+        raise ValueError("report source-tree fingerprint matched no files")
+
+    digest = hashlib.sha256()
+    files: dict[str, str] = {}
+    for path in paths:
+        relative = path.relative_to(repo_root).as_posix()
+        file_digest = sha256_file(path)
+        files[relative] = file_digest
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(bytes.fromhex(file_digest))
+    return {
+        "sha256": digest.hexdigest(),
+        "file_count": len(paths),
+        "files": files,
+    }
 
 
 def write_performance_manifest(
@@ -1017,15 +1236,17 @@ def write_performance_manifest(
         path.name: hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(image_paths, key=lambda item: item.name)
     }
+    repo_root = Path(__file__).resolve().parent.parent
     metrics = d["m"]
     benchmarks = d["benchmark_metrics"]
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "generator": {
             "path": "scripts/generate_report.py",
             "script_sha256": sha256_file(Path(__file__).resolve()),
-            "git_commit": _git_commit(),
+            "git": _git_metadata(repo_root),
+            "source_tree": source_tree_manifest(repo_root),
             "python": platform.python_version(),
             "platform": platform.platform(),
             "packages": {
@@ -1061,10 +1282,23 @@ def write_performance_manifest(
             "warmup_sessions": d["warmup_sessions"],
             "required_warmup_sessions": d["required_warmup_sessions"],
             "execution_timing": "close signal executes at the next bar close",
+            "engine": "event_driven",
+            "position_semantics": (
+                "adjusted-close pseudo-shares drift between rebalances; "
+                "targets are sized against post-cost NAV"
+            ),
             "rebalance": "first available session each week",
             "commission_bps": d["cost_model"].commission * 10_000.0,
             "slippage_bps": d["cost_model"].slippage * 10_000.0,
             "transfer_tax_bps": d["cost_model"].tax * 10_000.0,
+            "traded_notional_basis": "pre-trade NAV",
+            "transaction_cost_charge_basis": (
+                "modeled rate times executed buy and sell notional, each as a "
+                "fraction of pre-trade NAV"
+            ),
+            "reported_cost_series_basis": (
+                "daily return drag against prior-close NAV; gross minus net return"
+            ),
             "adv_cap_applied": False,
             "cash_return_treatment": d["cash_returns"].name,
             "strategy_returns": "net of modeled costs",
@@ -1091,7 +1325,12 @@ def write_performance_manifest(
             "calmar": metrics["calmar"],
             "max_drawdown": metrics["max_drawdown"],
             "annualized_one_way_turnover": metrics["annualized_turnover"],
-            "sum_of_modeled_cost_fractions": metrics["summed_cost_fraction"],
+            "annualized_gross_traded_notional": metrics[
+                "annualized_gross_traded_notional"
+            ],
+            "arithmetic_sum_transaction_cost_return_drag": metrics[
+                "transaction_cost_return_drag_sum"
+            ],
             "arithmetic_sum_of_cash_return_contributions": metrics[
                 "cash_contribution_sum"
             ],

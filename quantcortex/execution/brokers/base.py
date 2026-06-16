@@ -99,9 +99,11 @@ class Broker(abc.ABC):
     # ----- connection lifecycle ----- #
     def connect(self) -> None:  # pragma: no cover - adapters override
         """Establish a session with the venue (no-op by default)."""
+        return None
 
     def disconnect(self) -> None:  # pragma: no cover - adapters override
         """Tear down the session (no-op by default)."""
+        return None
 
     def __enter__(self) -> "Broker":
         self.connect()

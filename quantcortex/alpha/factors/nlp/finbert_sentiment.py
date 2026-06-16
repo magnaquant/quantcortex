@@ -230,7 +230,7 @@ class FinBERTSentiment:
             raise RuntimeError("transformers pipeline returned the wrong batch size")
 
         out = np.zeros(len(texts), dtype=float)
-        for i, (orig, result) in enumerate(zip(texts, raw)):
+        for i, (orig, result) in enumerate(zip(texts, raw, strict=True)):
             if not orig or not str(orig).strip():
                 out[i] = 0.0
                 continue

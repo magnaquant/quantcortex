@@ -16,7 +16,7 @@ imports with only the core scientific stack present.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Union
+from typing import ClassVar, Dict, List, Optional, Sequence, Union
 
 import pandas as pd
 
@@ -37,7 +37,7 @@ class YFinanceProvider(DataProvider):
     name = "yfinance"
 
     #: map canonical platform timeframes -> yfinance ``interval`` strings
-    _INTERVAL_MAP: Dict[str, str] = {
+    _INTERVAL_MAP: ClassVar[Dict[str, str]] = {
         "1d": "1d",
         "1h": "1h",
         "1wk": "1wk",
@@ -176,7 +176,12 @@ class YFinanceProvider(DataProvider):
                 continue
             period_ts = period_ts.tz_localize(None)
             records = _canonicalize_fundamental_records(
-                zip(statement.index.astype(str), statement[period_end]), wanted
+                zip(
+                    statement.index.astype(str),
+                    statement[period_end],
+                    strict=True,
+                ),
+                wanted,
             )
             if not records:
                 continue

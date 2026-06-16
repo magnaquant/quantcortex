@@ -255,18 +255,39 @@ class FactorDecay:
         """
         import matplotlib.pyplot as plt  # lazy import
 
-        fig, ax = plt.subplots(figsize=(8, 4.5))
-        lags = decay.index.to_numpy()
-        mean = decay["ic_mean"].to_numpy(dtype=float)
-        std = decay["ic_std"].to_numpy(dtype=float)
+        from quantcortex.backtest.metrics.plotting import (
+            INK,
+            REFERENCE_BLUE,
+            plot_style_context,
+            style_axis,
+        )
 
-        ax.plot(lags, mean, marker="o", color="C0", label="mean IC")
-        ax.fill_between(lags, mean - std, mean + std, color="C0", alpha=0.2,
-                        label="+/- 1 std")
-        ax.axhline(0.0, color="black", lw=0.6, alpha=0.6)
-        ax.set_title("Factor IC decay")
-        ax.set_xlabel("forward-return lag (periods)")
-        ax.set_ylabel("Information Coefficient")
-        ax.legend(loc="best")
-        fig.tight_layout()
+        with plot_style_context("notebook"):
+            fig, ax = plt.subplots(figsize=(8, 4.2))
+            lags = decay.index.to_numpy()
+            mean = decay["ic_mean"].to_numpy(dtype=float)
+            std = decay["ic_std"].to_numpy(dtype=float)
+
+            ax.plot(
+                lags,
+                mean,
+                marker="o",
+                color=REFERENCE_BLUE,
+                label="Mean IC",
+            )
+            ax.fill_between(
+                lags,
+                mean - std,
+                mean + std,
+                color=REFERENCE_BLUE,
+                alpha=0.16,
+                label="+/- 1 std.",
+            )
+            ax.axhline(0.0, color=INK, lw=0.8)
+            ax.set_title("Factor IC decay")
+            ax.set_xlabel("Forward-return lag (periods)")
+            ax.set_ylabel("Information coefficient")
+            style_axis(ax, grid="y")
+            ax.legend(loc="best")
+            fig.tight_layout()
         return fig

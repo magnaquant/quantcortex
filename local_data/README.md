@@ -10,8 +10,8 @@ outside the CSV.
 
 ## Wide Adjusted-Close CSV
 
-`scripts/generate_report.py` and all research notebooks accept a date-by-symbol
-matrix:
+`scripts/generate_report.py`, `scripts/run_paper_experiments.py`, and all
+research notebooks accept a date-by-symbol matrix:
 
 ```csv
 date,QQQ,VGT,GLD,TLT,SPY,VIG,SHV
@@ -19,12 +19,16 @@ date,QQQ,VGT,GLD,TLT,SPY,VIG,SHV
 ```
 
 Dates must be unique and parseable. Symbol columns must be numeric and strictly
-positive. Missing observations are forward-filled from earlier rows for at
-most five sessions; rows that remain incomplete are dropped. Notebook
-universes require their full set of symbol columns.
+positive. Reports and notebooks forward-fill missing observations from earlier
+rows for at most five sessions, then drop incomplete rows. The fixed paper
+experiment instead requires complete rows and performs no forward fill.
+Notebook universes require their full set of symbol columns.
 
-Set `QUANTCORTEX_PRICES_CSV` to the absolute path or pass
-`--prices-csv local_data/<file>.csv` to the report generator.
+Set `QUANTCORTEX_PRICES_CSV` to the absolute path for notebooks, or pass
+`--prices-csv local_data/<file>.csv` to a script. Notebook runs must choose
+exactly one adjusted-close source: this variable or
+`QUANTCORTEX_LIVE_YFINANCE=1`. `QUANTCORTEX_OHLCV_CSV` is a supplemental local
+input for the Alpha158 notebook, not a second adjusted-close source.
 Include the configured cash-proxy column, such as `SHV`, whenever residual
 cash should earn a nonzero return. The fixed paper experiment requires all
 seven columns shown above.
@@ -35,7 +39,8 @@ history that is absent from the file.
 For a report intended for external review, also pass `--data-provider`,
 `--permission-basis`, `--retrieved-at`, and `--adjustment-method`. These fields
 record the owner's provenance assertions but do not independently establish
-that redistribution is permitted.
+that redistribution is permitted. Pass `--manifest-out` as well so the input,
+source tree, settings, and generated artifacts are hash-bound.
 
 ## Single-Symbol OHLCV CSV
 

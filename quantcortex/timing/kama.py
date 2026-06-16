@@ -47,6 +47,8 @@ class KAMA:
     """
 
     def __init__(self, er_window: int = 10, fast: int = 2, slow: int = 30) -> None:
+        if any(isinstance(value, (bool, np.bool_)) for value in (er_window, fast, slow)):
+            raise TypeError("KAMA periods must be integers, not booleans")
         if int(er_window) != er_window or er_window < 1:
             raise ValueError("er_window must be >= 1")
         if int(fast) != fast or int(slow) != slow or fast < 1 or slow < 1:

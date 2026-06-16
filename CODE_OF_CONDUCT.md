@@ -15,8 +15,8 @@ person's private information, or sustained disruption of project work.
 
 This standard applies in repository discussions, reviews, issues, and other
 spaces where someone represents the project. Report conduct concerns privately
-through the repository owner's GitHub profile or, when a security concern is
-also involved, through the process in `SECURITY.md`.
+to `kevinlee69720@g.ucla.edu` or, when a security concern is also involved,
+through the process in [SECURITY.md](SECURITY.md).
 
 Maintainers may edit or remove contributions and may temporarily or permanently
 restrict participation when conduct is inappropriate. Reports will be handled
@@ -25,5 +25,5 @@ fairness.
 
 ## Attribution
 
-This policy is a concise project-specific code informed by the Contributor
-Covenant, version 2.1: https://www.contributor-covenant.org/version/2/1/code_of_conduct/
+This policy is a concise project-specific code informed by the
+[Contributor Covenant, version 2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct/).

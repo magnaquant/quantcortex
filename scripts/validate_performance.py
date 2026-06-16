@@ -1,16 +1,14 @@
-"""Measured out-of-sample performance validation against the design targets.
+"""Measured live-data performance diagnostics for the reference strategies.
 
 This harness fetches *real* split/dividend-adjusted prices (yfinance), runs the
 reference strategies through the mandatory-cost backtest engine, and reports the
 measured CAGR / Sharpe / Sortino / Calmar / max-drawdown plus the Deflated
 Sharpe Ratio, side by side with naive buy-and-hold benchmarks.
 
-It is deliberately *honest*: it reports whatever the data shows and makes no
-attempt to tune toward the README's aspirational Sharpe targets (doing so on a
-single historical window is exactly the overfitting the platform's DSR / BHY
-tooling exists to catch). A survivorship-safe single-name study requires a
-licensed provider with delisted-security prices; this yfinance-only harness
-does not provide that dataset.
+It reports whatever the selected data and configuration show without comparing
+the output with an arbitrary pass/fail target. A survivorship-safe single-name
+study requires a licensed provider with delisted-security prices; this
+yfinance-only harness does not provide that dataset.
 
     python scripts/validate_performance.py --live-yfinance
     python scripts/validate_performance.py 2010 2020 --live-yfinance
@@ -145,11 +143,11 @@ def benchmark_returns(
     return spy, equal_weight
 
 
-def fmt_row(name: str, m: dict, target: str = "") -> str:
+def fmt_row(name: str, m: dict) -> str:
     return (
         f"  {name:<26} Sharpe {m['sharpe']:+5.2f}  CAGR {m['cagr']:+7.2%}  "
         f"Sortino {m['sortino']:+5.2f}  Calmar {m['calmar']:+5.2f}  "
-        f"maxDD {m['max_drawdown']:+6.1%}  DSR {m['dsr']:.3f}  {target}"
+        f"maxDD {m['max_drawdown']:+6.1%}  DSR {m['dsr']:.3f}"
     )
 
 
@@ -286,7 +284,7 @@ def main(argv) -> int:
         n_trials=args.n_trials,
         sr_variance=args.sr_variance,
     )
-    print(fmt_row("multi_asset_rotation", rot, "[target Sharpe > 1.10]"))
+    print(fmt_row("multi_asset_rotation", rot))
 
     try:
         mom_syms, mom_label = momentum_universe(start, args.pit)
@@ -312,12 +310,11 @@ def main(argv) -> int:
         n_trials=args.n_trials,
         sr_variance=args.sr_variance,
     )
-    print(fmt_row("momentum_ml", mom, "[target Sharpe > 0.9]"))
+    print(fmt_row("momentum_ml", mom))
 
     print("\n" + "=" * 78)
-    print("Note: targets are aspirational design goals, not claims about the")
-    print("reference implementation. Benchmarks are gross; strategy results use")
-    print("flat costs without ADV caps. The single-name read is not fully")
+    print("Note: benchmarks are gross; strategy results use flat costs without")
+    print("ADV caps. The single-name read is not fully")
     print("survivorship-safe. Use a licensed point-in-time feed for evaluation.")
     return 0
 

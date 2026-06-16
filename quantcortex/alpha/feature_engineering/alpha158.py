@@ -453,9 +453,8 @@ class Alpha158:
 # Feature count sanity check (qlib Alpha158 == 158 with 5 windows):
 #   KBAR (9) + PRICE (4) + 29 rolling families * 5 windows (145) == 158
 # ---------------------------------------------------------------------- #
-assert (
-    9 + 4 + len(Alpha158._ROLLING_FAMILIES) * 5 == 158
-), "Alpha158 default layout must produce exactly 158 features."
+if 9 + 4 + len(Alpha158._ROLLING_FAMILIES) * 5 != 158:
+    raise RuntimeError("Alpha158 default layout must produce exactly 158 features")
 
 
 def _self_test() -> None:
@@ -479,17 +478,23 @@ def _self_test() -> None:
     model = Alpha158()
     feats = model.compute(ohlcv)
 
-    assert list(feats.columns) == model.feature_names(), "Column order mismatch."
-    assert len(feats.columns) == 158, f"Expected 158 features, got {len(feats.columns)}"
+    if list(feats.columns) != model.feature_names():
+        raise RuntimeError("Alpha158 self-test found a column-order mismatch")
+    if len(feats.columns) != 158:
+        raise RuntimeError(
+            f"Alpha158 self-test expected 158 features, got {len(feats.columns)}"
+        )
 
     # After the warmup (longest window), no column should be entirely NaN.
     warmup = max(model.windows) + 2
     tail = feats.iloc[warmup:]
     all_nan = [c for c in tail.columns if tail[c].isna().all()]
-    assert not all_nan, f"Columns entirely NaN after warmup: {all_nan}"
+    if all_nan:
+        raise RuntimeError(f"Alpha158 columns entirely NaN after warmup: {all_nan}")
 
     # No infinities should remain.
-    assert not np.isinf(feats.to_numpy(dtype="float64")).any(), "Infinities present."
+    if np.isinf(feats.to_numpy(dtype="float64")).any():
+        raise RuntimeError("Alpha158 self-test found infinite values")
 
     print(f"Alpha158 self-test passed: {len(feats.columns)} features.")
 

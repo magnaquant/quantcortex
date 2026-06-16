@@ -7,6 +7,7 @@ import pytest
 from quantcortex.execution.order_manager import (
     DuplicateOrderError,
     InvalidOrderTransitionError,
+    OrderError,
     OrderManager,
     OrderSide,
     OrderStatus,
@@ -90,11 +91,11 @@ def test_overfill_rejected():
     om = OrderManager()
     om.create_order("o6", "AAPL", OrderSide.BUY, 10)
     om.submit("o6")
-    with pytest.raises(Exception):
+    with pytest.raises(OrderError):
         om.fill("o6", 20)  # more than the order quantity
 
 
 def test_limit_order_requires_price():
     om = OrderManager()
-    with pytest.raises(Exception):
+    with pytest.raises(OrderError):
         om.create_order("o7", "AAPL", OrderSide.BUY, 10, order_type=OrderType.LIMIT)

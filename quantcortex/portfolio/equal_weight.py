@@ -29,6 +29,8 @@ def _infer_n_assets(returns) -> int:
     """
     if returns is None:
         raise ValueError("EqualWeight needs either `returns` or `n_assets`.")
+    if isinstance(returns, (bool, np.bool_)):
+        raise TypeError("asset count must be an integer, not boolean")
     if isinstance(returns, (int, np.integer)):
         return int(returns)
     if isinstance(returns, pd.Series):
@@ -59,8 +61,11 @@ class EqualWeight(PortfolioOptimizer):
         n_assets: Optional[int] = None,
         **_: Union[int, float],
     ) -> np.ndarray:
-        if isinstance(n_assets, (bool, np.bool_)):
-            raise TypeError("n_assets must be an integer, not boolean")
+        if n_assets is not None and (
+            isinstance(n_assets, (bool, np.bool_))
+            or not isinstance(n_assets, (int, np.integer))
+        ):
+            raise TypeError("n_assets must be an integer, not boolean or fractional")
         n = int(n_assets) if n_assets is not None else _infer_n_assets(returns)
         if n <= 0:
             raise ValueError(f"n_assets must be positive, got {n}")

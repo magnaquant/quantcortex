@@ -191,7 +191,7 @@ class TradingCalendar:
             if self.exchange.upper() not in _US_EQUITY_EXCHANGES:
                 raise ValueError(
                     f"offline calendar does not support exchange {self.exchange!r}"
-                )
+                ) from None
         else:
             try:
                 self._mcal = mcal.get_calendar(self.exchange)

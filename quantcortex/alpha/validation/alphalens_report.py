@@ -380,7 +380,8 @@ class AlphalensReport:
     def _ensure(self) -> Dict[str, object]:
         if self._results is None:
             self.compute()
-        assert self._results is not None
+        if self._results is None:
+            raise RuntimeError("factor analysis did not produce results")
         return self._results
 
     def summary(self) -> str:
@@ -428,30 +429,44 @@ class AlphalensReport:
         matplotlib.figure.Figure
         """
         import matplotlib.pyplot as plt  # lazy import
+        from matplotlib.ticker import PercentFormatter
+
+        from quantcortex.backtest.metrics.plotting import (
+            INK,
+            NEGATIVE_RED,
+            REFERENCE_BLUE,
+            plot_style_context,
+            style_axis,
+        )
 
         r = self._ensure()
         ic: pd.Series = r["ic"]  # type: ignore[assignment]
         qret: pd.DataFrame = r["quantile_returns"]  # type: ignore[assignment]
 
-        fig, (ax_ic, ax_q) = plt.subplots(1, 2, figsize=(12, 4.5))
+        with plot_style_context("notebook"):
+            fig, (ax_ic, ax_q) = plt.subplots(1, 2, figsize=(11, 4.2))
 
-        cum_ic = ic.fillna(0.0).cumsum()
-        ax_ic.plot(cum_ic.index, cum_ic.values, color="C0", lw=1.4)
-        ax_ic.axhline(0.0, color="black", lw=0.6, alpha=0.6)
-        ax_ic.set_title(f"Cumulative IC (mean={r['ic_mean']:.4f})")
-        ax_ic.set_xlabel("date")
-        ax_ic.set_ylabel("cumulative IC")
+            cum_ic = ic.fillna(0.0).cumsum()
+            ax_ic.plot(cum_ic.index, cum_ic.values, color=REFERENCE_BLUE, lw=1.5)
+            ax_ic.axhline(0.0, color=INK, lw=0.8)
+            ax_ic.set_title(f"Cumulative IC (mean={r['ic_mean']:.4f})")
+            ax_ic.set_xlabel("Date")
+            ax_ic.set_ylabel("Cumulative IC")
+            style_axis(ax_ic, grid="y")
 
-        bars = qret.drop(index="long_short", errors="ignore")
-        ax_q.bar(
-            [str(q) for q in bars.index],
-            bars["mean_return"].values,
-            color="C1",
-        )
-        ax_q.axhline(0.0, color="black", lw=0.6, alpha=0.6)
-        ax_q.set_title("Mean forward return by quantile")
-        ax_q.set_xlabel("quantile")
-        ax_q.set_ylabel("mean return")
+            bars = qret.drop(index="long_short", errors="ignore")
+            values = bars["mean_return"].to_numpy(dtype=float)
+            colors = [
+                REFERENCE_BLUE if value >= 0.0 else NEGATIVE_RED
+                for value in values
+            ]
+            ax_q.bar([str(q) for q in bars.index], values, color=colors)
+            ax_q.axhline(0.0, color=INK, lw=0.8)
+            ax_q.set_title("Mean forward return by quantile")
+            ax_q.set_xlabel("Quantile")
+            ax_q.set_ylabel("Mean return")
+            ax_q.yaxis.set_major_formatter(PercentFormatter(1.0))
+            style_axis(ax_q, grid="y")
 
-        fig.tight_layout()
+            fig.tight_layout()
         return fig

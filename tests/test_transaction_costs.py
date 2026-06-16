@@ -23,6 +23,7 @@ def test_buy_only_applies_commission_plus_slippage():
     assert res.sell_cost.sum() == pytest.approx(0.0)
     assert res.buy_cost.sum() == pytest.approx(expected)
     assert res.turnover == pytest.approx(1.0)
+    assert res.traded_notional == pytest.approx(1.0)
 
 
 def test_sell_only_applies_commission_plus_slippage_plus_tax():
@@ -48,6 +49,7 @@ def test_mixed_trade_splits_buy_and_sell():
     assert res.sell_cost.sum() == pytest.approx(0.3 * 0.001)
     assert res.total_cost == pytest.approx(0.6 * 0.001)
     assert res.turnover == pytest.approx(0.3)
+    assert res.traded_notional == pytest.approx(0.6)
 
 
 def test_adv_caps_cannot_create_an_overgross_intermediate_book():

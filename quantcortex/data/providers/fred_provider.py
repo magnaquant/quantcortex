@@ -16,7 +16,7 @@ an appropriate point-in-time vintage dataset separately.
 from __future__ import annotations
 
 import os
-from typing import Dict, List, Optional, Sequence, Union
+from typing import ClassVar, Dict, List, Optional, Sequence, Union
 
 import pandas as pd
 
@@ -31,7 +31,7 @@ class FREDProvider(DataProvider):
     name = "fred"
 
     #: curated friendly-name -> FRED series id catalogue
-    COMMON_SERIES: Dict[str, str] = {
+    COMMON_SERIES: ClassVar[Dict[str, str]] = {
         "DGS10": "DGS10",  # 10-Year Treasury constant maturity yield
         "DGS2": "DGS2",  # 2-Year Treasury constant maturity yield
         "VIXCLS": "VIXCLS",  # CBOE Volatility Index

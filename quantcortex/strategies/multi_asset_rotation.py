@@ -17,7 +17,8 @@ Signal construction
    regress its returns on the benchmark (a trailing CAPM) and measure the
    momentum of the residual (idiosyncratic) return over ``mom_lookback`` days,
    excluding the most recent ``mom_gap`` days to skip short-term reversal.  The
-   residual-momentum scores feed the allocator.
+   positive residual-momentum scores feed the allocator; if none are positive,
+   the strategy holds cash rather than switching to another signal.
 
 Overlays
 --------
@@ -35,7 +36,7 @@ the six ETFs (a VIX series in ``ctx.extra['vix']`` is optional).
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import ClassVar, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -76,8 +77,18 @@ class MultiAssetRotation(Strategy):
         remains in cash.
     regime:
         Enable the regime timing gate.
+    regime_n_states, regime_covariance_type, regime_n_iter, regime_seed:
+        Gaussian-mixture or HMM configuration used by the regime gate.
+    regime_reg_covar:
+        GMM covariance regularization. Ignored by the HMM backend.
+    regime_feature_vol_lookback:
+        Rolling realized-volatility window used in the regime feature matrix.
     vix_scale:
         Enable the VIX risk overlay.
+    vix_floor, vix_cap:
+        Lower and upper bounds for the inverse-volatility exposure multiplier.
+    vix_proxy_lookback:
+        Realized-volatility lookback used when no external VIX series is supplied.
     **kw:
         Forwarded to :class:`~quantcortex.strategies.base_strategy.Strategy`.
 
@@ -95,7 +106,7 @@ class MultiAssetRotation(Strategy):
     """
 
     #: Asset-class groups mapped to their member proxy ETFs.
-    GROUPS: Dict[str, List[str]] = {
+    GROUPS: ClassVar[Dict[str, List[str]]] = {
         "growth": ["QQQ", "VGT"],
         "real_assets": ["GLD", "TLT"],
         "defensive": ["SPY", "VIG"],
@@ -116,7 +127,16 @@ class MultiAssetRotation(Strategy):
         max_position_weight: float = DEFAULT_MAX_POSITION_WEIGHT,
         regime: bool = True,
         regime_backend: str = "gmm",
+        regime_n_states: int = 3,
+        regime_covariance_type: str = "full",
+        regime_n_iter: int = 100,
+        regime_seed: int = 42,
+        regime_reg_covar: float = 1e-5,
+        regime_feature_vol_lookback: int = 20,
         vix_scale: bool = True,
+        vix_floor: float = 0.3,
+        vix_cap: float = 1.0,
+        vix_proxy_lookback: int = 21,
         **kw,
     ) -> None:
         optimizer = optimizer if optimizer is not None else EqualWeight()
@@ -126,13 +146,18 @@ class MultiAssetRotation(Strategy):
             "ir_lookback": ir_lookback,
             "mom_lookback": mom_lookback,
             "mom_gap": mom_gap,
+            "regime_n_states": regime_n_states,
+            "regime_n_iter": regime_n_iter,
+            "regime_seed": regime_seed,
+            "regime_feature_vol_lookback": regime_feature_vol_lookback,
+            "vix_proxy_lookback": vix_proxy_lookback,
         }
         if any(
             isinstance(value, (bool, np.bool_))
             or not isinstance(value, (int, np.integer))
             for value in integer_parameters.values()
         ):
-            raise TypeError("group and lookback parameters must be integers")
+            raise TypeError("integer strategy parameters must be integers")
         if not isinstance(regime, (bool, np.bool_)):
             raise TypeError("regime must be a boolean")
         if not isinstance(vix_scale, (bool, np.bool_)):
@@ -173,9 +198,26 @@ class MultiAssetRotation(Strategy):
             raise ValueError("mom_gap must be non-negative")
         if self.mom_gap >= self.mom_lookback:
             raise ValueError("mom_gap must be smaller than mom_lookback")
+        if regime_feature_vol_lookback < 2:
+            raise ValueError("regime_feature_vol_lookback must be at least 2")
+        if vix_proxy_lookback < 2:
+            raise ValueError("vix_proxy_lookback must be at least 2")
 
-        self._hmm = HMMRegime(n_states=3, backend=regime_backend)
-        self._vix_scaler = VIXScaler(target_vix=target_vix)
+        self.regime_feature_vol_lookback = int(regime_feature_vol_lookback)
+        self.vix_proxy_lookback = int(vix_proxy_lookback)
+        self._hmm = HMMRegime(
+            n_states=regime_n_states,
+            covariance_type=regime_covariance_type,
+            n_iter=regime_n_iter,
+            seed=regime_seed,
+            reg_covar=regime_reg_covar,
+            backend=regime_backend,
+        )
+        self._vix_scaler = VIXScaler(
+            target_vix=target_vix,
+            floor=vix_floor,
+            cap=vix_cap,
+        )
 
         if self.regime_enabled:
             self.timing_overlays.append(self._regime_overlay)
@@ -187,8 +229,14 @@ class MultiAssetRotation(Strategy):
     def required_history(self) -> int:
         """Price sessions needed before every default signal path is mature."""
         residual_momentum = self.mom_gap + 2 * self.mom_lookback + 1
-        regime_prices = 61 if self.regime_enabled else 0
-        vix_proxy_prices = 6 if self.vix_scale_enabled else 0
+        regime_prices = (
+            max(61, self.regime_feature_vol_lookback + 1)
+            if self.regime_enabled
+            else 0
+        )
+        vix_proxy_prices = (
+            self.vix_proxy_lookback + 1 if self.vix_scale_enabled else 0
+        )
         ir_prices = self.ir_lookback + 1
         return max(residual_momentum, regime_prices, vix_proxy_prices, ir_prices)
 
@@ -247,7 +295,7 @@ class MultiAssetRotation(Strategy):
         scores = scores.reindex(members).dropna()
         scores = scores[scores > 0.0]
         if scores.empty:
-            return self._fallback_momentum(prices)
+            return pd.Series(dtype=float)
         return scores
 
     # ------------------------------------------------------------------ #
@@ -330,7 +378,7 @@ class MultiAssetRotation(Strategy):
         return ret.astype(float)
 
     def _fallback_momentum(self, prices: pd.DataFrame) -> pd.Series:
-        """Plain momentum over the full available universe (last resort)."""
+        """Plain momentum fallback when the benchmark/group signal is unavailable."""
         if prices.shape[1] == 0 or len(prices) < 2:
             return pd.Series(dtype=float)
         mom = self._plain_momentum(prices).dropna()
@@ -354,7 +402,10 @@ class MultiAssetRotation(Strategy):
         # Need enough history for a meaningful regime fit.
         if len(mkt) < 60:
             return np.zeros_like(w)
-        feats = HMMRegime._features_from_returns(mkt)
+        feats = HMMRegime._features_from_returns(
+            mkt,
+            realized_vol_lookback=self.regime_feature_vol_lookback,
+        )
         self._hmm.fit(feats)
         return self._hmm.scale_weights(w, feats)
 
@@ -392,11 +443,11 @@ class MultiAssetRotation(Strategy):
         )
 
     def _realized_vol_proxy(self, ctx: StrategyContext) -> Optional[float]:
-        """Annualized 21-day realized vol of the benchmark, in VIX points."""
+        """Annualized configured-lookback volatility, expressed in VIX points."""
         mkt = self._market_return_series(ctx)
-        if len(mkt) < 5:
+        if len(mkt) < 2:
             return None
-        win = min(21, len(mkt))
+        win = min(self.vix_proxy_lookback, len(mkt))
         rv = float(mkt.iloc[-win:].std(ddof=0))
         if not np.isfinite(rv) or rv <= 0:
             return None

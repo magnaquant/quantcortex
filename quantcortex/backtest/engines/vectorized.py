@@ -50,9 +50,13 @@ class BacktestResult:
     gross_returns:
         Per-period portfolio returns *before* transaction costs.
     costs:
-        Per-period transaction cost (fraction of NAV).
+        Per-period return drag from transaction costs, measured against the
+        prior bar's NAV so that ``returns == gross_returns - costs`` exactly.
     turnover:
         Per-period one-way turnover actually executed.
+    traded_notional:
+        Per-period gross two-sided traded notional actually executed. This is
+        the sum of buy and sell notionals as a fraction of pre-trade NAV.
     asset_contribution:
         Per-period risky-asset contribution before transaction costs.
     cash_contribution:
@@ -69,6 +73,7 @@ class BacktestResult:
     gross_returns: "pd.Series"
     costs: "pd.Series"
     turnover: "pd.Series"
+    traded_notional: Optional["pd.Series"] = None
     metadata: dict = field(default_factory=dict)
     asset_contribution: Optional["pd.Series"] = None
     cash_contribution: Optional["pd.Series"] = None
@@ -334,6 +339,7 @@ class VectorizedBacktest:
         cash_contribution_arr = np.zeros(n, dtype=np.float64)
         costs_arr = np.zeros(n, dtype=np.float64)
         turnover_arr = np.zeros(n, dtype=np.float64)
+        traded_notional_arr = np.zeros(n, dtype=np.float64)
         eff = np.zeros((n, n_sym), dtype=np.float64)
 
         # Iterate rebalances chronologically, maintaining the EXECUTED weight
@@ -373,6 +379,7 @@ class VectorizedBacktest:
             period_cost = result.total_cost * (1.0 + float(seg[-1]))
             costs_arr[p] = period_cost
             turnover_arr[p] = result.turnover
+            traded_notional_arr[p] = result.traded_notional
             eff[start:p] = current
             nav *= (1.0 + float(seg[-1])) * (1.0 - result.total_cost)
             if not np.isfinite(nav) or nav <= 0.0:
@@ -394,6 +401,7 @@ class VectorizedBacktest:
         gross = pd.Series(gross_arr, index=prices.index)
         costs = pd.Series(costs_arr, index=prices.index)
         turnover = pd.Series(turnover_arr, index=prices.index)
+        traded_notional = pd.Series(traded_notional_arr, index=prices.index)
         effective_weights = pd.DataFrame(
             eff, index=prices.index, columns=symbols
         )
@@ -421,6 +429,7 @@ class VectorizedBacktest:
             gross_returns=gross,
             costs=costs,
             turnover=turnover,
+            traded_notional=traded_notional,
             metadata=metadata,
             asset_contribution=asset_contribution,
             cash_contribution=cash_contribution,

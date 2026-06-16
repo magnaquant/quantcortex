@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import Dict, Optional, Sequence, Union
+from typing import ClassVar, Dict, Optional, Sequence, Union
 
 import pandas as pd
 
@@ -28,7 +28,7 @@ class AlpacaProvider(DataProvider):
     name = "alpaca"
 
     #: map canonical timeframes to Alpaca unit/amount specifications
-    _TIMEFRAME_MAP: Dict[str, tuple[int, str]] = {
+    _TIMEFRAME_MAP: ClassVar[Dict[str, tuple[int, str]]] = {
         "1d": (1, "Day"),
         "1h": (1, "Hour"),
         "1wk": (1, "Week"),

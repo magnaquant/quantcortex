@@ -1,12 +1,16 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. It is the authoritative agent guide; `AGENTS.md` is a short orientation for other agents and must stay consistent with this file.
+This file provides guidance to Claude Code (claude.ai/code) when working with
+code in this repository. It is the authoritative agent guide; `AGENTS.md` is a
+short orientation for other agents and must stay consistent with this file.
 
 ## Commands
 
-A `.venv` holds the scientific core plus the optional stack. Reproduce the
-reviewed development environment with `pip install -r requirements/dev.lock`
-and `pip install --no-deps -e .`. Run everything from the repo root.
+A `.venv` is the reviewed local environment. `requirements/dev.lock` installs
+the scientific core plus test and notebook tooling; optional integrations use
+Poetry extras or the dedicated exported locks under `requirements/`. Install
+the development lock with `pip install -r requirements/dev.lock`, then run
+`pip install --no-deps -e .`. Run everything from the repo root.
 
 - Tests: `.venv/bin/python -m pytest tests/ -q` (pytest config sets
   `pythonpath = ["."]`, so the `quantcortex` package resolves from the root).
@@ -39,7 +43,7 @@ been checked directly.
 - Keep the gates green: `ruff check .` and `pytest tests/ -q` must pass before a
   change is done (CI enforces both). When fixing a bug, add a regression test
   under `tests/` (see `tests/test_regression_guards.py` for the style: assert a
-  hand-derived/canonical value, not a snapshot of current behaviour).
+  hand-derived/canonical value, not a snapshot of current behavior).
 - Make surgical changes: touch only what the task needs; do not reformat,
   re-sort imports, or "improve" unrelated code. The regressions found here
   (regime non-determinism, the pre-trade contract, factor-cap ordering, the
@@ -131,8 +135,9 @@ current Wikipedia change table, rejects dates before source coverage, and is
 still only an approximation. Named index classes do not silently select their
 survivorship-biased demo subsets. `Broker` (quantcortex/execution/brokers/
 base.py): `submit_order/get_positions/get_account`, adapters lazy-load their SDK.
-`OrderManager`: a NEW -> SUBMITTED -> FILLED state machine that validates the
-transition before mutating the order.
+`OrderManager`: a validated NEW -> SUBMITTED -> PARTIALLY_FILLED -> FILLED
+lifecycle, with cancellation and rejection terminal paths. Submission-intent
+state is persisted separately before any broker call.
 
 The Alpaca and IB adapters target `alpaca-py` and `ib_async`. SDK-shaped mocks
 and real SDK model-construction tests do not establish authenticated transport,
@@ -152,10 +157,10 @@ local build output excluded from the runtime image via `.dockerignore`.
 
 ## Honesty norms
 
-The strategies' Sharpe targets (1.10 / 0.9 in the README) are aspirational
-design goals, not measured claims. Do not tune toward a single backtest; record
-the true trial count for DSR/BHY analysis and report unfavorable results as-is.
+Do not tune toward a single backtest or use an arbitrary metric threshold as a
+substitute for evidence. Preserve the full configuration or hypothesis set for
+DSR and BHY analysis, and report unfavorable results as-is.
 Every published run needs source, permission, date-window, adjustment, and input
 digest metadata. See PERFORMANCE.md. Use ASCII punctuation in source and docs;
-the README directory-tree block and established proper-name diacritics are the
+established proper-name diacritics in author and bibliography metadata are the
 only intentional exceptions.
