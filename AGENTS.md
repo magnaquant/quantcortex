@@ -18,10 +18,13 @@ Run from the repo root:
 .venv/bin/ruff check .
 PYTHONPATH=. .venv/bin/python scripts/verify_brokers.py
 PYTHONPATH=. .venv/bin/python scripts/generate_report.py \
-  --prices-csv local_data/rotation_prices.csv
+  --prices-csv local_data/published_rotation_prices.csv \
+  --cash-proxy-symbol SHV
 ```
 
-`pytest` runs the offline core suite; `ruff check .` matches CI lint. Scripts need `PYTHONPATH=.` unless installed editable. If matplotlib cannot write its cache (sandbox/CI), set `MPLCONFIGDIR` to a writable dir.
+Install the reviewed environment from `requirements/dev.lock`. Scripts need
+`PYTHONPATH=.` unless installed editable. Set `MPLCONFIGDIR` to a writable
+directory when required.
 
 ## Coding Style & Naming Conventions
 
@@ -29,11 +32,17 @@ Target Python 3.11+. Use 4-space indentation, `snake_case` modules/functions, `P
 
 ## Testing Guidelines
 
-Tests use pytest and deterministic synthetic data. Add focused regression tests for contract, accounting, causality, and execution-state changes. Keep optional integrations lazy and mock external brokers/providers; CI installs only the scientific core. Use `test_*.py` and `test_*`.
+Tests use pytest and deterministic synthetic data. Add focused regression tests
+for contract, accounting, causality, and execution-state changes. Keep optional
+integrations lazy and mock external brokers/providers. Use `test_*.py` and
+`test_*`.
 
 ## Load-Bearing Constraints
 
-Do not weaken the strict allocation contract or relaxed post-overlay exposure contract. Backtests must use a `TransactionCostModel`. Factors and strategy features must stay point-in-time and causal. Broker SDKs, ML libraries, Redis, and data providers should stay lazy imports with clear fallbacks or errors.
+Do not weaken the strict allocation contract or relaxed post-overlay exposure
+contract. Backtests must use a `TransactionCostModel`; nonzero residual-cash
+returns require a complete aligned series. Factors and strategy features must
+stay point-in-time and causal. Optional integrations stay lazy imports.
 
 ## Commit & Pull Request Guidelines
 

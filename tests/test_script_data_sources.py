@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -125,6 +126,19 @@ def test_report_rejects_malformed_date_boundaries_before_loading_data():
     assert "must be an ISO date or datetime" in provenance.stderr
 
 
+def test_report_rejects_cash_proxy_inside_strategy_universe():
+    result = run_script(
+        "scripts/generate_report.py",
+        "--prices-csv",
+        "missing.csv",
+        "--cash-proxy-symbol",
+        "spy",
+    )
+
+    assert result.returncode == 2
+    assert "cash proxy must be distinct" in result.stderr
+
+
 def test_report_and_validation_benchmarks_share_the_evaluation_clock():
     dates = pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"])
     prices = pd.DataFrame(
@@ -189,6 +203,44 @@ def test_report_rolling_beta_and_allocation_cash_are_hand_calculable():
     assert allocation.sum(axis=1).tolist() == pytest.approx([1.0, 1.0])
 
 
+def test_report_cash_attribution_and_exposure_matching_are_causal():
+    dates = pd.bdate_range("2024-01-02", periods=4)
+    prices = pd.DataFrame(
+        100.0,
+        index=dates,
+        columns=generate_report.ROTATION_UNIVERSE,
+    )
+    cash_returns = pd.Series(0.01, index=dates, name="cash proxy")
+
+    class HalfInvestedStrategy:
+        def generate_weights(self, _prices, _rebalance_dates):
+            weights = pd.DataFrame(
+                0.0,
+                index=pd.DatetimeIndex([dates[0]]),
+                columns=generate_report.ROTATION_UNIVERSE,
+            )
+            weights.loc[dates[0], "SPY"] = 0.5
+            return weights
+
+    report = generate_report.compute(
+        prices,
+        n_trials=1,
+        cash_returns=cash_returns,
+        strategy=HalfInvestedStrategy(),
+    )
+
+    assert report["active_risky_exposure"].tolist() == pytest.approx(
+        [0.0, 0.0, 0.5, 0.5]
+    )
+    assert report["gross_returns"].tolist() == pytest.approx(
+        [0.01, 0.01, 0.005, 0.005]
+    )
+    assert report["exposure_matched_spy_returns"].tolist() == pytest.approx(
+        [0.01, 0.01, 0.005, 0.005]
+    )
+    assert report["m"]["cash_contribution_sum"] == pytest.approx(0.03)
+
+
 def test_report_generates_complete_local_diagnostic_gallery(tmp_path):
     rng = np.random.default_rng(20240615)
     dates = pd.bdate_range("2017-01-03", periods=850, name="date")
@@ -209,6 +261,7 @@ def test_report_generates_complete_local_diagnostic_gallery(tmp_path):
 
     image_dir = tmp_path / "reports" / "img"
     report_path = tmp_path / "reports" / "report.md"
+    manifest_path = tmp_path / "reports" / "performance_manifest.json"
     result = run_script(
         "scripts/generate_report.py",
         "--prices-csv",
@@ -231,6 +284,8 @@ def test_report_generates_complete_local_diagnostic_gallery(tmp_path):
         str(image_dir),
         "--report-out",
         str(report_path),
+        "--manifest-out",
+        str(manifest_path),
         extra_env={"MPLCONFIGDIR": str(tmp_path / "mpl")},
     )
 
@@ -243,7 +298,16 @@ def test_report_generates_complete_local_diagnostic_gallery(tmp_path):
     report = report_path.read_text(encoding="utf-8")
     assert "Strategy returns" in report
     assert "SHA-256" in report
-    assert "Deflated Sharpe (3 trials)" in report
+    assert "Deflated cash-excess Sharpe (3 trials)" in report
     assert "complete (owner-supplied; permission not independently verified)" in report
     for filename, _ in generate_report.REPORT_ARTIFACTS:
         assert f"img/{filename}" in report
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 2
+    assert manifest["source"]["input_sha256"]
+    assert manifest["evaluation"]["dsr_trials_assumed"] == 3
+    assert manifest["evaluation"]["sharpe_basis"].startswith("per-period return")
+    assert set(manifest["artifacts"]) == {
+        filename for filename, _ in generate_report.REPORT_ARTIFACTS
+    }

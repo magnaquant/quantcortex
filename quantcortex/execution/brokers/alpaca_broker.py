@@ -1,8 +1,8 @@
 """Alpaca broker adapter.
 
 Routes quantcortex orders to the `Alpaca <https://alpaca.markets>`_ commission-free
-US-equities API for both paper and live trading.  The Alpaca SDK
-(``alpaca-trade-api``) is an *optional* dependency and is imported lazily inside
+US-equities API for both paper and live trading.  The maintained Alpaca SDK
+(``alpaca-py``) is an *optional* dependency and is imported lazily inside
 :meth:`AlpacaBroker.connect` - importing this module never requires it.
 
 Credentials are read from the constructor arguments, falling back to the
@@ -74,6 +74,11 @@ _ALPACA_STATUS_MAP = {
     "accepted": OrderStatus.SUBMITTED,
     "pending_new": OrderStatus.SUBMITTED,
     "accepted_for_bidding": OrderStatus.SUBMITTED,
+    "pending_cancel": OrderStatus.SUBMITTED,
+    "pending_replace": OrderStatus.SUBMITTED,
+    "pending_review": OrderStatus.SUBMITTED,
+    "calculated": OrderStatus.SUBMITTED,
+    "held": OrderStatus.SUBMITTED,
     "partially_filled": OrderStatus.PARTIALLY_FILLED,
     "filled": OrderStatus.FILLED,
     "canceled": OrderStatus.CANCELLED,
@@ -119,6 +124,7 @@ class AlpacaBroker(Broker):
                 f"paper=False requires Alpaca's live endpoint, got {self.base_url!r}"
             )
         self._api = None  # populated by connect()
+        self._sdk = None  # request classes and enums, also injected by tests
 
     # ------------------------------------------------------------------ #
     # connection lifecycle
@@ -126,11 +132,27 @@ class AlpacaBroker(Broker):
     def connect(self) -> None:
         """Lazily import the Alpaca SDK and build the REST client."""
         try:
-            import alpaca_trade_api as tradeapi
+            from alpaca.common.enums import Sort
+            from alpaca.trading.client import TradingClient
+            from alpaca.trading.enums import (
+                OrderSide as AlpacaOrderSide,
+            )
+            from alpaca.trading.enums import (
+                OrderType as AlpacaOrderType,
+            )
+            from alpaca.trading.enums import (
+                QueryOrderStatus,
+                TimeInForce,
+            )
+            from alpaca.trading.requests import (
+                GetOrdersRequest,
+                LimitOrderRequest,
+                MarketOrderRequest,
+            )
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise ImportError(
-                "AlpacaBroker requires the 'alpaca-trade-api' package. "
-                "Install it with: pip install alpaca-trade-api"
+                "AlpacaBroker requires the 'alpaca-py' package. "
+                "Install it with: pip install alpaca-py"
             ) from exc
 
         if not self.api_key or not self.secret_key:
@@ -139,10 +161,21 @@ class AlpacaBroker(Broker):
                 "ALPACA_SECRET_KEY or pass api_key / secret_key."
             )
         try:
-            self._api = tradeapi.REST(
-                key_id=self.api_key,
+            self._sdk = {
+                "MarketOrderRequest": MarketOrderRequest,
+                "LimitOrderRequest": LimitOrderRequest,
+                "GetOrdersRequest": GetOrdersRequest,
+                "OrderSide": AlpacaOrderSide,
+                "OrderType": AlpacaOrderType,
+                "TimeInForce": TimeInForce,
+                "QueryOrderStatus": QueryOrderStatus,
+                "Sort": Sort,
+            }
+            self._api = TradingClient(
+                api_key=self.api_key,
                 secret_key=self.secret_key,
-                base_url=self.base_url,
+                paper=self.paper,
+                url_override=self.base_url,
             )
             # Cheap sanity round-trip to validate credentials/connectivity.
             self._api.get_account()
@@ -152,11 +185,17 @@ class AlpacaBroker(Broker):
     def disconnect(self) -> None:
         """Drop the REST client (Alpaca is stateless HTTP, so just release it)."""
         self._api = None
+        self._sdk = None
 
     def _require_api(self):
         if self._api is None:
             raise BrokerError("AlpacaBroker is not connected; call connect() first.")
         return self._api
+
+    def _require_sdk(self):
+        if self._sdk is None:
+            raise BrokerError("AlpacaBroker SDK bindings are unavailable; call connect().")
+        return self._sdk
 
     # ------------------------------------------------------------------ #
     # trading API
@@ -182,17 +221,32 @@ class AlpacaBroker(Broker):
         limit_price = request.limit_price
         client_order_id = self._validate_client_order_id(client_order_id)
         api = self._require_api()
+        sdk = self._require_sdk()
+
+        side_value = (
+            sdk["OrderSide"].BUY if side is OrderSide.BUY else sdk["OrderSide"].SELL
+        )
+        common = {
+            "symbol": symbol,
+            "qty": quantity,
+            "side": side_value,
+            "time_in_force": sdk["TimeInForce"].DAY,
+            "client_order_id": client_order_id,
+        }
+        if order_type is OrderType.MARKET:
+            request = sdk["MarketOrderRequest"](
+                **common,
+                type=sdk["OrderType"].MARKET,
+            )
+        else:
+            request = sdk["LimitOrderRequest"](
+                **common,
+                type=sdk["OrderType"].LIMIT,
+                limit_price=limit_price,
+            )
 
         try:
-            raw = api.submit_order(
-                symbol=symbol,
-                qty=quantity,
-                side="buy" if side is OrderSide.BUY else "sell",
-                type="market" if order_type is OrderType.MARKET else "limit",
-                time_in_force="day",
-                limit_price=limit_price if order_type is OrderType.LIMIT else None,
-                client_order_id=client_order_id,
-            )
+            raw = api.submit_order(order_data=request)
         except Exception as exc:
             raise BrokerError(f"Alpaca submit_order failed: {exc}") from exc
 
@@ -217,7 +271,13 @@ class AlpacaBroker(Broker):
         value = value.strip()
         if not value:
             raise BrokerError("Alpaca client_order_id must be non-empty.")
+        if len(value) > 48:
+            raise BrokerError("Alpaca client_order_id must be at most 48 characters.")
         return value
+
+    @staticmethod
+    def _enum_value(value) -> str:
+        return str(getattr(value, "value", value)).strip().lower()
 
     def _order_from_raw(self, raw) -> Order:
         """Translate a complete Alpaca order response without caller context."""
@@ -225,7 +285,7 @@ class AlpacaBroker(Broker):
         if not symbol:
             raise BrokerError("Alpaca order response is missing a symbol.")
 
-        raw_side = str(getattr(raw, "side", "")).strip().lower()
+        raw_side = self._enum_value(getattr(raw, "side", ""))
         if raw_side == "buy":
             side = OrderSide.BUY
         elif raw_side == "sell":
@@ -233,9 +293,9 @@ class AlpacaBroker(Broker):
         else:
             raise BrokerError(f"Unknown Alpaca order side {raw_side!r}.")
 
-        raw_type = str(
-            getattr(raw, "type", None) or getattr(raw, "order_type", "")
-        ).strip().lower()
+        raw_type = self._enum_value(
+            getattr(raw, "order_type", None) or getattr(raw, "type", "")
+        )
         if raw_type == "market":
             order_type = OrderType.MARKET
         elif raw_type == "limit":
@@ -269,7 +329,7 @@ class AlpacaBroker(Broker):
         order_id = str(getattr(raw, "id", "")).strip()
         if not order_id:
             raise BrokerError("Alpaca order response is missing its broker order id.")
-        raw_status = str(getattr(raw, "status", "")).strip().lower()
+        raw_status = self._enum_value(getattr(raw, "status", ""))
         try:
             status = _ALPACA_STATUS_MAP[raw_status]
         except KeyError as exc:
@@ -327,7 +387,7 @@ class AlpacaBroker(Broker):
         client_order_id = self._validate_client_order_id(client_order_id)
         api = self._require_api()
         try:
-            raw = api.get_order_by_client_order_id(client_order_id)
+            raw = api.get_order_by_client_id(client_order_id)
         except Exception as exc:
             if self._is_not_found_error(exc):
                 return None
@@ -344,10 +404,14 @@ class AlpacaBroker(Broker):
     def get_open_orders(self) -> List[Order]:
         """Return all open orders, failing if the venue result may be truncated."""
         api = self._require_api()
+        sdk = self._require_sdk()
+        request = sdk["GetOrdersRequest"](
+            status=sdk["QueryOrderStatus"].OPEN,
+            limit=500,
+            direction=sdk["Sort"].ASC,
+        )
         try:
-            raw_orders = list(
-                api.list_orders(status="open", limit=500, direction="asc")
-            )
+            raw_orders = list(api.get_orders(filter=request))
         except Exception as exc:
             raise BrokerError(f"Alpaca list_orders failed: {exc}") from exc
         if len(raw_orders) >= 500:
@@ -359,14 +423,14 @@ class AlpacaBroker(Broker):
     def cancel_order(self, broker_order_id: str) -> None:
         api = self._require_api()
         try:
-            api.cancel_order(broker_order_id)
+            api.cancel_order_by_id(broker_order_id)
         except Exception as exc:
             raise BrokerError(f"Alpaca cancel_order failed: {exc}") from exc
 
     def get_positions(self) -> List[Position]:
         api = self._require_api()
         try:
-            raw_positions = api.list_positions()
+            raw_positions = api.get_all_positions()
         except Exception as exc:
             raise BrokerError(f"Alpaca list_positions failed: {exc}") from exc
 

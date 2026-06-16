@@ -32,11 +32,52 @@ from quantcortex.execution.order_manager import (
 from quantcortex.execution.position_manager import PositionManager
 from quantcortex.execution.pre_trade_risk import PreTradeRiskCheck, PreTradeRiskError
 from quantcortex.execution.state_persistence import (
+    ExecutionSnapshot,
     StatePersistence,
     StatePersistenceError,
 )
 from quantcortex.portfolio.base import PortfolioMode
 from scripts import paper_trade_cycle
+
+
+class _FakeAlpacaRequest(SimpleNamespace):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+
+class _FakeAlpacaOrderSide:
+    BUY = "buy"
+    SELL = "sell"
+
+
+class _FakeAlpacaOrderType:
+    MARKET = "market"
+    LIMIT = "limit"
+
+
+class _FakeAlpacaTimeInForce:
+    DAY = "day"
+
+
+class _FakeAlpacaQueryStatus:
+    OPEN = "open"
+
+
+class _FakeSort:
+    ASC = "asc"
+
+
+def _fake_alpaca_sdk():
+    return {
+        "MarketOrderRequest": _FakeAlpacaRequest,
+        "LimitOrderRequest": _FakeAlpacaRequest,
+        "GetOrdersRequest": _FakeAlpacaRequest,
+        "OrderSide": _FakeAlpacaOrderSide,
+        "OrderType": _FakeAlpacaOrderType,
+        "TimeInForce": _FakeAlpacaTimeInForce,
+        "QueryOrderStatus": _FakeAlpacaQueryStatus,
+        "Sort": _FakeSort,
+    }
 
 
 class _MemoryState:
@@ -226,18 +267,19 @@ def test_alpaca_client_order_id_is_validated_and_forwarded():
     class FakeApi:
         called = False
 
-        def submit_order(self, **kwargs):
+        def submit_order(self, *, order_data):
             self.called = True
-            self.kwargs = kwargs
+            self.request = order_data
             return SimpleNamespace(
                 id="a1",
-                client_order_id=kwargs["client_order_id"],
+                client_order_id=order_data.client_order_id,
                 status="new",
                 filled_qty="0",
             )
 
     broker = AlpacaBroker()
     broker._api = FakeApi()
+    broker._sdk = _fake_alpaca_sdk()
     with pytest.raises(BrokerError, match="client_order_id"):
         broker.submit_order(
             "AAPL",
@@ -253,7 +295,16 @@ def test_alpaca_client_order_id_is_validated_and_forwarded():
         1.0,
         client_order_id=" qc-order-1 ",
     )
-    assert broker._api.kwargs["client_order_id"] == "qc-order-1"
+    assert broker._api.request.client_order_id == "qc-order-1"
+    assert broker._api.request.side == "buy"
+
+    with pytest.raises(BrokerError, match="at most 48"):
+        broker.submit_order(
+            "AAPL",
+            OrderSide.BUY,
+            1.0,
+            client_order_id="x" * 49,
+        )
 
 
 def test_alpaca_client_order_lookup_only_treats_definite_404_as_missing():
@@ -276,7 +327,7 @@ def test_alpaca_client_order_lookup_only_treats_definite_404_as_missing():
     class FakeApi:
         error = None
 
-        def get_order_by_client_order_id(self, client_order_id):
+        def get_order_by_client_id(self, client_order_id):
             if self.error is not None:
                 raise self.error
             return raw
@@ -309,14 +360,15 @@ def test_alpaca_open_order_reconciliation_fails_on_truncated_results():
     )
     broker = AlpacaBroker()
     broker._api = SimpleNamespace(
-        list_orders=lambda **kwargs: [raw],
+        get_orders=lambda *, filter: [raw],
     )
+    broker._sdk = _fake_alpaca_sdk()
     orders = broker.get_open_orders()
     assert len(orders) == 1
     assert orders[0].status is OrderStatus.SUBMITTED
 
     broker._api = SimpleNamespace(
-        list_orders=lambda **kwargs: [raw] * 500,
+        get_orders=lambda *, filter: [raw] * 500,
     )
     with pytest.raises(BrokerError, match="truncated"):
         broker.get_open_orders()
@@ -536,6 +588,75 @@ def test_state_persistence_validates_before_writing(monkeypatch, tmp_path):
         )
 
 
+def test_execution_snapshot_round_trips_as_one_versioned_record(monkeypatch, tmp_path):
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    store = StatePersistence(
+        namespace="snapshot",
+        file_path=tmp_path / "state.json",
+    )
+    order = OrderManager().create_order("o1", "AAPL", OrderSide.BUY, 2.0)
+
+    first = store.save_execution_snapshot(
+        positions={"AAPL": Position("AAPL", 1.0, 100.0, 101.0)},
+        orders=[order],
+        intents={"qc-1": {"state": "ATTEMPTING"}},
+        metadata={"cycle": "2024-01-02", "equity": 1_000.0},
+    )
+    loaded = store.load_execution_snapshot()
+
+    assert isinstance(first, ExecutionSnapshot)
+    assert loaded is not None
+    assert loaded.revision == 1
+    assert loaded.positions["AAPL"].market_price == 101.0
+    assert loaded.orders[0].order_id == "o1"
+    assert loaded.intents["qc-1"]["state"] == "ATTEMPTING"
+
+    second = store.save_execution_snapshot(
+        positions=loaded.positions,
+        orders=loaded.orders,
+        intents={"qc-1": {"state": "SUBMITTED"}},
+        metadata=loaded.metadata,
+        expected_revision=loaded.revision,
+    )
+    assert second.revision == 2
+    assert store.load_execution_snapshot().intents["qc-1"]["state"] == "SUBMITTED"
+
+
+def test_execution_snapshot_rejects_stale_concurrent_writer(monkeypatch, tmp_path):
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    path = tmp_path / "state.json"
+    first_store = StatePersistence(namespace="snapshot", file_path=path)
+    second_store = StatePersistence(namespace="snapshot", file_path=path)
+    initial = first_store.save_execution_snapshot(positions={}, orders=[])
+    stale = second_store.load_execution_snapshot()
+    assert stale is not None and stale.revision == initial.revision
+
+    first_store.save_execution_snapshot(
+        positions={"AAPL": 1.0},
+        orders=[],
+        expected_revision=initial.revision,
+    )
+    with pytest.raises(StatePersistenceError, match="revision conflict"):
+        second_store.save_execution_snapshot(
+            positions={"MSFT": 1.0},
+            orders=[],
+            expected_revision=stale.revision,
+        )
+
+    loaded = first_store.load_execution_snapshot()
+    assert loaded is not None
+    assert set(loaded.positions) == {"AAPL"}
+
+
+def test_execution_snapshot_requires_revision_after_creation(monkeypatch, tmp_path):
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    store = StatePersistence(namespace="snapshot", file_path=tmp_path / "state.json")
+    store.save_execution_snapshot(positions={}, orders=[])
+
+    with pytest.raises(StatePersistenceError, match="expected_revision is required"):
+        store.save_execution_snapshot(positions={}, orders=[])
+
+
 def test_latest_flat_target_generates_liquidation_orders(monkeypatch):
     dates = pd.bdate_range("2024-01-01", periods=3)
     prices = pd.DataFrame({"QQQ": [100.0, 101.0, 102.0]}, index=dates)
@@ -656,6 +777,87 @@ def test_paper_submission_timeout_is_persisted_and_not_retried_implicitly():
     assert returned_id == client_id
     assert placed.order_id == "a1"
     assert broker.submit_calls == 2
+
+
+def test_paper_submission_snapshot_is_coherent_and_revisioned(tmp_path):
+    class FakeBroker:
+        def find_order_by_client_order_id(self, client_order_id):
+            return None
+
+        def submit_order(
+            self,
+            symbol,
+            side,
+            quantity,
+            *,
+            client_order_id,
+        ):
+            return Order(
+                order_id="broker-1",
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                status=OrderStatus.SUBMITTED,
+            )
+
+    store = StatePersistence(
+        namespace="paper-snapshot",
+        file_path=tmp_path / "paper-state.json",
+    )
+    position = Position("QQQ", 2.0, market_price=100.0)
+    ledger, context = paper_trade_cycle._initialise_submission_state(
+        store,
+        positions={"QQQ": position},
+        orders=[],
+        metadata={"broker": "alpaca-paper", "cycle_as_of": "2024-01-02"},
+    )
+    assert context is not None
+    assert context["revision"] == 1
+
+    intent = {"symbol": "VGT", "side": OrderSide.BUY, "quantity": 5.0}
+    placed, submitted, client_id = paper_trade_cycle._reconcile_or_submit(
+        FakeBroker(),
+        store,
+        ledger,
+        "2024-01-02",
+        intent,
+        snapshot_context=context,
+    )
+
+    snapshot = store.load_execution_snapshot()
+    assert snapshot is not None
+    assert submitted
+    assert placed.order_id == "broker-1"
+    assert snapshot.revision == 3
+    assert snapshot.positions["QQQ"].quantity == 2.0
+    assert [order.order_id for order in snapshot.orders] == ["broker-1"]
+    assert snapshot.intents[client_id]["state"] == "SUBMITTED"
+    assert snapshot.metadata["cycle_as_of"] == "2024-01-02"
+
+
+def test_paper_submission_snapshot_migrates_legacy_ledger(tmp_path):
+    store = StatePersistence(
+        namespace="paper-migration",
+        file_path=tmp_path / "paper-state.json",
+    )
+    store.save_state(
+        paper_trade_cycle.SUBMISSION_LEDGER_KEY,
+        {"qc-existing": {"state": "UNKNOWN"}},
+    )
+
+    ledger, context = paper_trade_cycle._initialise_submission_state(
+        store,
+        positions={},
+        orders=[],
+        metadata={"broker": "alpaca-paper"},
+    )
+
+    snapshot = store.load_execution_snapshot()
+    assert context is not None
+    assert ledger["qc-existing"]["state"] == "UNKNOWN"
+    assert snapshot is not None
+    assert snapshot.intents == ledger
+    assert snapshot.metadata["migrated_legacy_submission_ledger"] is True
 
 
 def test_paper_cycle_refuses_to_trade_with_open_orders(monkeypatch):

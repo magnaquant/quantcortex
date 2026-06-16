@@ -5,6 +5,7 @@ engine and emits a local Markdown report plus separate diagnostic plots:
 
 * ``report_overview.png`` - compact four-panel review image
 * ``equity_vs_benchmarks.png`` - growth of $1 vs SPY and equal-weight
+* ``performance_attribution.png`` - gross, net, cash, and exposure matching
 * ``drawdown.png`` - underwater drawdown
 * ``rolling_sharpe.png`` - rolling 126-day Sharpe
 * ``rolling_risk.png`` - rolling volatility and beta to SPY
@@ -26,8 +27,13 @@ bundle market data or generated performance results.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.metadata
+import json
 import logging
 import os
+import platform
+import subprocess
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -53,6 +59,7 @@ ROTATION_UNIVERSE = ["QQQ", "VGT", "GLD", "TLT", "SPY", "VIG"]
 REPORT_ARTIFACTS = (
     ("report_overview.png", "Diagnostic overview"),
     ("equity_vs_benchmarks.png", "Net growth versus gross benchmarks"),
+    ("performance_attribution.png", "Performance and exposure attribution"),
     ("drawdown.png", "Underwater drawdown"),
     ("rolling_sharpe.png", "Rolling 126-session Sharpe"),
     ("rolling_risk.png", "Rolling volatility and beta to SPY"),
@@ -75,16 +82,21 @@ def load_prices(
     end: str,
     prices_csv: Path | None = None,
     live_yfinance: bool = False,
+    symbols: list[str] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, str]]:
     """Load prices from exactly one explicit source and return source metadata."""
     if (prices_csv is not None) == live_yfinance:
         raise ValueError("choose exactly one of prices_csv or live_yfinance")
 
+    requested_symbols = list(symbols or ROTATION_UNIVERSE)
+    if not requested_symbols or len(requested_symbols) != len(set(requested_symbols)):
+        raise ValueError("symbols must contain unique values")
+
     if prices_csv is not None:
         resolved = prices_csv.expanduser().resolve()
         prices = load_price_matrix(
             resolved,
-            symbols=ROTATION_UNIVERSE,
+            symbols=requested_symbols,
             start=start,
             end=end,
         )
@@ -99,7 +111,7 @@ def load_prices(
 
     provider_end = (pd.Timestamp(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     prices = YFinanceProvider().get_prices(
-        ROTATION_UNIVERSE, start=start, end=provider_end
+        requested_symbols, start=start, end=provider_end
     )
     if prices is None or prices.empty:
         raise RuntimeError("yfinance returned no prices")
@@ -119,9 +131,48 @@ def _growth(returns: pd.Series) -> pd.Series:
     return (1.0 + returns.fillna(0.0)).cumprod()
 
 
-def _ann_sharpe(r: pd.Series) -> float:
-    r = r.dropna()
-    return float(r.mean() / r.std() * np.sqrt(252)) if r.std() > 0 else float("nan")
+def _strategy_configuration(strategy) -> dict[str, object]:
+    """Return the research parameters that determine the rotation signal."""
+    configuration: dict[str, object] = {
+        "class": f"{type(strategy).__module__}.{type(strategy).__name__}",
+    }
+    for name in (
+        "top_n_groups",
+        "ir_lookback",
+        "mom_lookback",
+        "mom_gap",
+        "max_position_weight",
+        "regime_enabled",
+        "vix_scale_enabled",
+        "max_gross",
+    ):
+        if hasattr(strategy, name):
+            configuration[name] = getattr(strategy, name)
+    regime = getattr(strategy, "_hmm", None)
+    if regime is not None:
+        configuration["regime_backend"] = regime.backend
+        configuration["regime_states"] = regime.n_states
+        configuration["regime_seed"] = regime.seed
+        configuration["regime_max_iterations"] = regime.n_iter
+    vix_scaler = getattr(strategy, "_vix_scaler", None)
+    if vix_scaler is not None:
+        configuration["target_vix"] = vix_scaler.target_vix
+        configuration["vix_floor"] = vix_scaler.floor
+        configuration["vix_cap"] = vix_scaler.cap
+    return configuration
+
+
+def _ann_sharpe(
+    returns: pd.Series,
+    risk_free: pd.Series | float = 0.0,
+) -> float:
+    excess = (returns - risk_free).dropna()
+    standard_deviation = float(excess.std(ddof=1))
+    return (
+        float(excess.mean() / standard_deviation * np.sqrt(252.0))
+        if standard_deviation > 0.0
+        else float("nan")
+    )
 
 
 def _rolling_volatility(returns: pd.Series, window: int = 126) -> pd.Series:
@@ -227,6 +278,7 @@ def compute(
     prices: pd.DataFrame,
     n_trials: int = 10,
     *,
+    cash_returns: pd.Series | None = None,
     sr_variance: float | None = None,
     evaluation_start: str | pd.Timestamp | None = None,
     evaluation_end: str | pd.Timestamp | None = None,
@@ -240,7 +292,11 @@ def compute(
     if weights.empty:
         raise ValueError("strategy produced no target weights")
     cost_model = TransactionCostModel()
-    result = VectorizedBacktest(cost_model, capital=1.0).run(weights, prices)
+    result = VectorizedBacktest(cost_model, capital=1.0).run(
+        weights,
+        prices,
+        cash_returns=cash_returns,
+    )
     evaluation_index = _evaluation_index(
         prices, evaluation_start, evaluation_end
     )
@@ -248,10 +304,18 @@ def compute(
     if rets.empty:
         raise ValueError("backtest produced no returns in the evaluation window")
 
-    ts = Tearsheet(rets)
+    evaluation_cash_returns = (
+        pd.Series(0.0, index=rets.index, name="zero-return cash")
+        if cash_returns is None
+        else cash_returns.reindex(rets.index)
+    )
+    if evaluation_cash_returns.isna().any():
+        raise ValueError("cash returns do not cover the evaluation window")
+    excess_returns = rets - evaluation_cash_returns
+    ts = Tearsheet(rets, risk_free=evaluation_cash_returns)
     m = ts.compute()
     m["dsr"] = compute_dsr(
-        rets, n_trials=n_trials, sr_variance=sr_variance
+        excess_returns, n_trials=n_trials, sr_variance=sr_variance
     )
     m["dsr_n_trials"] = n_trials
     m["dsr_sr_variance"] = sr_variance
@@ -260,6 +324,47 @@ def compute(
     )
     m["summed_cost_fraction"] = float(result.costs.reindex(rets.index).sum())
     spy, ew = _buy_hold_returns(prices, rets.index)
+    active_weights = result.weights.shift(1).reindex(rets.index).fillna(0.0)
+    if (active_weights < -1e-10).any(axis=None):
+        raise ValueError("published rotation report requires long-only weights")
+    active_risky_exposure = active_weights.clip(lower=0.0).sum(axis=1)
+    if (active_risky_exposure > 1.0 + 1e-8).any():
+        raise ValueError("published rotation report requires gross exposure <= 100%")
+    active_gross_exposure = active_weights.abs().sum(axis=1)
+    active_cash_weight = 1.0 - active_risky_exposure
+    exposure_matched_spy = (
+        active_risky_exposure * spy + active_cash_weight * evaluation_cash_returns
+    )
+    exposure_matched_ew = (
+        active_risky_exposure * ew + active_cash_weight * evaluation_cash_returns
+    )
+    gross_returns = result.gross_returns.reindex(rets.index)
+    gross_metrics = Tearsheet(
+        gross_returns,
+        risk_free=evaluation_cash_returns,
+    ).compute()
+    m["gross_cagr"] = gross_metrics["cagr"]
+    m["gross_sharpe"] = gross_metrics["sharpe"]
+    m["mean_gross_exposure"] = float(active_gross_exposure.mean())
+    m["fully_cash_fraction"] = float((active_gross_exposure < 1e-12).mean())
+    m["cash_contribution_sum"] = float(
+        result.cash_contribution.reindex(rets.index).sum()
+    )
+    benchmark_metrics = {
+        "spy": Tearsheet(spy, risk_free=evaluation_cash_returns).compute(),
+        "equal_weight": Tearsheet(
+            ew, risk_free=evaluation_cash_returns
+        ).compute(),
+        "exposure_matched_spy": Tearsheet(
+            exposure_matched_spy,
+            risk_free=evaluation_cash_returns,
+        ).compute(),
+        "exposure_matched_equal_weight": Tearsheet(
+            exposure_matched_ew,
+            risk_free=evaluation_cash_returns,
+        ).compute(),
+        "cash_proxy": Tearsheet(evaluation_cash_returns).compute(),
+    }
     first_evaluation_position = prices.index.get_loc(rets.index[0])
     report_weights = result.weights.reindex(rets.index)
     allocation = _allocation_frame(report_weights)
@@ -268,13 +373,34 @@ def compute(
         "rets": rets,
         "ts": ts,
         "m": m,
+        "benchmark_metrics": benchmark_metrics,
+        "strategy_configuration": _strategy_configuration(strategy),
         "strat_g": _growth(rets),
+        "strat_gross_g": _growth(gross_returns),
         "spy_g": _growth(spy),
         "ew_g": _growth(ew),
-        "spy_sharpe": _ann_sharpe(spy),
-        "ew_sharpe": _ann_sharpe(ew),
+        "cash_g": _growth(evaluation_cash_returns),
+        "exposure_matched_spy_g": _growth(exposure_matched_spy),
+        "exposure_matched_ew_g": _growth(exposure_matched_ew),
+        "spy_sharpe": _ann_sharpe(spy, evaluation_cash_returns),
+        "ew_sharpe": _ann_sharpe(ew, evaluation_cash_returns),
+        "exposure_matched_spy_sharpe": _ann_sharpe(
+            exposure_matched_spy,
+            evaluation_cash_returns,
+        ),
+        "exposure_matched_ew_sharpe": _ann_sharpe(
+            exposure_matched_ew,
+            evaluation_cash_returns,
+        ),
         "spy_returns": spy,
         "ew_returns": ew,
+        "cash_returns": evaluation_cash_returns,
+        "gross_returns": gross_returns,
+        "exposure_matched_spy_returns": exposure_matched_spy,
+        "exposure_matched_ew_returns": exposure_matched_ew,
+        "active_risky_exposure": active_risky_exposure,
+        "active_gross_exposure": active_gross_exposure,
+        "active_cash_weight": active_cash_weight,
         "weights": report_weights,
         "allocation": allocation,
         "gross_exposure": report_weights.abs().sum(axis=1),
@@ -331,6 +457,40 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
         )
         ax.axhline(1.0, color="black", lw=0.7, alpha=0.5)
         ax.set_title("Growth of $1: net strategy versus gross benchmarks")
+        ax.set_ylabel("Growth of $1")
+        ax.legend(loc="best", framealpha=0.9)
+
+    def plot_attribution(ax) -> None:
+        ax.plot(
+            d["strat_gross_g"].index,
+            d["strat_gross_g"].to_numpy(),
+            label="Strategy before modeled costs",
+            color="C2",
+            lw=1.5,
+        )
+        ax.plot(
+            d["strat_g"].index,
+            d["strat_g"].to_numpy(),
+            label="Strategy after modeled costs",
+            color="C0",
+            lw=1.7,
+        )
+        ax.plot(
+            d["exposure_matched_ew_g"].index,
+            d["exposure_matched_ew_g"].to_numpy(),
+            label="Exposure-matched equal-weight (gross)",
+            color="C1",
+            lw=1.2,
+        )
+        ax.plot(
+            d["cash_g"].index,
+            d["cash_g"].to_numpy(),
+            label="Cash proxy",
+            color="C7",
+            lw=1.1,
+        )
+        ax.axhline(1.0, color="black", lw=0.7, alpha=0.5)
+        ax.set_title("Performance attribution: costs, exposure, and cash")
         ax.set_ylabel("Growth of $1")
         ax.legend(loc="best", framealpha=0.9)
 
@@ -447,7 +607,7 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
     paths: list[Path] = []
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 8.5))
-    plot_equity(axes[0, 0])
+    plot_attribution(axes[0, 0])
     plot_drawdown(axes[0, 1])
     plot_allocation(axes[1, 0], include_legend=False)
     plot_turnover_costs(axes[1, 1])
@@ -472,6 +632,11 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
     plot_equity(ax)
     fig.tight_layout()
     paths.append(save(fig, "equity_vs_benchmarks.png"))
+
+    fig, ax = plt.subplots(figsize=(11, 4.2))
+    plot_attribution(ax)
+    fig.tight_layout()
+    paths.append(save(fig, "performance_attribution.png"))
 
     fig, ax = plt.subplots(figsize=(11, 3.4))
     plot_drawdown(ax)
@@ -612,20 +777,59 @@ def save_charts(d: dict, imgdir: Path) -> list[Path]:
 
 def markdown_metrics(d: dict) -> str:
     m = d["m"]
+    benchmarks = d["benchmark_metrics"]
     rows = [
-        ("CAGR", f"{m['cagr']:+.2%}"),
+        ("Net nominal CAGR", f"{m['cagr']:+.2%}"),
+        ("Gross CAGR before modeled costs", f"{m['gross_cagr']:+.2%}"),
         ("Annualized volatility", f"{m['ann_vol']:.2%}"),
-        ("Sharpe", f"{m['sharpe']:+.2f}"),
-        ("Sortino", f"{m['sortino']:+.2f}"),
+        ("Net Sharpe, excess of cash proxy", f"{m['sharpe']:+.2f}"),
+        (
+            "Gross Sharpe before modeled costs, excess of cash proxy",
+            f"{m['gross_sharpe']:+.2f}",
+        ),
+        ("Net Sortino, excess of cash proxy", f"{m['sortino']:+.2f}"),
         ("Calmar", f"{m['calmar']:+.2f}"),
         ("Max drawdown", f"{m['max_drawdown']:+.2%}"),
         ("Annualized one-way turnover", f"{m['annualized_turnover']:.2f}x"),
         ("Sum of modeled cost fractions", f"{m['summed_cost_fraction']:.2%}"),
+        (
+            "Arithmetic sum of cash return contributions",
+            f"{m['cash_contribution_sum']:.2%}",
+        ),
+        ("Mean active gross exposure", f"{m['mean_gross_exposure']:.2%}"),
+        ("Fully-cash session fraction", f"{m['fully_cash_fraction']:.2%}"),
         ("VaR 95% (daily)", f"{m['var_95']:.2%}"),
         ("CVaR 95% (daily)", f"{m['cvar_95']:.2%}"),
-        (f"Deflated Sharpe ({m['dsr_n_trials']} trials)", f"{m['dsr']:.3f}"),
-        ("SPY buy & hold Sharpe (gross)", f"{d['spy_sharpe']:+.2f}"),
-        ("Equal-weight 6-ETF buy & hold Sharpe (gross)", f"{d['ew_sharpe']:+.2f}"),
+        (
+            f"Deflated cash-excess Sharpe ({m['dsr_n_trials']} trials)",
+            f"{m['dsr']:.3f}",
+        ),
+        ("Cash proxy CAGR", f"{benchmarks['cash_proxy']['cagr']:+.2%}"),
+        ("SPY buy & hold CAGR (gross)", f"{benchmarks['spy']['cagr']:+.2%}"),
+        (
+            "Equal-weight 6-ETF buy & hold CAGR (gross)",
+            f"{benchmarks['equal_weight']['cagr']:+.2%}",
+        ),
+        (
+            "Exposure-matched equal-weight CAGR (gross)",
+            f"{benchmarks['exposure_matched_equal_weight']['cagr']:+.2%}",
+        ),
+        (
+            "SPY buy & hold cash-excess Sharpe (gross)",
+            f"{d['spy_sharpe']:+.2f}",
+        ),
+        (
+            "Equal-weight 6-ETF cash-excess Sharpe (gross)",
+            f"{d['ew_sharpe']:+.2f}",
+        ),
+        (
+            "Exposure-matched SPY cash-excess Sharpe (gross)",
+            f"{d['exposure_matched_spy_sharpe']:+.2f}",
+        ),
+        (
+            "Exposure-matched equal-weight cash-excess Sharpe (gross)",
+            f"{d['exposure_matched_ew_sharpe']:+.2f}",
+        ),
     ]
     out = ["| Metric | Value |", "|--------|-------|"]
     out += [f"| {k} | {v} |" for k, v in rows]
@@ -654,6 +858,7 @@ def markdown_source(source: dict[str, str], prices: pd.DataFrame) -> str:
         ("Permission basis", source.get("permission_basis", "not supplied")),
         ("Retrieved at", source.get("retrieved_at", "not supplied")),
         ("Adjustment method", source.get("adjustment_method", "not supplied")),
+        ("Cash proxy", source.get("cash_proxy", "zero-return cash")),
         ("Symbols", ", ".join(map(str, prices.columns))),
         ("Price window", f"{prices.index[0].date()} to {prices.index[-1].date()}"),
         (
@@ -693,6 +898,10 @@ def markdown_settings(d: dict) -> str:
         ("Slippage", f"{cost_model.slippage * 10_000:.1f} bps per trade"),
         ("Transfer tax", f"{cost_model.tax * 10_000:.1f} bps on sells"),
         ("ADV cap", "not applied; this report supplies no volume input"),
+        (
+            "Cash return treatment",
+            d["cash_returns"].name or "unnamed per-period cash return series",
+        ),
         ("DSR trial count", str(d["m"]["dsr_n_trials"])),
         (
             "DSR cross-trial Sharpe variance",
@@ -772,6 +981,150 @@ def write_markdown_report(
     return report_path
 
 
+def _installed_version(distribution: str) -> str | None:
+    try:
+        return importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _git_commit() -> str | None:
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parent.parent,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+
+def write_performance_manifest(
+    d: dict,
+    source: dict[str, str],
+    prices: pd.DataFrame,
+    manifest_path: Path,
+    image_paths: list[Path],
+) -> Path:
+    """Write an auditable JSON record for a generated performance report."""
+    manifest_path = manifest_path.expanduser().resolve()
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    artifacts = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(image_paths, key=lambda item: item.name)
+    }
+    metrics = d["m"]
+    benchmarks = d["benchmark_metrics"]
+    payload = {
+        "schema_version": 2,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generator": {
+            "path": "scripts/generate_report.py",
+            "script_sha256": sha256_file(Path(__file__).resolve()),
+            "git_commit": _git_commit(),
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "packages": {
+                name: _installed_version(name)
+                for name in (
+                    "numpy",
+                    "pandas",
+                    "scipy",
+                    "scikit-learn",
+                    "matplotlib",
+                    "threadpoolctl",
+                    "yfinance",
+                )
+            },
+        },
+        "source": {
+            "provider": source.get("provider", "not supplied"),
+            "permission_basis": source.get("permission_basis", "not supplied"),
+            "permission_independently_verified": False,
+            "retrieved_at": source.get("retrieved_at", "not supplied"),
+            "symbols": list(map(str, prices.columns)),
+            "cash_proxy": source.get("cash_proxy", "zero-return cash"),
+            "adjustment_method": source.get("adjustment_method", "not supplied"),
+            "price_window": f"{prices.index[0].date()} to {prices.index[-1].date()}",
+            "input_sha256": source.get("sha256"),
+            "raw_input_committed": False,
+        },
+        "evaluation": {
+            "strategy": "multi_asset_rotation",
+            "strategy_configuration": d["strategy_configuration"],
+            "window": f"{d['rets'].index[0].date()} to {d['rets'].index[-1].date()}",
+            "sessions": len(d["rets"]),
+            "warmup_sessions": d["warmup_sessions"],
+            "required_warmup_sessions": d["required_warmup_sessions"],
+            "execution_timing": "close signal executes at the next bar close",
+            "rebalance": "first available session each week",
+            "commission_bps": d["cost_model"].commission * 10_000.0,
+            "slippage_bps": d["cost_model"].slippage * 10_000.0,
+            "transfer_tax_bps": d["cost_model"].tax * 10_000.0,
+            "adv_cap_applied": False,
+            "cash_return_treatment": d["cash_returns"].name,
+            "strategy_returns": "net of modeled costs",
+            "benchmark_returns": "gross; no transaction costs",
+            "sharpe_basis": "per-period return minus the cash-proxy return",
+            "dsr_trials_assumed": metrics["dsr_n_trials"],
+            "true_historical_trial_count": "unknown",
+            "dsr_cross_trial_variance": (
+                "single-series estimate"
+                if metrics["dsr_sr_variance"] is None
+                else metrics["dsr_sr_variance"]
+            ),
+        },
+        "metrics": {
+            "net_total_return": metrics["total_return"],
+            "net_nominal_cagr": metrics["cagr"],
+            "gross_nominal_cagr_before_modeled_costs": metrics["gross_cagr"],
+            "annualized_volatility": metrics["ann_vol"],
+            "net_cash_excess_sharpe": metrics["sharpe"],
+            "gross_cash_excess_sharpe_before_modeled_costs": metrics[
+                "gross_sharpe"
+            ],
+            "net_cash_excess_sortino": metrics["sortino"],
+            "calmar": metrics["calmar"],
+            "max_drawdown": metrics["max_drawdown"],
+            "annualized_one_way_turnover": metrics["annualized_turnover"],
+            "sum_of_modeled_cost_fractions": metrics["summed_cost_fraction"],
+            "arithmetic_sum_of_cash_return_contributions": metrics[
+                "cash_contribution_sum"
+            ],
+            "mean_active_gross_exposure": metrics["mean_gross_exposure"],
+            "fully_cash_session_fraction": metrics["fully_cash_fraction"],
+            "var_95_daily": metrics["var_95"],
+            "cvar_95_daily": metrics["cvar_95"],
+            "deflated_cash_excess_sharpe": metrics["dsr"],
+            "cash_proxy_cagr": benchmarks["cash_proxy"]["cagr"],
+            "spy_cagr_gross": benchmarks["spy"]["cagr"],
+            "equal_weight_cagr_gross": benchmarks["equal_weight"]["cagr"],
+            "exposure_matched_spy_cagr_gross": benchmarks[
+                "exposure_matched_spy"
+            ]["cagr"],
+            "exposure_matched_equal_weight_cagr_gross": benchmarks[
+                "exposure_matched_equal_weight"
+            ]["cagr"],
+            "spy_cash_excess_sharpe_gross": d["spy_sharpe"],
+            "equal_weight_cash_excess_sharpe_gross": d["ew_sharpe"],
+            "exposure_matched_spy_cash_excess_sharpe_gross": d[
+                "exposure_matched_spy_sharpe"
+            ],
+            "exposure_matched_equal_weight_cash_excess_sharpe_gross": d[
+                "exposure_matched_ew_sharpe"
+            ],
+        },
+        "artifacts": artifacts,
+    }
+    manifest_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=False) + "\n",
+        encoding="utf-8",
+    )
+    return manifest_path
+
+
 def positive_int(value: str) -> int:
     """argparse type: a strictly-positive integer (the DSR needs n_trials >= 1)."""
     ivalue = int(value)
@@ -806,6 +1159,18 @@ def nonempty_text(value: str) -> str:
     if not text:
         raise argparse.ArgumentTypeError("must not be empty")
     return text
+
+
+def symbol_text(value: str) -> str:
+    """argparse type: a normalized single market symbol."""
+    symbol = nonempty_text(value).upper()
+    if any(character.isspace() for character in symbol):
+        raise argparse.ArgumentTypeError("symbol must not contain whitespace")
+    if symbol in ROTATION_UNIVERSE:
+        raise argparse.ArgumentTypeError(
+            "cash proxy must be distinct from the strategy universe"
+        )
+    return symbol
 
 
 def iso_date_or_datetime(value: str) -> str:
@@ -878,6 +1243,12 @@ def main(argv) -> int:
         help="Markdown report path (default: <imgdir>/../report.md)",
     )
     ap.add_argument(
+        "--manifest-out",
+        type=Path,
+        default=None,
+        help="optional JSON provenance and artifact manifest path",
+    )
+    ap.add_argument(
         "--data-provider",
         type=nonempty_text,
         default=None,
@@ -900,6 +1271,15 @@ def main(argv) -> int:
         type=nonempty_text,
         default=None,
         help="corporate-action adjustment method recorded in provenance",
+    )
+    ap.add_argument(
+        "--cash-proxy-symbol",
+        type=symbol_text,
+        default=None,
+        help=(
+            "optional adjusted-close total-return proxy for residual cash "
+            "(for example SHV); default is zero-return cash"
+        ),
     )
     source = ap.add_mutually_exclusive_group(required=True)
     source.add_argument(
@@ -932,12 +1312,31 @@ def main(argv) -> int:
         if evaluation_start > evaluation_end:
             raise ValueError("evaluation start must not be after evaluation end")
         data_start = evaluation_start - pd.DateOffset(years=args.warmup_years)
-        prices, source_metadata = load_prices(
+        requested_symbols = ROTATION_UNIVERSE + (
+            [args.cash_proxy_symbol] if args.cash_proxy_symbol else []
+        )
+        loaded_prices, source_metadata = load_prices(
             data_start.strftime("%Y-%m-%d"),
             evaluation_end.strftime("%Y-%m-%d"),
             prices_csv=args.prices_csv,
             live_yfinance=args.live_yfinance,
+            symbols=requested_symbols,
         )
+        prices = loaded_prices.loc[:, ROTATION_UNIVERSE]
+        if args.cash_proxy_symbol is None:
+            cash_returns = pd.Series(
+                0.0,
+                index=prices.index,
+                name="zero-return cash",
+            )
+        else:
+            cash_returns = loaded_prices[args.cash_proxy_symbol].pct_change(
+                fill_method=None
+            ).fillna(0.0)
+            cash_returns.name = (
+                f"{args.cash_proxy_symbol} adjusted-close total-return proxy"
+            )
+            source_metadata["cash_proxy"] = args.cash_proxy_symbol
         supplied_metadata = {
             "provider": args.data_provider,
             "permission_basis": args.permission_basis,
@@ -970,6 +1369,7 @@ def main(argv) -> int:
         d = compute(
             prices,
             n_trials=args.n_trials,
+            cash_returns=cash_returns,
             sr_variance=args.sr_variance,
             evaluation_start=evaluation_start,
             evaluation_end=evaluation_end,
@@ -988,18 +1388,29 @@ def main(argv) -> int:
         report_path = write_markdown_report(
             d,
             source_metadata,
-            prices,
+            loaded_prices,
             report_path,
             image_paths,
         )
+        manifest_path = None
+        if args.manifest_out is not None:
+            manifest_path = write_performance_manifest(
+                d,
+                source_metadata,
+                loaded_prices,
+                args.manifest_out,
+                image_paths,
+            )
     except Exception as exc:
         print(f"report rendering failed: {exc}", file=sys.stderr)
         return 1
     window = f"{d['rets'].index[0].date()} to {d['rets'].index[-1].date()}"
     print(f"# Charts written to {args.imgdir}/ for window {window}\n")
     print(f"# Markdown report written to {report_path}\n")
+    if manifest_path is not None:
+        print(f"# Performance manifest written to {manifest_path}\n")
     print("## Data source\n")
-    print(markdown_source(source_metadata, prices))
+    print(markdown_source(source_metadata, loaded_prices))
     print("\n## Evaluation settings\n")
     print(markdown_settings(d))
     print("\n## Performance metrics (markdown)\n")

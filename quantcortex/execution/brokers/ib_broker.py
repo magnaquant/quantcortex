@@ -1,7 +1,7 @@
-"""Interactive Brokers adapter via ``ib_insync``.
+"""Interactive Brokers adapter via ``ib_async``.
 
 Routes quantcortex orders to Interactive Brokers through a running TWS or IB
-Gateway instance.  The ``ib_insync`` package is an *optional* dependency,
+Gateway instance.  The maintained ``ib_async`` package is an optional dependency,
 imported lazily inside :meth:`IBBroker.connect` - importing this module never
 requires it.
 
@@ -12,7 +12,7 @@ and ``4001`` (Gateway live). The adapter defaults to ``paper=True`` on
 ``127.0.0.1:7497`` with client id ``1`` and rejects a known live port unless
 the caller explicitly sets ``paper=False``.
 
-The adapter's API usage has been verified against ``ib_insync`` 0.9.86
+The adapter's API usage has been verified against ``ib_async`` 2.1.0
 (IB.connect / positions / accountSummary / qualifyContracts / placeOrder and the
 Stock / MarketOrder / LimitOrder constructors). The optional SDK is not part of
 the core CI matrix; verify its runtime compatibility in the deployment
@@ -113,19 +113,19 @@ class IBBroker(Broker):
             raise ValueError("account must be a non-empty string")
         self.account = resolved_account.strip() if resolved_account is not None else None
         self._ib = None  # populated by connect()
-        self._sdk = None  # cached ib_insync module symbols
+        self._sdk = None  # cached ib_async module symbols
 
     # ------------------------------------------------------------------ #
     # connection lifecycle
     # ------------------------------------------------------------------ #
     def connect(self) -> None:
-        """Lazily import ``ib_insync`` and connect to TWS / IB Gateway."""
+        """Lazily import ``ib_async`` and connect to TWS / IB Gateway."""
         try:
-            from ib_insync import IB, LimitOrder, MarketOrder, Stock
+            from ib_async import IB, LimitOrder, MarketOrder, Stock
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise ImportError(
-                "IBBroker requires the 'ib_insync' package. "
-                "Install it with: pip install ib_insync"
+                "IBBroker requires the 'ib_async' package. "
+                "Install it with: pip install ib_async"
             ) from exc
 
         self._sdk = {
@@ -136,7 +136,13 @@ class IBBroker(Broker):
         }
         try:
             ib = IB()
-            ib.connect(self.host, self.port, clientId=self.client_id)
+            ib.connect(
+                self.host,
+                self.port,
+                clientId=self.client_id,
+                account=self.account or "",
+                raiseSyncErrors=True,
+            )
             self._ib = ib
         except Exception as exc:  # pragma: no cover - network dependent
             raise BrokerError(

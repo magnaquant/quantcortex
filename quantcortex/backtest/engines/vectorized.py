@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from quantcortex.backtest.costs.transaction_costs import TransactionCostModel
+from quantcortex.backtest.engines.cash import align_cash_returns
 from quantcortex.portfolio.base import enforce_exposure_contract
 
 __all__ = ["BacktestResult", "VectorizedBacktest"]
@@ -52,6 +53,12 @@ class BacktestResult:
         Per-period transaction cost (fraction of NAV).
     turnover:
         Per-period one-way turnover actually executed.
+    asset_contribution:
+        Per-period risky-asset contribution before transaction costs.
+    cash_contribution:
+        Per-period cash-account contribution before transaction costs.
+    cash_weights:
+        Post-trade cash weight, ``1 - sum(asset weights)``.
     metadata:
         Free-form dict of run parameters (capital, periods_per_year, ...).
     """
@@ -63,6 +70,9 @@ class BacktestResult:
     costs: "pd.Series"
     turnover: "pd.Series"
     metadata: dict = field(default_factory=dict)
+    asset_contribution: Optional["pd.Series"] = None
+    cash_contribution: Optional["pd.Series"] = None
+    cash_weights: Optional["pd.Series"] = None
 
     @property
     def total_return(self) -> float:
@@ -188,6 +198,7 @@ class VectorizedBacktest:
         weights: "pd.DataFrame",
         prices: "pd.DataFrame",
         adv: Optional["pd.DataFrame"] = None,
+        cash_returns: Optional["pd.Series"] = None,
     ) -> BacktestResult:
         """Run the backtest.
 
@@ -206,6 +217,10 @@ class VectorizedBacktest:
             liquidity cap.  ``None`` disables the cap.  When the cap binds,
             the engine earns returns on the *executed* (capped) weights, and
             the cap notional is measured against the current running NAV.
+        cash_returns:
+            Optional per-period simple return of the cash account, indexed on
+            every price bar. ``None`` preserves the historical zero-return cash
+            assumption. Residual cash weight is ``1 - sum(asset weights)``.
 
         Returns
         -------
@@ -293,6 +308,8 @@ class VectorizedBacktest:
         # Forward simple returns; return at row t is asset move t-1 -> t.
         asset_returns = prices.pct_change(fill_method=None).fillna(0.0)
         ret_vals = asset_returns.to_numpy(dtype=np.float64)
+        cash_return_series = align_cash_returns(cash_returns, prices.index)
+        cash_ret_vals = cash_return_series.to_numpy(dtype=np.float64)
         price_vals = prices.to_numpy(dtype=np.float64)
         adv_aligned = None
         if adv is not None:
@@ -313,6 +330,8 @@ class VectorizedBacktest:
             )
 
         gross_arr = np.zeros(n, dtype=np.float64)
+        asset_contribution_arr = np.zeros(n, dtype=np.float64)
+        cash_contribution_arr = np.zeros(n, dtype=np.float64)
         costs_arr = np.zeros(n, dtype=np.float64)
         turnover_arr = np.zeros(n, dtype=np.float64)
         eff = np.zeros((n, n_sym), dtype=np.float64)
@@ -326,10 +345,14 @@ class VectorizedBacktest:
         start = 0
         for k, p in enumerate(reb_positions):
             # Bars [start, p] earn returns on the previously executed weights.
-            seg = ret_vals[start : p + 1] @ current
+            asset_seg = ret_vals[start : p + 1] @ current
+            cash_seg = cash_ret_vals[start : p + 1] * (1.0 - float(current.sum()))
+            seg = asset_seg + cash_seg
             if np.any(seg <= -1.0):
                 raise ValueError("portfolio gross return reached or fell below -100%")
             gross_arr[start : p + 1] = seg
+            asset_contribution_arr[start : p + 1] = asset_seg
+            cash_contribution_arr[start : p + 1] = cash_seg
             if len(seg) > 1:
                 nav *= float(np.prod(1.0 + seg[:-1]))
             # Mark-to-market NAV at the close of the rebalance bar (pre-cost):
@@ -358,10 +381,14 @@ class VectorizedBacktest:
             eff[p] = current
             start = p + 1
         if start < n:
-            seg = ret_vals[start:] @ current
+            asset_seg = ret_vals[start:] @ current
+            cash_seg = cash_ret_vals[start:] * (1.0 - float(current.sum()))
+            seg = asset_seg + cash_seg
             if np.any(seg <= -1.0):
                 raise ValueError("portfolio gross return reached or fell below -100%")
             gross_arr[start:] = seg
+            asset_contribution_arr[start:] = asset_seg
+            cash_contribution_arr[start:] = cash_seg
             eff[start:] = current
 
         gross = pd.Series(gross_arr, index=prices.index)
@@ -370,6 +397,9 @@ class VectorizedBacktest:
         effective_weights = pd.DataFrame(
             eff, index=prices.index, columns=symbols
         )
+        asset_contribution = pd.Series(asset_contribution_arr, index=prices.index)
+        cash_contribution = pd.Series(cash_contribution_arr, index=prices.index)
+        cash_weights = 1.0 - effective_weights.sum(axis=1)
 
         net = gross - costs
         equity_curve = (1.0 + net).cumprod() * self.capital
@@ -381,6 +411,7 @@ class VectorizedBacktest:
             "n_periods": int(len(net)),
             "n_rebalances": int(len(reb_positions)),
             "execution_timing": "next_bar_close",
+            "cash_return_source": cash_return_series.name,
         }
 
         return BacktestResult(
@@ -391,4 +422,7 @@ class VectorizedBacktest:
             costs=costs,
             turnover=turnover,
             metadata=metadata,
+            asset_contribution=asset_contribution,
+            cash_contribution=cash_contribution,
+            cash_weights=cash_weights,
         )

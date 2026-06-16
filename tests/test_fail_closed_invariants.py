@@ -156,6 +156,20 @@ def test_drawdown_includes_starting_nav():
     assert result.summary()["max_drawdown"] == pytest.approx(-0.5)
 
 
+def test_tearsheet_accepts_time_varying_risk_free_returns():
+    index = pd.bdate_range("2024-01-01", periods=3)
+    returns = pd.Series([0.01, 0.02, 0.03], index=index)
+    risk_free = pd.Series([0.005, 0.01, 0.015], index=index)
+    metrics = Tearsheet(returns, risk_free=risk_free).compute()
+
+    excess = returns - risk_free
+    expected_sharpe = excess.mean() / excess.std(ddof=1) * np.sqrt(252.0)
+    assert metrics["sharpe"] == pytest.approx(expected_sharpe)
+
+    with pytest.raises(ValueError, match="every return"):
+        Tearsheet(returns, risk_free=risk_free.iloc[:-1])
+
+
 def test_event_engine_executes_close_signal_on_next_bar():
     dates = pd.bdate_range("2024-01-01", periods=3)
     prices = pd.DataFrame({"A": [100.0, 110.0, 121.0]}, index=dates)

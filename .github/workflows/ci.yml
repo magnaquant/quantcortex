@@ -24,6 +24,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+          cache-dependency-path: requirements/test.lock
 
       # The test suite and lint need only the scientific core; every heavy /
       # optional dependency (boosting libs, torch, hmmlearn, broker SDKs, ...)
@@ -31,9 +32,7 @@ jobs:
       # intentionally not installed here. This proves the core package does not
       # acquire accidental optional imports.
       - name: Install core dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install numpy pandas scipy scikit-learn pyarrow matplotlib pytest pytest-cov ruff
+        run: python -m pip install -r requirements/test.lock
 
       - name: Lint (ruff)
         run: ruff check .
@@ -52,11 +51,10 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+          cache-dependency-path: requirements/notebooks.lock
 
       - name: Install notebook dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install numpy pandas scipy scikit-learn pyarrow matplotlib jupyter nbconvert ipykernel
+        run: python -m pip install -r requirements/notebooks.lock
 
       - name: Build deterministic test-only fixtures
         run: python tests/build_notebook_fixtures.py /tmp/quantcortex-notebook-fixtures
@@ -68,6 +66,29 @@ jobs:
           QUANTCORTEX_OHLCV_CSV: /tmp/quantcortex-notebook-fixtures/aapl_ohlcv.csv
         run: |
           jupyter nbconvert --execute --ExecutePreprocessor.timeout=180 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir /tmp/quantcortex-notebook-output research/*.ipynb
+
+  broker-sdks:
+    name: optional broker SDK conformance (py3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements/test.lock
+            requirements/brokers.lock
+
+      - name: Install package with broker SDKs
+        run: python -m pip install -r requirements/test.lock -r requirements/brokers.lock
+
+      - name: Verify real SDK request and model contracts
+        run: |
+          pytest tests/test_broker_sdk_conformance.py -q
+          python scripts/verify_brokers.py
 
   package:
     name: build + install smoke (py${{ matrix.python-version }})
@@ -84,6 +105,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+          cache-dependency-path: |
+            requirements/build.lock
+            requirements/core.lock
 
       # Tests run from the repo root with pythonpath=["."], so also build and
       # install the wheel in a clean environment. The smoke check proves the
@@ -91,12 +115,46 @@ jobs:
       # the removed market-data snapshot.
       - name: Build sdist + wheel
         run: |
-          python -m pip install --upgrade pip build
+          python -m pip install -r requirements/build.lock
           python -m build
 
       - name: Install wheel into a clean venv and verify package contents
         run: |
           python -m venv /tmp/wheeltest
-          /tmp/wheeltest/bin/pip install dist/*.whl
+          /tmp/wheeltest/bin/pip install -r requirements/core.lock
+          /tmp/wheeltest/bin/pip install --no-deps dist/*.whl
           /tmp/wheeltest/bin/pip check
           cd /tmp && /tmp/wheeltest/bin/python -c "from pathlib import Path; import quantcortex, quantcortex.portfolio.base, quantcortex.backtest.engines.vectorized, quantcortex.strategies.base_strategy; csv = Path(quantcortex.__file__).resolve().parent / 'data' / 'sample' / 'rotation_prices.csv'; assert not csv.exists(), f'restricted market-data snapshot packaged: {csv}'; print('packaged import OK; market-data snapshot absent')"
+
+  dependency-lock:
+    name: dependency lock drift (py3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install locked Poetry tooling
+        run: python -m pip install poetry==2.4.1 poetry-plugin-export==1.10.0
+
+      - name: Check lock and exported requirement files
+        run: |
+          poetry check
+          poetry export --only main --without-hashes --output /tmp/core.lock
+          poetry export --only main,test --without-hashes --output /tmp/test.lock
+          poetry export --only main,dev --without-hashes --output /tmp/notebooks.lock
+          poetry export --only main,test,dev --without-hashes --output /tmp/dev.lock
+          poetry export --only main -E brokers --without-hashes --output /tmp/brokers.lock
+          poetry export --only main -E brokers -E providers -E storage -E regime --without-hashes --output /tmp/runtime.lock
+          poetry export --only build --without-hashes --output /tmp/build.lock
+          diff -u requirements/core.lock /tmp/core.lock
+          diff -u requirements/test.lock /tmp/test.lock
+          diff -u requirements/notebooks.lock /tmp/notebooks.lock
+          diff -u requirements/dev.lock /tmp/dev.lock
+          diff -u requirements/brokers.lock /tmp/brokers.lock
+          diff -u requirements/runtime.lock /tmp/runtime.lock
+          diff -u requirements/build.lock /tmp/build.lock

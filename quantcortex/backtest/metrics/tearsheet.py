@@ -34,8 +34,9 @@ class Tearsheet:
         Number of return periods in a year used for annualization
         (default 252, i.e. trading days).
     risk_free:
-        Per-period risk-free rate subtracted from returns when computing
-        risk-adjusted ratios (default 0).
+        Scalar or per-period risk-free return subtracted from returns when
+        computing risk-adjusted ratios (default 0). A series must cover every
+        retained return observation after index alignment.
     """
 
     def __init__(
@@ -43,7 +44,7 @@ class Tearsheet:
         returns: pd.Series,
         *,
         periods_per_year: float = 252,
-        risk_free: float = 0.0,
+        risk_free: float | pd.Series = 0.0,
     ) -> None:
         if not isinstance(returns, pd.Series):
             returns = pd.Series(returns)
@@ -54,15 +55,37 @@ class Tearsheet:
             raise ValueError("simple returns cannot be less than -100%")
         if isinstance(periods_per_year, (bool, np.bool_)):
             raise TypeError("periods_per_year must be numeric, not boolean")
-        if isinstance(risk_free, (bool, np.bool_)):
-            raise TypeError("risk_free must be numeric, not boolean")
         if not np.isfinite(periods_per_year) or periods_per_year <= 0.0:
             raise ValueError("periods_per_year must be finite and positive")
-        if not np.isfinite(risk_free):
-            raise ValueError("risk_free must be finite")
         self.returns = clean
         self.periods_per_year = float(periods_per_year)
-        self.risk_free = float(risk_free)
+        self.risk_free = self._align_risk_free(risk_free)
+
+    def _align_risk_free(self, risk_free: float | pd.Series) -> float | pd.Series:
+        if isinstance(risk_free, (bool, np.bool_)):
+            raise TypeError("risk_free must be numeric or a Series, not boolean")
+        if isinstance(risk_free, pd.Series):
+            if risk_free.index.has_duplicates:
+                raise ValueError("risk_free series index must be unique")
+            series = pd.to_numeric(risk_free, errors="coerce").astype(float)
+            aligned = series.reindex(self.returns.index)
+            values = aligned.to_numpy(dtype=float)
+            if aligned.isna().any() or not np.all(np.isfinite(values)):
+                raise ValueError(
+                    "risk_free series must provide a finite value for every return"
+                )
+            if np.any(values <= -1.0):
+                raise ValueError("risk_free returns must be greater than -100%")
+            return aligned
+        try:
+            scalar = float(risk_free)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise TypeError("risk_free must be numeric or a pandas Series") from exc
+        if not np.isfinite(scalar):
+            raise ValueError("risk_free must be finite")
+        if scalar <= -1.0:
+            raise ValueError("risk_free return must be greater than -100%")
+        return scalar
 
     # ------------------------------------------------------------------ #
     # Core series                                                        #
