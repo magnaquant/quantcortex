@@ -27,17 +27,84 @@ w_t = R_t( T_t( A_t( S_t( X<=t ) ) ) )
 
 **Design targets are not performance claims.** The reference strategies retain
 aspirational Sharpe targets of 1.10 (multi-asset rotation) and 0.9 (momentum
-ML), but this repository publishes no fixed backtest result. Evaluate them on
-data you are permitted to use, record the true number of trials, and compare
-against appropriate benchmarks. See [PERFORMANCE.md](PERFORMANCE.md).
+ML). The published reference run below materially misses its target and both
+gross benchmarks; it demonstrates the audit path rather than strategy quality.
+See [PERFORMANCE.md](PERFORMANCE.md).
 
 ---
 
 ## Project Demo
 
-The best demonstration is a locally generated, provenance-bearing report rather
-than a permanent equity curve detached from its input data. With an authorized
-price file, run:
+The repository owner confirms permission to publish these derived charts. The
+raw market-data file remains uncommitted; its digest and the complete chart
+hashes are recorded in
+[`performance_manifest.json`](docs/img/performance_manifest.json).
+
+![Multi-Asset Rotation diagnostic overview](docs/img/report_overview.png)
+
+| Reference-run result | Value |
+|---|---:|
+| Evaluation window | 2018-01-02 to 2025-12-31 |
+| CAGR | -0.07% |
+| Annualized volatility | 6.53% |
+| Sharpe | 0.02 |
+| Maximum drawdown | -14.22% |
+| Annualized one-way turnover | 10.84x |
+| Sum of modeled cost fractions | 15.06% |
+| SPY Sharpe, gross | 0.78 |
+| Equal-weight six-ETF Sharpe, gross | 0.96 |
+
+Strategy returns are net of 3 bps commission and 10 bps flat slippage per
+trade; benchmark returns are gross. The ADV cap is inactive because this run
+has no volume input. The reported DSR is 0.065 using an assumed 10 trials and a
+single-series variance estimate. The true historical trial count is unknown,
+so that DSR is not a validated multiple-testing correction.
+
+<details>
+<summary><strong>Open the full diagnostic gallery</strong></summary>
+
+### Equity Versus Benchmarks
+
+![Net strategy equity versus gross benchmarks](docs/img/equity_vs_benchmarks.png)
+
+### Drawdown
+
+![Strategy underwater drawdown](docs/img/drawdown.png)
+
+### Rolling Sharpe
+
+![Rolling 126-session Sharpe](docs/img/rolling_sharpe.png)
+
+### Rolling Risk
+
+![Rolling annualized volatility and beta to SPY](docs/img/rolling_risk.png)
+
+### Allocation And Exposure
+
+![Post-trade allocation, exposure, and cash](docs/img/allocation_and_exposure.png)
+
+### Turnover And Costs
+
+![Executed turnover and cumulative modeled cost fractions](docs/img/turnover_and_costs.png)
+
+### Monthly Returns
+
+![Monthly net-return heatmap](docs/img/monthly_returns.png)
+
+### Return Distribution
+
+![Daily net-return distribution and normal Q-Q diagnostic](docs/img/return_distribution.png)
+
+</details>
+
+The published run uses Yahoo Finance data retrieved through yfinance 1.4.1 on
+June 15, 2026. It covers QQQ, VGT, GLD, TLT, SPY, and VIG from January 4, 2016
+through December 31, 2025; the first 503 sessions are signal warm-up. The local
+adjusted-close CSV has SHA-256
+`3b256ef083794a67f173d635a3cd297237b7a3d01489ccf53cc807c99602607c`.
+Permission is owner-asserted and not independently verified by the software.
+
+To generate the same report from an authorized file matching that digest:
 
 ```bash
 PYTHONPATH=. python scripts/generate_report.py \
@@ -49,18 +116,9 @@ PYTHONPATH=. python scripts/generate_report.py \
   --adjustment-method "$DATA_ADJUSTMENT_METHOD"
 ```
 
-Open `reports/report.md`. It links a compact diagnostic overview and detailed
-performance, drawdown, rolling-risk, allocation, exposure, turnover, cost,
-monthly-return, and tail-distribution plots. The report also records the input
-digest, evaluation window, warm-up, cost assumptions, DSR settings, and whether
-all publication metadata was supplied. Metadata records the owner's assertions;
-the tool does not determine whether a license permits redistribution.
-
-The architecture diagram below is safe to publish because it is independent of
-market data. A generated `report_overview.png` should be added to this README
-only when the input license permits publication of derived images and the
-adjacent text identifies the source, date window, file digest, costs, benchmark
-treatment, and true research trial count. Never publish an equity curve alone.
+The command writes `reports/report.md` and the same nine-plot diagnostic set.
+Metadata records owner-supplied assertions; the tool does not determine whether
+a license permits publication or redistribution.
 
 ---
 
@@ -179,9 +237,11 @@ credential variables.
 
 ## Performance Reporting
 
-No market-data snapshot, executed notebook output, generated chart, or fixed
-performance number is published in this repository. This avoids redistributing
-provider data and prevents a changing data vintage from looking immutable.
+The README publishes one owner-authorized reference run as derived images with
+adjacent provenance and an artifact manifest. Raw market data, executed
+notebook output, and ordinary local reports remain excluded. Published results
+must identify their data vintage and must not be silently regenerated from a
+different input file.
 
 For a licensed local dataset, run:
 
@@ -195,12 +255,10 @@ The report records the file path, SHA-256 digest, observed date window, cost
 assumptions, signal warm-up, DSR trial count/variance assumption, and whether
 liquidity constraints are active.
 Each run writes `reports/report.md`, a compact `report_overview.png`, and eight
-detailed diagnostics under ignored `reports/img/`. These are local research
-evidence, not repository fixtures. The README intentionally contains no fixed
-performance plot because the repository does not ship a redistributable input
-dataset. See
-[PERFORMANCE.md](PERFORMANCE.md) for interpretation requirements and known
-limitations.
+detailed diagnostics under ignored `reports/img/`. These remain local research
+evidence unless the owner explicitly approves publication and adds complete
+provenance plus artifact hashes. See [PERFORMANCE.md](PERFORMANCE.md) for the
+reference run, interpretation requirements, and known limitations.
 
 ---
 
@@ -369,6 +427,7 @@ quantcortex/                     # repo root
 ├── local_data/README.md         # ignored local-data schemas and provenance rules
 ├── reports/                     # ignored generated charts and report output
 ├── docs/
+│   ├── img/                     # approved reference-run plots + hash manifest
 │   ├── production-readiness.md  # blockers before production capital
 │   └── history-rewrite-plan.md  # optional purge procedure; not executed
 ├── docker-compose.yml

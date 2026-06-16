@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-15",
+  "generator_commit": "ac7bb90754b4b1b488af3b7bdc561b046c7c4aa3",
+  "source": {
+    "provider": "Yahoo Finance via yfinance 1.4.1",
+    "permission_basis": "Repository owner confirms permission to publish derived charts",
+    "permission_independently_verified": false,
+    "retrieved_at": "2026-06-15",
+    "symbols": [
+      "QQQ",
+      "VGT",
+      "GLD",
+      "TLT",
+      "SPY",
+      "VIG"
+    ],
+    "adjustment_method": "yfinance adjusted close with auto_adjust=False",
+    "price_window": "2016-01-04 to 2025-12-31",
+    "input_sha256": "3b256ef083794a67f173d635a3cd297237b7a3d01489ccf53cc807c99602607c",
+    "raw_input_committed": false
+  },
+  "evaluation": {
+    "strategy": "multi_asset_rotation",
+    "window": "2018-01-02 to 2025-12-31",
+    "sessions": 2011,
+    "warmup_sessions": 503,
+    "required_warmup_sessions": 274,
+    "execution_timing": "close signal executes at the next bar close",
+    "rebalance": "first available session each week",
+    "commission_bps": 3.0,
+    "slippage_bps": 10.0,
+    "transfer_tax_bps": 0.0,
+    "adv_cap_applied": false,
+    "strategy_returns": "net",
+    "benchmark_returns": "gross",
+    "dsr_trials_assumed": 10,
+    "true_historical_trial_count": "unknown",
+    "dsr_cross_trial_variance": "single-series estimate"
+  },
+  "metrics": {
+    "total_return": -0.005230439506423212,
+    "cagr": -0.000656934729176939,
+    "annualized_volatility": 0.06528824792584632,
+    "sharpe": 0.022628754062896092,
+    "sortino": 0.030394685432320295,
+    "calmar": -0.004619337898382643,
+    "max_drawdown": -0.1422140453087335,
+    "annualized_one_way_turnover": 10.84416722565801,
+    "sum_of_modeled_cost_fractions": 0.15056228172947278,
+    "var_95_daily": 0.007188401820487274,
+    "cvar_95_daily": 0.011103253411059867,
+    "deflated_sharpe": 0.06542961955250098,
+    "spy_sharpe_gross": 0.7824200403668903,
+    "equal_weight_sharpe_gross": 0.9648098190098434
+  },
+  "artifacts": {
+    "allocation_and_exposure.png": "780bf3900b07e0b45c6208f0fefa1d1e1ef7cdf7327e74738046f81b5db5eb13",
+    "drawdown.png": "75af12f0b1d6727d33d5c03dcaca48a9dc3b5bcd93130328229eaa5483bdcec9",
+    "equity_vs_benchmarks.png": "5d6da4b67f0139910408f88075b6897528406e8a1ff354ea6002b3e556499bde",
+    "monthly_returns.png": "5f8682589b1e9ce845f23403c23dbc50c0aedbf9a279bdf1dd302d444ad86126",
+    "report_overview.png": "487bad1468f44247b9f2533e8b8043e200107c7039fc27cc8413e4530e845a4c",
+    "return_distribution.png": "00ffd9316b0974e5a5e33f3d2ffc0da630c3cf4329108cb8d7133830a804eac4",
+    "rolling_risk.png": "f745988f5f91f276e912201e0ff7052dadf9150236f2b2464c1ad64bbe783d60",
+    "rolling_sharpe.png": "74f989c9b405473f9eeb9208ac2ef360b222a44ded2956d0b63482cf7bdc54a0",
+    "turnover_and_costs.png": "105243d3fbb110a7ce55e71c2b3a543e82203a6b3b9de2e7f2265d02b74154f5"
+  }
+}
