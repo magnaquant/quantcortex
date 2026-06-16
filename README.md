@@ -5,6 +5,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/magnaquant/quantcortex/actions/workflows/ci.yml/badge.svg)](https://github.com/magnaquant/quantcortex/actions/workflows/ci.yml)
 
 ---
 
@@ -46,13 +47,16 @@ broker SDKs, and storage clients remain lazy imports.
 git clone https://github.com/magnaquant/quantcortex.git
 cd quantcortex
 python3.11 -m venv .venv && source .venv/bin/activate
+python -m pip install --upgrade pip
 
-# Core (required) - enough to run the full test suite
-pip install numpy pandas scipy scikit-learn matplotlib pyarrow pytest
-pip install -e . --no-deps       # make quantcortex importable from scripts
+# Install the package and its scientific core.
+python -m pip install -e .
+
+# Development, CI, and notebook tools.
+python -m pip install pytest pytest-cov ruff jupyter nbconvert ipykernel
 
 # Optional accelerators / integrations (Poetry extras):
-poetry install -E all          # or, with pip:  pip install '.[all]'
+python -m pip install -e '.[all]'   # or: poetry install -E all
 #   ml        -> xgboost, lightgbm, catboost       (GBDT cross-sectional alpha)
 #   nlp       -> transformers, torch               (FinBERT sentiment)
 #   rl        -> stable-baselines3, gymnasium       (PPO DRL allocator)
@@ -70,7 +74,8 @@ poetry install -E all          # or, with pip:  pip install '.[all]'
 ### Run the tests
 
 ```bash
-pytest tests/ -v   # weight contract, transaction costs, look-ahead, risk overlay, order state machine
+python -m pytest tests/ -q --cov=quantcortex --cov-fail-under=60
+ruff check .
 ```
 
 ### Run the research notebooks
@@ -157,7 +162,11 @@ PYTHONPATH=. python scripts/generate_report.py \
 The report records the file path, SHA-256 digest, observed date window, cost
 assumptions, signal warm-up, DSR trial count/variance assumption, and whether
 liquidity constraints are active.
-Generated charts remain under ignored `reports/`. See
+Each run writes `equity_vs_benchmarks.png`, `drawdown.png`, and
+`rolling_sharpe.png` under ignored `reports/img/`, and prints performance and
+monthly-return tables. These are local research evidence, not repository
+fixtures. The README intentionally contains no fixed performance plot because
+the repository does not ship a redistributable input dataset. See
 [PERFORMANCE.md](PERFORMANCE.md) for interpretation requirements and known
 limitations.
 
@@ -168,6 +177,19 @@ limitations.
 The platform is organized as eight layers joined by explicit data and weight
 contracts. Components are replaceable when they preserve those contracts and
 the surrounding data assumptions.
+
+```mermaid
+flowchart LR
+    D[Data and PIT controls] --> F[Features and alpha]
+    F --> S[Selection]
+    S --> A[Allocation]
+    A --> T[Timing overlays]
+    T --> R[Risk overlays]
+    R --> W[Target weights]
+    W --> B[Backtest and validation]
+    W --> P[Pre-trade risk]
+    P --> E[Broker execution]
+```
 
 | Layer | Role | Key modules |
 |-------|------|-------------|
@@ -303,17 +325,20 @@ quantcortex/                     # repo root
 │   └── verify_brokers.py        # broker adapters vs faithful SDK mocks
 │
 ├── tests/
-│   ├── conftest.py             # shared synthetic-data fixtures
-│   ├── test_lookahead_detector.py
-│   ├── test_transaction_costs.py
-│   ├── test_weight_interface.py
-│   ├── test_risk_overlay.py
-│   ├── test_order_manager.py
-│   └── test_regression_guards.py  # core-dep regression guards (audit fixes)
+│   ├── build_notebook_fixtures.py # deterministic test-only notebook inputs
+│   ├── test_data_integrity.py
+│   ├── test_factor_integrity.py
+│   ├── test_execution_safety.py
+│   ├── test_fail_closed_invariants.py
+│   ├── test_research_validation.py
+│   ├── test_repository_data_policy.py
+│   └── test_regression_guards.py  # focused guards for audited defects
 │
 ├── local_data/README.md         # ignored local-data schemas and provenance rules
 ├── reports/                     # ignored generated charts and report output
-├── docs/history-rewrite-plan.md # optional purge procedure; not executed
+├── docs/
+│   ├── production-readiness.md  # blockers before production capital
+│   └── history-rewrite-plan.md  # optional purge procedure; not executed
 ├── docker-compose.yml
 ├── Dockerfile
 ├── pyproject.toml
@@ -408,6 +433,10 @@ volume_cap  = 0.10     # max 10% of ADV when an ADV series is supplied
 
 ## Development Roadmap
 
+Implemented research components are not equivalent to production readiness.
+See [docs/production-readiness.md](docs/production-readiness.md) for the
+remaining broker, state, data, deployment, and operational controls.
+
 | Phase | Scope | Status |
 |-------|-------|--------|
 | **Phase 1** | Data layer + PIT enforcement + universe construction | Implemented; licensed data is still required for production research |
@@ -418,14 +447,13 @@ volume_cap  = 0.10     # max 10% of ADV when an ADV series is supplied
 
 ---
 
-## Framework Rationale
+## External References
 
-| Framework | Role in quantcortex | Not used for |
-|-----------|---------------------|--------------|
-| **vectorbt** | Fast parameter sweeps in research notebooks | Live trading |
-| **qlib** | ML alpha factor benchmarks | Broker connectivity |
-| **Lean/QuantConnect** | Reference event-driven engine comparison | Primary architecture |
-| **FinRL-X** | Weight-contract interface pattern | Direct dependency |
+| Project | Relationship to quantcortex | Runtime dependency |
+|---------|------------------------------|--------------------|
+| [Qlib](https://github.com/microsoft/qlib) | Alpha158 feature names and operator conventions are reimplemented locally with documented deviations | No |
+| [FinRL-X](https://github.com/AI4Finance-Foundation/FinRL-Trading) | Inspiration for the deployment-consistent, weight-centric pipeline | No |
+| [Lean/QuantConnect](https://github.com/QuantConnect/Lean) | Comparative reference for event-driven architecture and broker-integrated systems | No integration |
 
 ---
 

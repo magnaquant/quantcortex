@@ -36,6 +36,24 @@ Review Yahoo's terms and the
 Live historical data may be revised, so preserve your own permitted input if
 exact reproduction matters.
 
+## Generated Artifacts
+
+The reference report currently produces three plots:
+
+- `equity_vs_benchmarks.png`: strategy net of modeled costs versus gross SPY
+  and equal-weight buy-and-hold benchmarks.
+- `drawdown.png`: the strategy underwater curve.
+- `rolling_sharpe.png`: trailing 126-session Sharpe.
+
+It also prints performance metrics, evaluation settings, data provenance, and a
+monthly-return table. Outputs remain ignored under `reports/`; do not copy them
+into the README without a redistributable input dataset and complete provenance.
+
+For an external investment review, also generate exposure/cash, turnover and
+cumulative cost, rolling volatility and beta, walk-forward boundary, and
+liquidity/capacity sensitivity diagnostics. Those plots require additional
+inputs or engine semantics and are not implied by the current report command.
+
 ## Reporting Requirements
 
 - Report the data provider, license or permission basis, retrieval date, date
