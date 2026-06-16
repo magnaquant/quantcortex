@@ -46,7 +46,8 @@ Use conventional commit prefixes (`feat:`, `fix:`, `docs:`, `ci:`); keep message
 ## Security & Configuration Tips
 
 Never commit `.env`, credentials, broker account data, local state, market-data
-snapshots, executed notebook outputs, or generated reports. Use `.env.example`
-as the template. Synthetic data is limited to tests and clearly labeled dry
-runs. Preserve pre-trade risk checks, paper-mode defaults, and point-in-time
-data discipline.
+snapshots, or executed notebook outputs. Generated performance charts require
+explicit owner approval, adjacent provenance, an input digest, and artifact
+hashes; ordinary reports remain ignored. Use `.env.example` as the template.
+Synthetic data is limited to tests and clearly labeled dry runs. Preserve
+pre-trade risk checks, paper-mode defaults, and point-in-time data discipline.

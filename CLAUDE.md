@@ -100,12 +100,13 @@ or vol-scaled book is NOT required to sum to 1. Violations raise
   (threadpoolctl) around the HMM fit so backtests are bit-for-bit reproducible; a
   non-converged EM near a regime boundary otherwise flips under multithreaded
   float ordering. Keep model fits seeded and deterministic.
-- **Explicit research data.** Do not commit market-data snapshots, generated
-  performance charts, or executed notebook outputs. Reports and notebooks must
-  use either an owner-supplied permitted CSV or an explicit live-provider opt-in;
-  they must never silently substitute generated prices after a fetch failure.
-  Synthetic fixtures remain appropriate for tests and the clearly labeled
-  `paper_trade_cycle.py --offline` dry run.
+- **Explicit research data.** Do not commit market-data snapshots or executed
+  notebook outputs. Reports and notebooks must use either an owner-supplied
+  permitted CSV or an explicit live-provider opt-in; they must never silently
+  substitute generated prices after a fetch failure. Derived performance charts
+  may be published only with explicit owner approval, adjacent provenance, an
+  input digest, and artifact hashes. Synthetic fixtures remain appropriate for
+  tests and the clearly labeled `paper_trade_cycle.py --offline` dry run.
 
 ## Layer ABCs to subclass
 

@@ -1,9 +1,35 @@
 # Performance Evaluation
 
-This repository does not publish a fixed performance result. Market data,
-executed notebook outputs, and generated charts are intentionally excluded.
-Evaluate the reference strategies on data you are permitted to use and retain
-the source metadata needed to reproduce the run.
+This repository publishes one owner-authorized reference run as derived chart
+artifacts. The raw market data remains uncommitted. Ordinary generated reports
+and executed notebook outputs remain excluded unless publication is explicitly
+approved and accompanied by complete provenance and artifact hashes.
+
+## Published Reference Run
+
+The README charts were generated on June 15, 2026 with yfinance 1.4.1 adjusted
+closes for QQQ, VGT, GLD, TLT, SPY, and VIG. The source spans January 4, 2016 to
+December 31, 2025; evaluation spans January 2, 2018 to December 31, 2025 after
+503 warm-up sessions. The owner confirms permission to publish the derived
+charts; that permission is not independently verified by the software.
+
+| Metric | Value |
+|---|---:|
+| CAGR | -0.07% |
+| Annualized volatility | 6.53% |
+| Sharpe | 0.02 |
+| Maximum drawdown | -14.22% |
+| Annualized one-way turnover | 10.84x |
+| Sum of modeled cost fractions | 15.06% |
+| SPY Sharpe, gross | 0.78 |
+| Equal-weight six-ETF Sharpe, gross | 0.96 |
+
+Strategy returns are net of 3 bps commission and 10 bps flat slippage per
+trade; benchmarks are gross and the ADV cap is inactive. The DSR of 0.065 uses
+an assumed 10 trials and a single-series variance estimate. Because the true
+historical trial count is unknown, it is not a validated multiple-testing
+correction. Exact source and artifact hashes are in
+`docs/img/performance_manifest.json`.
 
 ## Generate a Report
 
@@ -65,8 +91,8 @@ The command writes `reports/report.md` plus these plots under `reports/img/`:
 
 The Markdown report links every plot and includes performance metrics,
 evaluation settings, data provenance, and the monthly-return table. Outputs
-remain ignored; do not copy them into the README without a redistributable input
-dataset and complete provenance.
+remain ignored by default. Publish them only with explicit owner approval,
+complete adjacent provenance, an input digest, and hashes for every artifact.
 
 The current command must not fabricate diagnostics it cannot support. Add
 walk-forward or live-start boundaries only when the run records those regimes;
