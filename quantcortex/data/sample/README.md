@@ -12,7 +12,8 @@ results would drift: `yfinance` re-adjusts historical closes over time as
 dividends accrue, so every live fetch returns slightly different data.
 
 **Provenance / licensing.** This is *real* market data (not synthetic), derived
-from Yahoo Finance via `yfinance` for reproducible examples and tests. Note that
+from Yahoo Finance via `yfinance` to keep the README's report examples
+reproducible (the test suite uses its own synthetic fixtures, not this file). Note that
 `yfinance` documents Yahoo Finance data as intended for **personal use**;
 whether committing this Yahoo-derived snapshot to a given repo (public,
 redistributed, or commercial) is acceptable is a repo-owner / legal decision
