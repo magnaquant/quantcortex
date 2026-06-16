@@ -11,3 +11,9 @@ strategy_minus_exposure_matched_equal_weight,2011,63,5000,42,-0.05099216301,-0.0
 strategy_gross_minus_exposure_matched_equal_weight,2011,5,5000,42,-0.03376502067,-0.06256816022,-0.005190195225,0.0098
 strategy_gross_minus_exposure_matched_equal_weight,2011,21,5000,42,-0.03376502067,-0.05847955029,-0.008964412373,0.003
 strategy_gross_minus_exposure_matched_equal_weight,2011,63,5000,42,-0.03376502067,-0.05987991878,-0.00894284283,0.0036
+strategy_minus_target_exposure_matched_equal_weight_net,2011,5,5000,42,-0.04139184319,-0.07012722882,-0.01304405033,0.0022
+strategy_minus_target_exposure_matched_equal_weight_net,2011,21,5000,42,-0.04139184319,-0.06702567863,-0.01632037175,0.0004
+strategy_minus_target_exposure_matched_equal_weight_net,2011,63,5000,42,-0.04139184319,-0.06760625976,-0.01596165655,0.0002
+target_exposure_matched_equal_weight_net_minus_cash,2011,5,5000,42,0.03234974506,-0.001789711183,0.068378147,0.9676
+target_exposure_matched_equal_weight_net_minus_cash,2011,21,5000,42,0.03234974506,-0.000609470819,0.06638547419,0.9732
+target_exposure_matched_equal_weight_net_minus_cash,2011,63,5000,42,0.03234974506,0.003469635298,0.06236755706,0.9872

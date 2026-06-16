@@ -1,16 +1,16 @@
 {
-  "schema_version": 3,
-  "generated_at": "2026-06-16T16:42:39+00:00",
+  "schema_version": 4,
+  "generated_at": "2026-06-16T22:00:41Z",
   "generator": {
     "path": "scripts/generate_report.py",
-    "script_sha256": "bcc8dfe2bbc70ca77fbce61f4453195603762545ea92fabc6fc9b3d205209e21",
+    "script_sha256": "b536aa7fc5e4fe7df6c7ff28c0992629a489869eaec46486db7aff1cb946099b",
     "git": {
-      "base_commit": "b435b4bc3fd17caca6dbd01211b778c46935c5c2",
-      "worktree_clean": false
+      "source_commit": "d185c44928af865882c4d830066432dc97eb9972",
+      "worktree_clean_at_start": true
     },
     "source_tree": {
-      "sha256": "8b2ffa32a1a194a1e7c91365a1d14167c675e4e86af0cb8ba98a74890d8b871a",
-      "file_count": 106,
+      "sha256": "a72c2fcd825bb15a2879a3b33d63487a34348b837ff733b7c1ee9d0232ed19cb",
+      "file_count": 107,
       "files": {
         "poetry.lock": "fa8904674c2b24f3141acae607fd0a49d97125bc109c18def9fccbb2256c8de0",
         "pyproject.toml": "175abd743d38f6b6c1cc8ae42471d62d83c86beb245d93fea231c666f51b2643",
@@ -37,6 +37,7 @@
         "quantcortex/alpha/validation/alphalens_report.py": "8463289117add78a576e37a5b99a539be5c808fca86100e26deb29e8060aa60d",
         "quantcortex/alpha/validation/factor_decay.py": "9e6e049165f014db2122d9ed57415e45e48142b475dfb7221247d447d9a50397",
         "quantcortex/backtest/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/backtest/conformance.py": "e169cc67cac9eb56d8da4e4a0da1e257bb6cb8d1745baca681f50fab6c62fc57",
         "quantcortex/backtest/costs/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "quantcortex/backtest/costs/transaction_costs.py": "48200419f37004c58df6f89041e31516d9ad98f66c22f75d11a0b9342474d5c7",
         "quantcortex/backtest/engines/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -110,14 +111,14 @@
         "quantcortex/strategies/drl_portfolio.py": "7fdcbc0d1439fdd5d81783ffef6870f90749c3a0e0c3f01782fb5c18203a0127",
         "quantcortex/strategies/macro_timing.py": "15977b8958ebb578d96d0f7f72ff9c28a872be4f6b8b667e88f43ffb45ffbbb5",
         "quantcortex/strategies/momentum_ml.py": "1f3b14446b8d0441e469083150067eeb4de27a91b30f02d60e5787dd61550b11",
-        "quantcortex/strategies/multi_asset_rotation.py": "a056839d41801abeb12be1fffd15cd3e3feeb84997f68e33b67432902fb990f0",
+        "quantcortex/strategies/multi_asset_rotation.py": "0ad337441ad0fdb845d2b886cf3c3b3f2abac99d596158c7b8826f36afff2ccb",
         "quantcortex/strategies/sentiment_nlp.py": "acb4ea692d5707f84146d9045fb9325e8e35db451c30c1c0c21c5f9b1ff93a03",
         "quantcortex/timing/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "quantcortex/timing/hmm_regime.py": "f8f6f03184e3f6d191ba8011fb201b99527ad07a66e32a4b9e179b4de45633db",
         "quantcortex/timing/kama.py": "ffb848ba93041af1e04f2b7896ea7a8f33ac7e5e3e53db1e44f53af111829eda",
         "quantcortex/timing/tsmom.py": "c78ac313268091f45e0e589067f12e07e8a340fa243b8fae2853778ef4ba8ea9",
         "quantcortex/timing/vix_scaler.py": "a3667424e5573fb289e63c26c69da6a68d6c943742359f0466d29b25c56e3686",
-        "scripts/generate_report.py": "bcc8dfe2bbc70ca77fbce61f4453195603762545ea92fabc6fc9b3d205209e21"
+        "scripts/generate_report.py": "b536aa7fc5e4fe7df6c7ff28c0992629a489869eaec46486db7aff1cb946099b"
       }
     },
     "python": "3.14.4",
@@ -134,7 +135,7 @@
   },
   "source": {
     "provider": "Yahoo Finance via yfinance 1.4.1",
-    "permission_basis": "Repository owner authorizes publication of derived aggregate results; provider terms not independently verified",
+    "permission_basis": "Owner-supplied local input; publication of derived aggregate results authorized by the repository owner; provider terms not independently verified",
     "permission_independently_verified": false,
     "retrieved_at": "2026-06-16",
     "symbols": [

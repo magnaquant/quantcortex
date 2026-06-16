@@ -38,5 +38,25 @@
     "positive_draw_fraction": 0.0,
     "replications": 5000,
     "seed": 42
+  },
+  "strategy_minus_target_exposure_matched_equal_weight_net": {
+    "annualized_mean": -0.04139184319465378,
+    "block_length": 21,
+    "ci_95_lower": -0.06702567862838746,
+    "ci_95_upper": -0.016320371753545428,
+    "observations": 2011,
+    "positive_draw_fraction": 0.0004,
+    "replications": 5000,
+    "seed": 42
+  },
+  "target_exposure_matched_equal_weight_net_minus_cash": {
+    "annualized_mean": 0.03234974505942481,
+    "block_length": 21,
+    "ci_95_lower": -0.000609470819006521,
+    "ci_95_upper": 0.06638547418713049,
+    "observations": 2011,
+    "positive_draw_fraction": 0.9732,
+    "replications": 5000,
+    "seed": 42
   }
 }

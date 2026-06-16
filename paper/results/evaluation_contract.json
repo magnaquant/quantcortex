@@ -1,0 +1,72 @@
+{
+  "cash": {
+    "residual_weight_rule": "one minus risky asset weights",
+    "return_proxy": "SHV"
+  },
+  "comparators": {
+    "realized_exposure_attribution_control": {
+      "costed": false,
+      "exposure_basis": "strategy realized daily risky exposure",
+      "implementable": false,
+      "purpose": "exact ex-post arithmetic attribution"
+    },
+    "target_exposure_costed_comparator": {
+      "costed": true,
+      "exposure_basis": "strategy close-of-bar target gross exposure",
+      "implementable": true,
+      "purpose": "causal implementable comparison",
+      "risky_asset": "equal-initial-weight buy-and-hold basket"
+    }
+  },
+  "contract_id": "quantcortex.daily_target_weight_audit.v1",
+  "costs": {
+    "baseline_bps_per_dollar_traded": 13.0,
+    "market_impact": "not modeled",
+    "model": "proportional charge on executed buy and sell notional"
+  },
+  "evidence_classes": {
+    "economic_counterfactual": "one declared economic assumption changed",
+    "exact_identity": "algebraic equality checked on every daily row",
+    "fault_injection": "failure path exercised with malformed or stale state",
+    "property_test": "deterministic invariant over generated inputs",
+    "sdk_conformance": "request and response contract checked offline",
+    "untested_live": "requires authenticated external infrastructure"
+  },
+  "execution": {
+    "accounting": "adjusted-close pseudo-shares held between rebalances",
+    "target_sizing": "post-cost NAV",
+    "timing": "first observed bar strictly after the decision timestamp"
+  },
+  "information_set": {
+    "missing_data_rule": "reject incomplete required observations",
+    "point_in_time_rule": "every feature value must be available by its decision timestamp",
+    "price_basis": "adjusted close"
+  },
+  "order_state": {
+    "intent_persistence": "persist intent before broker submission",
+    "state_revision": "reject stale writes without the current revision",
+    "uncertain_submission": "block automatic retry until broker reconciliation"
+  },
+  "overlays": {
+    "input_contract": "finite contract-valid target weights",
+    "may_increase_declared_gross_limit": false,
+    "may_reduce_risky_exposure": true,
+    "output_contract": "finite long-only weights within the declared gross limit"
+  },
+  "schema_version": 1,
+  "target_tape": {
+    "columns": [
+      "decision_timestamp",
+      "symbol",
+      "target_weight"
+    ],
+    "constraints": {
+      "complete_symbol_set_per_decision": true,
+      "long_only": true,
+      "maximum_gross_exposure": 1.0
+    },
+    "schema_path": "schemas/canonical_target_tape.schema.json",
+    "schema_version": 1,
+    "timestamp_semantics": "close-of-bar decision time"
+  }
+}

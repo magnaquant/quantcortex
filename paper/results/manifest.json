@@ -1,30 +1,34 @@
 {
   "artifacts": {
-    "figures/accounting_summary.pdf": "663dbef02f7d3445f74e1848529dc722544b5e50cc5271b8645a889d782bed19",
-    "figures/accounting_summary.png": "5bb880803444ac1ff25fa3922317918aa3a869770d5a362fb7c865f208ee8d25",
-    "figures/audit_protocol.pdf": "b139e6a00b9fe47f1fd09486fa02b848e1adcfd3549984a07beac15fc3572fec",
-    "figures/audit_protocol.png": "c913daeb90062dbf08708341fc981360bd938be8ada7de1f8d19f98c1b3f665d",
-    "figures/bootstrap_robustness.pdf": "ce74282c781d5a745f79897f517c0fe7506e54a3b5c56d04008d0351e12467d6",
-    "figures/bootstrap_robustness.png": "66aa52bd5dcc91a1277f5718970c8012eefda8db67a80732b040d7ffc780ed43",
-    "figures/engine_comparison.pdf": "2fcff122e306fb2824842d8e3b63b3b0639a6791e476b0b01329feeed5e3a711",
-    "figures/engine_comparison.png": "56415822c097727eb61f72869c6d6bb705c44df5d0f4e4faaa46e5b2e77f2578",
+    "figures/accounting_summary.pdf": "83aea7fe6e6a97b55f8fe4b00218ae11972902947ed058d8281d40cb1d6e6f3c",
+    "figures/accounting_summary.png": "d7cf237467814941d9acb939df0cc4ba13a8ee12ebf792648db777438f786ad9",
+    "figures/audit_protocol.pdf": "a2a0284f9c0687ba6ff52b4a8077189d7a2ba21b63e5e77c4287639b6bbc23b4",
+    "figures/audit_protocol.png": "acf80aabaadc7cfef1222f9e86aac4f194e644d7229f8cd8f5fcd156b1ff0abb",
+    "figures/bootstrap_robustness.pdf": "de3901b50dba906bc418660a4de8983ad311a0d4ed12b946e4d12b104435e4e2",
+    "figures/bootstrap_robustness.png": "3df48e16eea06d664bab9a50c5f528d14313afa837f7c4b75d024e437f36344e",
+    "figures/engine_comparison.pdf": "35c9bc06689fdf884d4aaf09d23d934025c257921fb5fe49b7ed9da6ddb36436",
+    "figures/engine_comparison.png": "88cb5f1537fb8ee382a4cb6c39c9c6a8d433c2c921a8d9018f45b34e56d5447d",
     "figures/return_attribution_and_protocol_switches.pdf": "6eb5380a36035e3c22ad7c1801551edcdc2ab57b5def122031113492e5725d03",
     "figures/return_attribution_and_protocol_switches.png": "e394d5d68c57fd9b87bf5d251a11ba56fccbc9468dc51776731784855ee6207f",
     "figures/sensitivity_and_ablation.pdf": "0b3c1296f6b747243ae74659ed0a1b2382ed7e5e2b291e803a514b83e38b0d38",
     "figures/sensitivity_and_ablation.png": "bb8cd93e788f7b218eecfe8d59b7f5e014060c79a0bb6eef489359f685dc7dfb",
     "results/ablation.csv": "a75be6ff0a0279f87c20b00dbdd94a9f5d05525b0bf0ef501394d88b4dd6ac27",
     "results/ablation_uncertainty.csv": "b1768f4d86267ca318ce29b7ee5612dcadbe817ff5a69d2d7a4f0d42f54b6af0",
-    "results/accounting.csv": "b6957f625b55889e174ba239f6c8ea5f7a29795ffa5a4d6093d07943bf672479",
-    "results/bootstrap_sensitivity.csv": "792cc0e5711fe81d2c9d887f4a2263510476f048d568a05059bdcb5445beffd4",
+    "results/accounting.csv": "39e67c4ad06307116ed2e4e46172b227b63357ecf26101cb52f8a8e1bbcf9082",
+    "results/bootstrap_sensitivity.csv": "67f25e2e407daf31ba0ae2c750a4b02cab6b5310387cae8707d5219ac96d7788",
+    "results/comparator_diagnostics.csv": "3923dd8e0fa60fd8356de760682a4dfa5ea75bf10187c9acb8c6d26fe9517c26",
     "results/cost_sensitivity.csv": "25b9969cf8ecdabd19e7761ad2973252c9f5b9f994b6dc147595a2a112c24d88",
     "results/engine_comparison.csv": "ea0322dcd2aa4a1eb3b5996045c3a4b2ed25a85684a578ee788b013b99b643cd",
-    "results/generated_values.tex": "9fa76ac12497d4b1cbe5e691a9409c0f4cabed1306e62c8f0a46cfe3ac3d1725",
+    "results/evaluation_contract.json": "77ee05ce64622ef9ba1bfbd7dae85c4f6fd44f07db0b21feaf6b3e0e418673e7",
+    "results/generated_values.tex": "f14a548364f13b40e75d44c2eb2c3aa0965668ac35a6acd30d22ef207abb1fdf",
     "results/protocol_switches.csv": "20d5a0dc37e07a20c1f2772c8e9940ff6464ef1da98692edd5fdb06531bc2393",
     "results/return_decomposition.csv": "53a84aa9b91c92f0037e48dc09154807cbf003ccf0038f39da8406108bf709cc",
-    "results/subperiods.csv": "a8f4f36e86502f3b21abae3324d76870fdac45d518025d574ebaf7d56b559a36",
-    "results/uncertainty.json": "5326b321346e3b96937173004eb0055925552ee3a2c2e3a581d05a1110d64ed6",
-    "results/yearly_returns.csv": "5d88e2d04106492de485dc282c4ee11d5adc5e3c7f7c8d89c223045885e18884"
+    "results/sharpe_uncertainty.csv": "aead873ced9b25c76c6944aa6e3ba0901ade65c784fa5cb8cc10ad1c6c01f136",
+    "results/subperiods.csv": "9e6206fd38422640b4539e1207aade8821c2ee474af18e74268cb4bf69c249db",
+    "results/uncertainty.json": "6a6a0aa9a02def987f09de273d99cb28a6929cedf090d6245e2e1fa818d2c54a",
+    "results/yearly_returns.csv": "53cfee7bb987c332b9db1766619b0eb085415e358724872a77ebd6c5f1ed6256"
   },
+  "configuration_sha256": "20ab6c2850734e9c7a44eae17b4c3f7db4dbfda18d85cb9ecd9fcc729b475128",
   "design": {
     "all_in_cost_levels_bps": [
       0.0,
@@ -45,10 +49,14 @@
         5,
         21,
         63
-      ]
+      ],
+      "sharpe_intervals": "joint circular-block intervals for the conventional sqrt(252) sample Sharpe statistic"
     },
     "cash_account": "residual weight earns SHV adjusted-close return",
-    "comparator": "equal-initial-weight buy-and-hold basket scaled by the strategy's daily risky exposure; residual weight earns the cash proxy",
+    "comparators": {
+      "realized_exposure_attribution_control": "equal-initial-weight buy-and-hold basket scaled by the strategy's realized daily risky exposure; residual weight earns the cash proxy; ex-post and gross of comparator costs",
+      "target_exposure_costed_comparator": "event-driven equal-initial-weight buy-and-hold basket using the strategy's close-of-bar target gross exposure, next-bar execution, residual cash, and the baseline cost model"
+    },
     "cost_model": {
       "all_in_proportional_cost_bps_per_dollar_traded": 13.0,
       "market_impact": "not modeled",
@@ -128,6 +136,11 @@
     },
     "universe": {
       "benchmark": "QQQ",
+      "group_display_names": {
+        "defensive": "broad and dividend equities",
+        "growth": "growth equities",
+        "real_assets": "gold and nominal duration"
+      },
       "groups": {
         "defensive": [
           "SPY",
@@ -156,11 +169,20 @@
       "required_sessions": 274
     }
   },
-  "generated_at": "2026-06-16T16:42:29+00:00",
+  "evaluation_contract": {
+    "canonical_sha256": "2935e5abd19d9f7a6de367847f02d48357dc06b81c200cb62f3e3bf13025b621",
+    "path": "results/evaluation_contract.json",
+    "schema_version": 1
+  },
+  "generated_at": "2026-06-16T22:00:41Z",
   "generator": {
+    "dependency_lock": {
+      "path": "poetry.lock",
+      "sha256": "fa8904674c2b24f3141acae607fd0a49d97125bc109c18def9fccbb2256c8de0"
+    },
     "git": {
-      "base_commit": "b435b4bc3fd17caca6dbd01211b778c46935c5c2",
-      "worktree_clean": false
+      "source_commit": "d185c44928af865882c4d830066432dc97eb9972",
+      "worktree_clean_at_start": true
     },
     "packages": {
       "matplotlib": "3.10.9",
@@ -173,9 +195,9 @@
     "path": "scripts/run_paper_experiments.py",
     "platform": "macOS-26.4-arm64-arm-64bit-Mach-O",
     "python": "3.14.4",
-    "script_sha256": "6cc9c3bc200a6baacb9bce9f5b43f345200cdd76ca5188364485f890e614e338",
+    "script_sha256": "2f7c00e1d387d7efde57c0264d3cd702176af2fa94e5f5646309b0641ddb34bc",
     "source_tree": {
-      "file_count": 106,
+      "file_count": 109,
       "files": {
         "poetry.lock": "fa8904674c2b24f3141acae607fd0a49d97125bc109c18def9fccbb2256c8de0",
         "pyproject.toml": "175abd743d38f6b6c1cc8ae42471d62d83c86beb245d93fea231c666f51b2643",
@@ -202,6 +224,7 @@
         "quantcortex/alpha/validation/alphalens_report.py": "8463289117add78a576e37a5b99a539be5c808fca86100e26deb29e8060aa60d",
         "quantcortex/alpha/validation/factor_decay.py": "9e6e049165f014db2122d9ed57415e45e48142b475dfb7221247d447d9a50397",
         "quantcortex/backtest/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "quantcortex/backtest/conformance.py": "e169cc67cac9eb56d8da4e4a0da1e257bb6cb8d1745baca681f50fab6c62fc57",
         "quantcortex/backtest/costs/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "quantcortex/backtest/costs/transaction_costs.py": "48200419f37004c58df6f89041e31516d9ad98f66c22f75d11a0b9342474d5c7",
         "quantcortex/backtest/engines/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -275,25 +298,36 @@
         "quantcortex/strategies/drl_portfolio.py": "7fdcbc0d1439fdd5d81783ffef6870f90749c3a0e0c3f01782fb5c18203a0127",
         "quantcortex/strategies/macro_timing.py": "15977b8958ebb578d96d0f7f72ff9c28a872be4f6b8b667e88f43ffb45ffbbb5",
         "quantcortex/strategies/momentum_ml.py": "1f3b14446b8d0441e469083150067eeb4de27a91b30f02d60e5787dd61550b11",
-        "quantcortex/strategies/multi_asset_rotation.py": "a056839d41801abeb12be1fffd15cd3e3feeb84997f68e33b67432902fb990f0",
+        "quantcortex/strategies/multi_asset_rotation.py": "0ad337441ad0fdb845d2b886cf3c3b3f2abac99d596158c7b8826f36afff2ccb",
         "quantcortex/strategies/sentiment_nlp.py": "acb4ea692d5707f84146d9045fb9325e8e35db451c30c1c0c21c5f9b1ff93a03",
         "quantcortex/timing/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "quantcortex/timing/hmm_regime.py": "f8f6f03184e3f6d191ba8011fb201b99527ad07a66e32a4b9e179b4de45633db",
         "quantcortex/timing/kama.py": "ffb848ba93041af1e04f2b7896ea7a8f33ac7e5e3e53db1e44f53af111829eda",
         "quantcortex/timing/tsmom.py": "c78ac313268091f45e0e589067f12e07e8a340fa243b8fae2853778ef4ba8ea9",
         "quantcortex/timing/vix_scaler.py": "a3667424e5573fb289e63c26c69da6a68d6c943742359f0466d29b25c56e3686",
-        "scripts/run_paper_experiments.py": "6cc9c3bc200a6baacb9bce9f5b43f345200cdd76ca5188364485f890e614e338"
+        "schemas/canonical_target_tape.schema.json": "81acbd7e03163ea0dc28f7b1a4bd2a73a4bbeef85dbdbc70aee01aa100c4e7e5",
+        "schemas/evaluation_contract.schema.json": "970f24f587e669925306625d12c5a84dffd03ff5b222a59905849b2fa222784f",
+        "scripts/run_paper_experiments.py": "2f7c00e1d387d7efde57c0264d3cd702176af2fa94e5f5646309b0641ddb34bc"
       },
-      "sha256": "1f41a76040a8fbcc64fcfc66e212c9e0944c25ffa9f4ef7b8cc6092d57822c83"
-    }
+      "sha256": "df200735ec35013b252a3aa689752b9eae485c21abe7247bc590c444f18221b6"
+    },
+    "threadpools": [
+      {
+        "internal_api": "openmp",
+        "num_threads": 8,
+        "prefix": "libomp",
+        "user_api": "openmp",
+        "version": null
+      }
+    ]
   },
-  "schema_version": 3,
+  "schema_version": 4,
   "source": {
     "adjustment_method": "yfinance adjusted close with auto_adjust=False",
     "cash_proxy": "SHV",
     "file_name": "published_rotation_prices.csv",
     "input_sha256": "efb384a62157e56a0cd8065abf45c1ed07d90ec26c681e5d54d74fe4cb9c55e1",
-    "permission_basis": "Repository owner authorizes publication of derived aggregate results; provider terms not independently verified",
+    "permission_basis": "Owner-supplied local input; publication of derived aggregate results authorized by the repository owner; provider terms not independently verified",
     "price_window": "2016-01-04 to 2025-12-31",
     "provider": "Yahoo Finance via yfinance 1.4.1",
     "raw_input_committed": false,
