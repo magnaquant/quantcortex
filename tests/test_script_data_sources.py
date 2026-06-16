@@ -4,16 +4,22 @@ import os
 import subprocess
 import sys
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from scripts import generate_report, validate_performance
 
 
-def run_script(script: str, *args: str) -> subprocess.CompletedProcess[str]:
+def run_script(
+    script: str,
+    *args: str,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     environment = {**os.environ, "PYTHONPATH": "."}
     environment.pop("ALPACA_API_KEY", None)
     environment.pop("ALPACA_SECRET_KEY", None)
+    environment.update(extra_env or {})
     return subprocess.run(
         [sys.executable, script, *args],
         capture_output=True,
@@ -108,6 +114,16 @@ def test_report_rejects_malformed_date_boundaries_before_loading_data():
     assert result.returncode == 2
     assert "must be YYYY or YYYY-MM-DD" in result.stderr
 
+    provenance = run_script(
+        "scripts/generate_report.py",
+        "--prices-csv",
+        "missing.csv",
+        "--retrieved-at",
+        "yesterday",
+    )
+    assert provenance.returncode == 2
+    assert "must be an ISO date or datetime" in provenance.stderr
+
 
 def test_report_and_validation_benchmarks_share_the_evaluation_clock():
     dates = pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"])
@@ -154,3 +170,80 @@ def test_report_warmup_guard_requires_explicit_cold_start_override():
         required_sessions=274,
         enforce=False,
     ) == 10
+
+
+def test_report_rolling_beta_and_allocation_cash_are_hand_calculable():
+    dates = pd.bdate_range("2024-01-02", periods=6)
+    benchmark = pd.Series([-0.02, -0.01, 0.0, 0.01, 0.02, 0.03], index=dates)
+    portfolio = 2.0 * benchmark
+
+    beta = generate_report._rolling_beta(portfolio, benchmark, window=3)
+    assert beta.dropna().tolist() == pytest.approx([2.0, 2.0, 2.0, 2.0])
+
+    weights = pd.DataFrame(
+        {"AAA": [0.5, 0.6], "BBB": [0.3, 0.4]},
+        index=dates[:2],
+    )
+    allocation = generate_report._allocation_frame(weights)
+    assert allocation["Cash"].tolist() == pytest.approx([0.2, 0.0])
+    assert allocation.sum(axis=1).tolist() == pytest.approx([1.0, 1.0])
+
+
+def test_report_generates_complete_local_diagnostic_gallery(tmp_path):
+    rng = np.random.default_rng(20240615)
+    dates = pd.bdate_range("2017-01-03", periods=850, name="date")
+    market = rng.normal(0.00025, 0.008, size=(len(dates), 1))
+    loadings = np.linspace(0.8, 1.2, len(generate_report.ROTATION_UNIVERSE))
+    noise = rng.normal(
+        0.0,
+        0.006,
+        size=(len(dates), len(generate_report.ROTATION_UNIVERSE)),
+    )
+    prices = pd.DataFrame(
+        100.0 * np.exp(np.cumsum(market * loadings + noise, axis=0)),
+        index=dates,
+        columns=generate_report.ROTATION_UNIVERSE,
+    )
+    prices_path = tmp_path / "prices.csv"
+    prices.to_csv(prices_path, index_label="date")
+
+    image_dir = tmp_path / "reports" / "img"
+    report_path = tmp_path / "reports" / "report.md"
+    result = run_script(
+        "scripts/generate_report.py",
+        "--prices-csv",
+        str(prices_path),
+        "--start",
+        "2019-01-02",
+        "--end",
+        "2020-04-06",
+        "--n-trials",
+        "3",
+        "--data-provider",
+        "test-only fixture generator",
+        "--permission-basis",
+        "repository test fixture; not for publication",
+        "--retrieved-at",
+        "2024-06-15",
+        "--adjustment-method",
+        "synthetic geometric return construction",
+        "--imgdir",
+        str(image_dir),
+        "--report-out",
+        str(report_path),
+        extra_env={"MPLCONFIGDIR": str(tmp_path / "mpl")},
+    )
+
+    assert result.returncode == 0, result.stderr
+    for filename, _ in generate_report.REPORT_ARTIFACTS:
+        artifact = image_dir / filename
+        assert artifact.exists(), filename
+        assert artifact.stat().st_size > 1_000, filename
+
+    report = report_path.read_text(encoding="utf-8")
+    assert "Strategy returns" in report
+    assert "SHA-256" in report
+    assert "Deflated Sharpe (3 trials)" in report
+    assert "complete (owner-supplied; permission not independently verified)" in report
+    for filename, _ in generate_report.REPORT_ARTIFACTS:
+        assert f"img/{filename}" in report

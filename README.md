@@ -33,6 +33,37 @@ against appropriate benchmarks. See [PERFORMANCE.md](PERFORMANCE.md).
 
 ---
 
+## Project Demo
+
+The best demonstration is a locally generated, provenance-bearing report rather
+than a permanent equity curve detached from its input data. With an authorized
+price file, run:
+
+```bash
+PYTHONPATH=. python scripts/generate_report.py \
+  --prices-csv local_data/rotation_prices.csv \
+  --start 2018 --end 2025 --n-trials 10 \
+  --data-provider "$DATA_PROVIDER" \
+  --permission-basis "$DATA_PERMISSION_BASIS" \
+  --retrieved-at "$DATA_RETRIEVED_AT" \
+  --adjustment-method "$DATA_ADJUSTMENT_METHOD"
+```
+
+Open `reports/report.md`. It links a compact diagnostic overview and detailed
+performance, drawdown, rolling-risk, allocation, exposure, turnover, cost,
+monthly-return, and tail-distribution plots. The report also records the input
+digest, evaluation window, warm-up, cost assumptions, DSR settings, and whether
+all publication metadata was supplied. Metadata records the owner's assertions;
+the tool does not determine whether a license permits redistribution.
+
+The architecture diagram below is safe to publish because it is independent of
+market data. A generated `report_overview.png` should be added to this README
+only when the input license permits publication of derived images and the
+adjacent text identifies the source, date window, file digest, costs, benchmark
+treatment, and true research trial count. Never publish an equity curve alone.
+
+---
+
 ## Getting Started
 
 The scientific core, test suite, broker mocks, and labeled paper-trading dry run
@@ -110,14 +141,15 @@ python scripts/paper_trade_cycle.py --offline # labeled synthetic dry-run; no br
 
 `validate_performance.py` explicitly fetches live yfinance data; `--pit` uses a
 fixed start-date cohort from historical index membership. `generate_report.py`
-accepts either an owner-supplied wide CSV or explicit live yfinance, writes three
-charts under ignored `reports/img/`, and prints source metadata plus markdown
-tables. Its default report requires at least 274 pre-evaluation sessions for
-full signal initialization; `--warmup-years 0` explicitly permits and labels a
-cold start. `survivorship_demo.py` requires the same explicit live-data opt-in and
-shows the current pricing gap for past index members. `verify_brokers.py` checks
-Alpaca/IB/CCXT request construction and response parsing against SDK-shaped
-mocks; it does not verify a live SDK or authenticated connection.
+accepts either an owner-supplied wide CSV or explicit live yfinance, writes a
+Markdown report plus nine plots under ignored `reports/`, and prints source
+metadata plus markdown tables. Its default report requires at least 274
+pre-evaluation sessions for full signal initialization; `--warmup-years 0`
+explicitly permits and labels a cold start. `survivorship_demo.py` requires the
+same explicit live-data opt-in and shows the current pricing gap for past index
+members. `verify_brokers.py` checks Alpaca/IB/CCXT request construction and
+response parsing against SDK-shaped mocks; it does not verify a live SDK or
+authenticated connection.
 `paper_trade_cycle.py` runs the full execution path (use
 `--live-yfinance --submit` with `ALPACA_*` set to place paper orders). It
 refuses unresolved open orders, records deterministic client order IDs before
@@ -162,11 +194,11 @@ PYTHONPATH=. python scripts/generate_report.py \
 The report records the file path, SHA-256 digest, observed date window, cost
 assumptions, signal warm-up, DSR trial count/variance assumption, and whether
 liquidity constraints are active.
-Each run writes `equity_vs_benchmarks.png`, `drawdown.png`, and
-`rolling_sharpe.png` under ignored `reports/img/`, and prints performance and
-monthly-return tables. These are local research evidence, not repository
-fixtures. The README intentionally contains no fixed performance plot because
-the repository does not ship a redistributable input dataset. See
+Each run writes `reports/report.md`, a compact `report_overview.png`, and eight
+detailed diagnostics under ignored `reports/img/`. These are local research
+evidence, not repository fixtures. The README intentionally contains no fixed
+performance plot because the repository does not ship a redistributable input
+dataset. See
 [PERFORMANCE.md](PERFORMANCE.md) for interpretation requirements and known
 limitations.
 
