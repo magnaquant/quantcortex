@@ -6526,7 +6526,7 @@ files = [
     {file = "setuptools-82.0.1-py3-none-any.whl", hash = "sha256:a59e362652f08dcd477c78bb6e7bd9d80a7995bc73ce773050228a348ce2e5bb"},
     {file = "setuptools-82.0.1.tar.gz", hash = "sha256:7d872682c5d01cfde07da7bccc7b65469d3dca203318515ada1de5eda35efbf9"},
 ]
-markers = {main = "python_version >= \"3.14\" and (extra == \"rl\" or extra == \"all\" or extra == \"nlp\" or extra == \"brokers\") or extra == \"brokers\" or extra == \"all\""}
+markers = {main = "python_version >= \"3.14\" and (extra == \"rl\" or extra == \"all\" or extra == \"nlp\" or extra == \"brokers\")", dev = "python_version >= \"3.14\""}
 
 [package.extras]
 check = ["pytest-checkdocs (>=2.4)", "pytest-ruff (>=0.2.1) ; sys_platform != \"cygwin\"", "ruff (>=0.13.0) ; sys_platform != \"cygwin\""]
@@ -7662,4 +7662,4 @@ storage = ["psycopg2-binary", "redis", "sqlalchemy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<4.0"
-content-hash = "9791eda17da2414f711b47f839fad2acfed0df087722721ebfe72ffa008fbd6a"
+content-hash = "00eaa58e44066bce956301803418a1efdb61f358ec5cdc344b9d3134d2edc7f6"
