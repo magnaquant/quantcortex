@@ -36,7 +36,7 @@ UNIVERSE = ["QQQ", "VGT", "GLD", "TLT", "SPY", "VIG"]
 VARIANTS = {
     "full": {"regime": True, "vix_scale": True},
     "no_regime": {"regime": False, "vix_scale": True},
-    "no_vix": {"regime": True, "vix_scale": False},
+    "no_vol_scaler": {"regime": True, "vix_scale": False},
     "signal_only": {"regime": False, "vix_scale": False},
 }
 COST_LEVELS_BPS = (0.0, 5.0, 13.0, 25.0, 50.0)
@@ -344,7 +344,7 @@ def _save_figures(
     axes[0].axhline(0.0, color="black", lw=0.8)
     axes[0].axvline(BASELINE_COST_BPS, color="C7", lw=0.8, ls="--")
     axes[0].set_title("Cost sensitivity")
-    axes[0].set_xlabel("All-in one-way cost (bps)")
+    axes[0].set_xlabel("All-in cost per dollar traded (bps)")
     axes[0].set_ylabel("Cash-excess Sharpe")
 
     labels = [name.replace("_", " ") for name in ablation_results["variant"]]
