@@ -101,8 +101,9 @@ def show_orders(orders, last_px) -> None:
         print(f"  {o['side'].value:>4} {o['quantity']:>10.2f}  {o['symbol']:<6} (~${notional:,.0f})")
 
 
-def run_offline(prices, target) -> int:
-    print("MODE: offline dry-run (no ALPACA_* credentials found)\n")
+def run_offline(prices, target, forced: bool = False) -> int:
+    reason = "--offline forced; no broker calls" if forced else "no ALPACA_* credentials found"
+    print(f"MODE: offline dry-run ({reason})\n")
     capital = DEFAULT_CAPITAL
     w_vec = target.reindex(UNIVERSE).fillna(0.0).to_numpy()
     ok, violations = PreTradeRiskCheck(max_position_weight=0.6).check_weights(
@@ -197,7 +198,7 @@ def main(argv) -> int:
         return 0
 
     if args.offline:
-        return run_offline(prices, target)
+        return run_offline(prices, target, forced=True)
     has_creds = bool(os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY"))
     return run_paper(prices, target, args.submit) if has_creds else run_offline(prices, target)
 
