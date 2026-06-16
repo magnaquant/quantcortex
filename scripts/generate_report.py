@@ -40,11 +40,6 @@ logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 # existing override and matches the single-threaded determinism elsewhere).
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
 import quantcortex
 from quantcortex.backtest.costs.transaction_costs import TransactionCostModel
 from quantcortex.backtest.engines.vectorized import VectorizedBacktest
@@ -110,6 +105,13 @@ def compute(start: str, end: str, live: bool = False, n_trials: int = 10) -> dic
 
 
 def save_charts(d: dict, imgdir: Path) -> None:
+    # Import matplotlib here (not at module load) so --help and arg validation
+    # don't pay its import cost or risk a config-cache warning before argparse.
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
     imgdir.mkdir(parents=True, exist_ok=True)
     plt.style.use("seaborn-v0_8-darkgrid")
 

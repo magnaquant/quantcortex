@@ -44,7 +44,7 @@ from quantcortex.backtest.validation.deflated_sharpe import compute_dsr
 ROTATION_UNIVERSE = ["QQQ", "VGT", "GLD", "TLT", "SPY", "VIG"]
 # Liquid large-caps that traded across 2018-2025. NOTE: using today's names is
 # survivorship-biased (it excludes delisted/merged firms); a survivorship-safe
-# run needs a point-in-time constituents source (see data/universe/).
+# run needs a point-in-time constituents source (see quantcortex/data/universe/).
 MOMENTUM_UNIVERSE = [
     "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "JPM", "JNJ", "V", "PG",
     "HD", "MA", "BAC", "DIS", "ADBE", "CRM", "NFLX", "XOM", "CVX", "KO",

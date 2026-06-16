@@ -1,6 +1,6 @@
 """Quantify S&P 500 survivorship bias using the point-in-time universe.
 
-Ties together the PIT membership reconstruction (data/universe/sp500_wikipedia)
+Ties together the PIT membership reconstruction (quantcortex/data/universe/sp500_wikipedia)
 and real price data: it shows how many names that were in the index on a past
 date are (a) no longer in the index today and (b) no longer priceable on a
 survivor-only feed like yfinance - i.e. exactly the rows a survivorship-biased

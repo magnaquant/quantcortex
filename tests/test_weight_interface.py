@@ -1,4 +1,4 @@
-"""Tests for the canonical weight contract (portfolio/base.py)."""
+"""Tests for the canonical weight contract (quantcortex/portfolio/base.py)."""
 
 from __future__ import annotations
 
