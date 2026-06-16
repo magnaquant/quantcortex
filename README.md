@@ -54,14 +54,15 @@ hashes are recorded in
 | Sum of modeled cost fractions | 15.06% |
 | Mean active gross exposure | 34.76% |
 | Fully-cash sessions | 41.92% |
-| Exposure-matched equal-weight cash-excess Sharpe, gross | +0.69 |
+| Exposure-matched equal-initial-weight basket cash-excess Sharpe, gross | +0.69 |
 
 Residual cash earns the adjusted-close return of SHV. Strategy returns are net
 of 3 bps commission and 10 bps flat slippage per trade; benchmark returns are
 gross. The positive nominal return is not evidence of positive active return:
 after subtracting the cash proxy, net Sharpe is negative, and the strategy
-trails an equal-weight benchmark scaled to the same daily risky exposure. The
-ADV cap is inactive because this run has no volume input. The reported DSR is
+trails an equal-initial-weight buy-and-hold basket scaled to the same daily
+risky exposure. The ADV cap is inactive because this run has no volume input.
+The reported DSR is
 0.024 using an assumed 10 trials and a single-series variance estimate. The
 true historical trial count is unknown, so this is not a validated
 multiple-testing correction.
@@ -130,6 +131,24 @@ PYTHONPATH=. python scripts/generate_report.py \
 The command writes `reports/report.md` and the same ten-plot diagnostic set.
 Metadata records owner-supplied assertions; the tool does not determine whether
 a license permits publication or redistribution.
+
+---
+
+## Research Paper
+
+The NeurIPS 2026-format preprint presents the accounting contract, fixed
+experiment design, gross and net comparisons, dependence-aware uncertainty,
+limitations, and reproducibility checklist. It is a negative-result systems
+study, not a claim of profitable alpha or NeurIPS acceptance.
+
+[Read the paper PDF](paper/quantcortex_audit_neurips2026.pdf) or review the
+[LaTeX source and reproduction notes](paper/README.md).
+
+![Cost sensitivity and matched-exposure ablations](paper/figures/sensitivity_and_ablation.png)
+
+The raw provider matrix remains local. Committed aggregate tables, figures,
+input digest, generator revision, package versions, and artifact hashes are in
+[`paper/results/manifest.json`](paper/results/manifest.json).
 
 ---
 
@@ -420,6 +439,8 @@ quantcortex/                     # repo root
 │   ├── generate_report.py       # charts + markdown from an explicit data source
 │   ├── paper_trade_cycle.py     # one rebalance cycle (offline / Alpaca paper)
 │   ├── survivorship_demo.py     # quantify S&P 500 survivorship bias (PIT)
+│   ├── run_paper_experiments.py # fixed paper tables, figures, and manifest
+│   ├── build_paper.sh           # compile and publish the NeurIPS-format PDF
 │   └── verify_brokers.py        # broker adapters vs faithful SDK mocks
 │
 ├── tests/
@@ -428,12 +449,15 @@ quantcortex/                     # repo root
 │   ├── test_factor_integrity.py
 │   ├── test_execution_safety.py
 │   ├── test_fail_closed_invariants.py
+│   ├── test_paper_artifacts.py
+│   ├── test_paper_experiments.py
 │   ├── test_research_validation.py
 │   ├── test_repository_data_policy.py
 │   └── test_regression_guards.py  # focused guards for audited defects
 │
 ├── local_data/README.md         # ignored local-data schemas and provenance rules
 ├── reports/                     # ignored generated charts and report output
+├── paper/                       # NeurIPS source, results, figures, and PDF
 ├── docs/
 │   ├── img/                     # approved reference-run plots + hash manifest
 │   └── production-readiness.md  # blockers before production capital
@@ -445,7 +469,7 @@ quantcortex/                     # repo root
 ├── CONTRIBUTING.md
 ├── SECURITY.md
 ├── .env.example
-├── .dockerignore               # excludes secrets, local data, and reports
+├── .dockerignore               # excludes secrets and runtime-irrelevant artifacts
 ├── .gitignore
 ├── PERFORMANCE.md              # evaluation method and reporting requirements
 └── LICENSE

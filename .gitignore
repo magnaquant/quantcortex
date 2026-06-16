@@ -34,5 +34,9 @@ local_data/*
 # Generated reports (regenerable via scripts/generate_report.py)
 reports/
 
+# Local paper build and render products; the reviewed PDF is tracked under paper/.
+output/
+tmp/
+
 # OS
 .DS_Store

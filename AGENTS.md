@@ -6,8 +6,8 @@ All importable code lives under `quantcortex`; use absolute imports such as
 `from quantcortex.portfolio.base import enforce_weight_contract`. Pipeline
 layers are `data`, `alpha`, `portfolio`, `timing`, `risk`, `backtest`,
 `execution`, and `strategies`. Root directories include `tests/`, `research/`,
-`scripts/`, ignored `local_data/`, and ignored `reports/`. See `CLAUDE.md` for
-layer details.
+`scripts/`, `paper/`, ignored `local_data/`, and ignored `reports/`. See
+`CLAUDE.md` for layer details.
 
 ## Build, Test, and Development Commands
 
@@ -20,11 +20,11 @@ PYTHONPATH=. .venv/bin/python scripts/verify_brokers.py
 PYTHONPATH=. .venv/bin/python scripts/generate_report.py \
   --prices-csv local_data/published_rotation_prices.csv \
   --cash-proxy-symbol SHV
+scripts/build_paper.sh
 ```
 
-Install the reviewed environment from `requirements/dev.lock`. Scripts need
-`PYTHONPATH=.` unless installed editable. Set `MPLCONFIGDIR` to a writable
-directory when required.
+Install from `requirements/dev.lock`. Scripts need `PYTHONPATH=.` unless
+installed editable. Set `MPLCONFIGDIR` to a writable directory when required.
 
 ## Coding Style & Naming Conventions
 
@@ -55,8 +55,8 @@ Use conventional commit prefixes (`feat:`, `fix:`, `docs:`, `ci:`); keep message
 ## Security & Configuration Tips
 
 Never commit `.env`, credentials, broker account data, local state, market-data
-snapshots, or executed notebook outputs. Generated performance charts require
-explicit owner approval, adjacent provenance, an input digest, and artifact
-hashes; ordinary reports remain ignored. Use `.env.example` as the template.
+snapshots, or executed notebook outputs. Published performance and paper
+artifacts require owner approval, adjacent provenance, an input digest, and
+artifact hashes; ordinary reports remain ignored. Use `.env.example`.
 Synthetic data is limited to tests and clearly labeled dry runs. Preserve
 pre-trade risk checks, paper-mode defaults, and point-in-time data discipline.

@@ -1,0 +1,94 @@
+{
+  "artifacts": {
+    "figures/accounting_summary.pdf": "85ad2c1ba6ab38f9f1feb921e71a409860d4e6a64ea03d7e684ac4cf5c893bd9",
+    "figures/accounting_summary.png": "3a8e591b099840867a429f16995e629a4b20817aa66f3228e82f991f27d7918e",
+    "figures/engine_comparison.pdf": "fda185d2a80bfc0c34fadb977ce02078c2f65c1fc75a900f786ce88b36269e7e",
+    "figures/engine_comparison.png": "bfdade3b211ba95e6e7b236a3a3fc5f77c681b0310d612ff7e0d2e4d22371ce5",
+    "figures/sensitivity_and_ablation.pdf": "023a5c68fdeddfb32345709aaba1607c40f5bc563a1320737b26ed1b1f958bd1",
+    "figures/sensitivity_and_ablation.png": "004888ae45221753e7b530f9ea2bef262bfc8a2bc8f4bc823bbb691086f3fab2",
+    "results/ablation.csv": "6f53d2cdd1e1c86379dd28ceae04122542460eca4bbc715a184d8b1759c1df64",
+    "results/accounting.csv": "910c83adfcc2e6360589892c61fc16c4f0a326c8e1c833fd96b5f8c6d5e8cf02",
+    "results/cost_sensitivity.csv": "c154e37ba52c6451cd74397285efed412f11656d579b790af7e9077fffe9734c",
+    "results/engine_comparison.csv": "d62b49b8418618fae41e207d1c8cefa16bcb04419f9b99d915f3ba4cde7daba3",
+    "results/subperiods.csv": "6501a6f65db32416c66a2a747de00b2571de2c66c4ac391bacc72d1f1f4db5a7",
+    "results/uncertainty.json": "cb1a8baefa4034f79edd84d4522339cba04de6967400182aa4bf5de153b5f2bf",
+    "results/yearly_returns.csv": "1241839e1f158bc887db91e0339889935509f9d80d88b71cea3e8b3cae3da8a4"
+  },
+  "design": {
+    "all_in_cost_levels_bps": [
+      0.0,
+      5.0,
+      13.0,
+      25.0,
+      50.0
+    ],
+    "baseline_all_in_cost_bps": 13.0,
+    "bootstrap": {
+      "block_length_sessions": 21,
+      "method": "paired circular blocks",
+      "replications": 5000,
+      "seed": 42
+    },
+    "engines": [
+      "vectorized",
+      "event_driven"
+    ],
+    "evaluation_window": "2018-01-02 to 2025-12-31",
+    "selection_rule": "none; all predefined variants are reported",
+    "strategy_variants": {
+      "full": {
+        "regime": true,
+        "vix_scale": true
+      },
+      "no_regime": {
+        "regime": false,
+        "vix_scale": true
+      },
+      "no_vol_scaler": {
+        "regime": true,
+        "vix_scale": false
+      },
+      "signal_only": {
+        "regime": false,
+        "vix_scale": false
+      }
+    }
+  },
+  "generated_at": "2026-06-16T08:24:28+00:00",
+  "generator": {
+    "git_commit": "133af8e0ffe6b819b7236fd5ee13ece7844caef5",
+    "packages": {
+      "matplotlib": "3.10.9",
+      "numpy": "2.4.6",
+      "pandas": "3.0.3",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.17.1",
+      "threadpoolctl": "3.6.0"
+    },
+    "path": "scripts/run_paper_experiments.py",
+    "platform": "macOS-26.4-arm64-arm-64bit-Mach-O",
+    "python": "3.14.4",
+    "script_sha256": "8bba3c2cb7e4777191139bb61ded91ff72a3755df8da70afe03a4e6d0992fd64"
+  },
+  "schema_version": 1,
+  "source": {
+    "adjustment_method": "yfinance adjusted close with auto_adjust=False",
+    "cash_proxy": "SHV",
+    "file_name": "published_rotation_prices.csv",
+    "input_sha256": "efb384a62157e56a0cd8065abf45c1ed07d90ec26c681e5d54d74fe4cb9c55e1",
+    "permission_basis": "Repository owner confirms permission to publish derived aggregate results",
+    "price_window": "2016-01-04 to 2025-12-31",
+    "provider": "Yahoo Finance via yfinance 1.4.1",
+    "raw_input_committed": false,
+    "retrieved_at": "2026-06-16",
+    "symbols": [
+      "QQQ",
+      "VGT",
+      "GLD",
+      "TLT",
+      "SPY",
+      "VIG",
+      "SHV"
+    ]
+  }
+}
