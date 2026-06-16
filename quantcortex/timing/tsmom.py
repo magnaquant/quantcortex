@@ -18,9 +18,10 @@ Two modes:
 
 Causality
 ---------
-The trailing return uses returns up to and including ``t-1`` (i.e. excluding the
-contemporaneous bar), so the signal acting on bar ``t`` is fully observable
-before ``t``'s return is realised.
+The input is expected to include the contemporaneous bar ``t`` as its final
+row. The trailing return deliberately drops that row and uses observations up
+to ``t-1``, so the signal acting on bar ``t`` is observable before ``t``'s
+return is realised.
 """
 
 from __future__ import annotations
@@ -49,8 +50,14 @@ class TSMomentum:
     """
 
     def __init__(self, lookback: int = 21, *, allow_short: bool = False) -> None:
-        if lookback < 1:
-            raise ValueError("lookback must be >= 1")
+        if (
+            isinstance(lookback, (bool, np.bool_))
+            or not isinstance(lookback, (int, np.integer))
+            or lookback < 1
+        ):
+            raise ValueError("lookback must be a positive integer")
+        if not isinstance(allow_short, (bool, np.bool_)):
+            raise TypeError("allow_short must be a boolean")
         self.lookback = int(lookback)
         self.allow_short = bool(allow_short)
 
@@ -80,7 +87,9 @@ class TSMomentum:
         numpy.ndarray
             Gated weights, validated via :func:`enforce_exposure_contract`.
         """
-        w = np.asarray(weights, dtype=np.float64).ravel()
+        w = np.asarray(weights, dtype=np.float64)
+        if w.ndim != 1 or w.size == 0 or not np.all(np.isfinite(w)):
+            raise ValueError("weights must be a non-empty finite 1-D vector")
         ret = self._coerce_returns(returns)
 
         signals = self._trailing_signal(ret, n_assets=w.size)
@@ -99,20 +108,26 @@ class TSMomentum:
 
         The trailing window ends at ``t-1`` (the most recent fully observed bar
         excluding the contemporaneous one): we drop the final row, then take the
-        last ``lookback`` rows and sum the returns as a cheap proxy for the
-        cumulative trailing return's sign.
+        last ``lookback`` rows and compound their simple returns.
         """
         arr = np.asarray(ret, dtype=np.float64)
         if arr.ndim == 1:
             arr = arr.reshape(-1, 1)
         elif arr.ndim != 2:
             raise ValueError("returns must be 1-D or 2-D")
+        if arr.shape[1] == 0 or not np.all(np.isfinite(arr)):
+            raise ValueError("returns must contain finite observations")
+        if np.any(arr < -1.0):
+            raise ValueError("simple returns cannot be less than -100%")
 
         # Causal: exclude the contemporaneous (last) observation if we have more
         # than one row, so the signal is known strictly before bar t.
-        usable = arr[:-1] if arr.shape[0] > 1 else arr
+        usable = arr[:-1]
         window = usable[-self.lookback:]
-        trailing = window.sum(axis=0)
+        if window.shape[0] == 0:
+            trailing = np.zeros(arr.shape[1], dtype=np.float64)
+        else:
+            trailing = np.prod(1.0 + window, axis=0) - 1.0
         signs = np.sign(trailing)  # in {-1, 0, +1}
 
         if signs.size == 1 and n_assets > 1:

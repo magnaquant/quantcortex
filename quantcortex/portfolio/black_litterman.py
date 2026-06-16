@@ -64,6 +64,7 @@ from quantcortex.portfolio.base import (
     PortfolioOptimizer,
     normalize_long_only,
     normalize_market_neutral,
+    prepare_return_panel,
 )
 
 __all__ = ["BlackLitterman"]
@@ -84,7 +85,7 @@ class BlackLitterman(PortfolioOptimizer):
         Scalar ``tau`` weighting the uncertainty of the equilibrium prior relative
         to the views.  Typically small (0.01-0.05).
     **kw:
-        Forwarded to :class:`~portfolio.base.PortfolioOptimizer`.
+        Forwarded to :class:`~quantcortex.portfolio.base.PortfolioOptimizer`.
     """
 
     def __init__(
@@ -96,8 +97,16 @@ class BlackLitterman(PortfolioOptimizer):
         **kw,
     ) -> None:
         super().__init__(mode, **kw)
+        if isinstance(risk_aversion, (bool, np.bool_)):
+            raise TypeError("risk_aversion must be numeric, not boolean")
+        if isinstance(tau, (bool, np.bool_)):
+            raise TypeError("tau must be numeric, not boolean")
         self.risk_aversion = float(risk_aversion)
         self.tau = float(tau)
+        if not np.isfinite(self.risk_aversion) or self.risk_aversion <= 0.0:
+            raise ValueError("risk_aversion must be finite and positive")
+        if not np.isfinite(self.tau) or self.tau <= 0.0:
+            raise ValueError("tau must be finite and positive")
 
     # ------------------------------------------------------------------ #
     # Covariance estimation.
@@ -106,16 +115,13 @@ class BlackLitterman(PortfolioOptimizer):
     def _ledoit_wolf_cov(returns: pd.DataFrame) -> np.ndarray:
         """Ledoit-Wolf shrinkage estimate of the covariance matrix.
 
-        Uses :class:`sklearn.covariance.LedoitWolf` when available, falling back
-        to a simple sample covariance if estimation fails (e.g. too few rows).
+        Uses :class:`sklearn.covariance.LedoitWolf` on a validated complete-case
+        panel.
         """
         x = returns.values.astype(np.float64)
-        try:
-            from sklearn.covariance import LedoitWolf
+        from sklearn.covariance import LedoitWolf
 
-            cov = LedoitWolf().fit(x).covariance_
-        except Exception:  # pragma: no cover - defensive fallback
-            cov = np.cov(x, rowvar=False)
+        cov = LedoitWolf().fit(x).covariance_
         cov = np.atleast_2d(np.asarray(cov, dtype=np.float64))
         # Symmetrize and lightly regularize for invertibility.
         cov = 0.5 * (cov + cov.T)
@@ -136,14 +142,21 @@ class BlackLitterman(PortfolioOptimizer):
         if market_weights is None:
             return np.full(n, 1.0 / n, dtype=np.float64)
         if isinstance(market_weights, pd.Series):
+            if market_weights.index.has_duplicates:
+                raise ValueError("market_weights index must be unique")
+            unknown = [label for label in market_weights.index if label not in columns]
+            if unknown:
+                raise ValueError(f"market_weights contain unknown assets: {unknown}")
             w = market_weights.reindex(columns).values.astype(np.float64)
         else:
             w = np.asarray(market_weights, dtype=np.float64).ravel()
         if w.shape[0] != n or not np.all(np.isfinite(w)):
             raise ValueError("market_weights must be finite with one entry per asset")
+        if (w < 0.0).any():
+            raise ValueError("market_weights must be non-negative")
         total = w.sum()
         if total <= 0.0:
-            return np.full(n, 1.0 / n, dtype=np.float64)
+            raise ValueError("market_weights must have positive total weight")
         return w / total
 
     @staticmethod
@@ -179,6 +192,11 @@ class BlackLitterman(PortfolioOptimizer):
 
         n = len(columns)
         if isinstance(views, pd.DataFrame):
+            if views.columns.has_duplicates:
+                raise ValueError("views columns must be unique")
+            unknown = [column for column in views.columns if column not in columns]
+            if unknown:
+                raise ValueError(f"views contain unknown assets: {unknown}")
             p = views.reindex(columns=columns).fillna(0.0).values.astype(np.float64)
         else:
             p = np.atleast_2d(np.asarray(views, dtype=np.float64))
@@ -188,6 +206,10 @@ class BlackLitterman(PortfolioOptimizer):
                 f"got shape {p.shape}"
             )
         k = p.shape[0]
+        if not np.all(np.isfinite(p)):
+            raise ValueError("views pick matrix must contain only finite values")
+        if np.any(np.all(np.isclose(p, 0.0), axis=1)):
+            raise ValueError("each view must load on at least one asset")
 
         if q is None:
             raise ValueError("views supplied but no Q vector of view returns given")
@@ -196,6 +218,8 @@ class BlackLitterman(PortfolioOptimizer):
             raise ValueError(
                 f"Q must have one entry per view ({k}), got {q_arr.shape[0]}"
             )
+        if not np.all(np.isfinite(q_arr)):
+            raise ValueError("Q must contain only finite values")
 
         # Prior variance of each view portfolio: diag(P (tau*Sigma) P').  This puts
         # Omega on the same scale as the prior uncertainty, whatever the return
@@ -212,7 +236,8 @@ class BlackLitterman(PortfolioOptimizer):
                 raise ValueError(
                     f"view_confidences must have one entry per view ({k})"
                 )
-            c = np.clip(c, 1e-6, 1.0 - 1e-6)
+            if not np.all(np.isfinite(c)) or np.any((c <= 0.0) | (c >= 1.0)):
+                raise ValueError("view_confidences must lie strictly between 0 and 1")
             # Idzorek-style scaling: Omega = diag(((1 - c) / c) * diag(P (tau*Sigma) P')).
             omega = np.diag(((1.0 - c) / c) * view_prior_var)
         return p, q_arr, omega
@@ -266,6 +291,7 @@ class BlackLitterman(PortfolioOptimizer):
         """
         if not isinstance(returns, pd.DataFrame):
             returns = pd.DataFrame(np.asarray(returns, dtype=float))
+        returns = prepare_return_panel(returns, name="BlackLitterman returns")
 
         columns = list(returns.columns)
         n = returns.shape[1]
@@ -273,7 +299,9 @@ class BlackLitterman(PortfolioOptimizer):
             raise ValueError("Black-Litterman requires at least one asset")
         if n == 1:
             single = 1.0 if self.mode is PortfolioMode.LONG_ONLY else 0.0
-            return np.array([single], dtype=np.float64)
+            return self._project_configured_bounds(
+                np.array([single], dtype=np.float64)
+            )
 
         # Covariance (Ledoit-Wolf shrinkage) and market weights.
         sigma = self._ledoit_wolf_cov(returns)
@@ -287,7 +315,10 @@ class BlackLitterman(PortfolioOptimizer):
             views, view_confidences, q, columns, self.tau * sigma
         )
         if resolved is None:
-            posterior = pi
+            # With no views, Black-Litterman should reproduce the market prior.
+            # Returning it directly also avoids losing non-equal priors when the
+            # covariance is singular or numerically close to zero.
+            raw = w_mkt
         else:
             p, q_arr, omega = resolved
             tau_sigma_inv = self._safe_inv(self.tau * sigma)
@@ -296,15 +327,16 @@ class BlackLitterman(PortfolioOptimizer):
             a_mat = tau_sigma_inv + p.T @ omega_inv @ p
             b_vec = tau_sigma_inv @ pi + p.T @ omega_inv @ q_arr
             posterior = self._safe_inv(a_mat) @ b_vec
-
-        # Mean-variance optimal weights: w proportional to (delta*Sigma)^-1 E[R].
-        raw = self._safe_inv(self.risk_aversion * sigma) @ posterior
+            # Mean-variance optimal weights: w proportional to
+            # (delta*Sigma)^-1 E[R].
+            raw = self._safe_inv(self.risk_aversion * sigma) @ posterior
 
         if not np.all(np.isfinite(raw)):
-            # Degenerate solve - fall back to the market prior.
-            raw = w_mkt.copy()
+            raise RuntimeError("BlackLitterman solve produced non-finite weights")
 
         # Project onto the configured mode's feasible set.
         if self.mode is PortfolioMode.LONG_ONLY:
-            return normalize_long_only(raw)
-        return normalize_market_neutral(raw)
+            normalized = normalize_long_only(raw)
+        else:
+            normalized = normalize_market_neutral(raw)
+        return self._project_configured_bounds(normalized)

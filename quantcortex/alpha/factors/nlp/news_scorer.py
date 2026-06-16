@@ -3,8 +3,7 @@
 :class:`NewsScorer` turns a stream of timestamped news headlines into a
 per-(date, symbol) sentiment signal suitable for use as an alpha factor. It
 delegates the text -> sentiment step to a
-:class:`~alpha.factors.nlp.finbert_sentiment.FinBERTSentiment` instance
-(FinBERT when available, an offline finance lexicon otherwise), then aggregates
+:class:`~quantcortex.alpha.factors.nlp.finbert_sentiment.FinBERTSentiment` instance, then aggregates
 those headline-level scores to a daily panel.
 
 Causality
@@ -37,8 +36,8 @@ class NewsScorer:
     ----------
     sentiment:
         A :class:`FinBERTSentiment` instance used to score text. If ``None``
-        (default), one is constructed with default settings (FinBERT if the
-        transformers stack is installed, otherwise the offline lexicon).
+        (default), a deterministic lexicon scorer is constructed. Pass an
+        explicit ``backend="transformers"`` scorer to require FinBERT.
     half_life:
         Half-life, in days, of the exponential recency weighting used by the
         time-decayed aggregation helpers. With a half-life of ``h``, a headline
@@ -51,10 +50,13 @@ class NewsScorer:
         sentiment: Optional[FinBERTSentiment] = None,
         half_life: float = 3.0,
     ) -> None:
-        if half_life <= 0:
-            raise ValueError("half_life must be positive")
-        self.sentiment = sentiment if sentiment is not None else FinBERTSentiment()
-        self.half_life = float(half_life)
+        half_life = self._validate_half_life(half_life)
+        self.sentiment = (
+            sentiment
+            if sentiment is not None
+            else FinBERTSentiment(backend="lexicon")
+        )
+        self.half_life = half_life
 
     # ------------------------------------------------------------------
     # Headline scoring
@@ -107,14 +109,30 @@ class NewsScorer:
         numpy.ndarray
             Weights in ``[0, 1]`` aligned to ``age_days``.
         """
-        hl = self.half_life if half_life is None else float(half_life)
-        if hl <= 0:
-            raise ValueError("half_life must be positive")
+        hl = (
+            self.half_life
+            if half_life is None
+            else self._validate_half_life(half_life)
+        )
         ages = np.asarray(age_days, dtype=float)
+        if not np.all(np.isfinite(ages)):
+            raise ValueError("age_days must contain only finite values")
         weights = np.power(0.5, ages / hl)
         # Future-dated (negative age) news must not leak: zero its weight.
         weights = np.where(ages < 0, 0.0, weights)
         return weights
+
+    @staticmethod
+    def _validate_half_life(value: object) -> float:
+        if isinstance(value, (bool, np.bool_)):
+            raise TypeError("half_life must be numeric, not boolean")
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise TypeError("half_life must be numeric") from exc
+        if not np.isfinite(parsed) or parsed <= 0.0:
+            raise ValueError("half_life must be finite and positive")
+        return parsed
 
     # ------------------------------------------------------------------
     # Daily aggregation
@@ -177,19 +195,53 @@ class NewsScorer:
             ``NaN``.
         """
         self._validate_news(news_df, date_col, symbol_col, headline_col)
+        if lookback_days is not None:
+            if isinstance(lookback_days, bool):
+                raise ValueError("lookback_days must be a non-negative integer")
+            try:
+                parsed_lookback = int(lookback_days)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(
+                    "lookback_days must be a non-negative integer"
+                ) from exc
+            if parsed_lookback != lookback_days or parsed_lookback < 0:
+                raise ValueError("lookback_days must be a non-negative integer")
+            lookback_days = parsed_lookback
 
         df = news_df[[date_col, symbol_col, headline_col]].copy()
         df.columns = ["date", "symbol", "headline"]
         # Normalize to calendar dates: intraday timestamps would otherwise
         # produce one "daily" row per distinct timestamp instead of per day.
-        df["date"] = pd.to_datetime(df["date"]).dt.normalize()
+        published_at = pd.to_datetime(df["date"], utc=True)
+        if published_at.isna().any():
+            raise ValueError("news dates must be valid timestamps")
+        df["published_at"] = published_at
+        df["date"] = published_at.dt.tz_convert(None).dt.normalize()
         df = df.dropna(subset=["symbol", "headline"])
+        if (
+            ~df["symbol"].map(
+                lambda value: isinstance(value, str) and bool(value.strip())
+            )
+        ).any():
+            raise ValueError("news symbols must be non-empty strings")
+        if (
+            ~df["headline"].map(
+                lambda value: isinstance(value, str) and bool(value.strip())
+            )
+        ).any():
+            raise ValueError("news headlines must be non-empty strings")
+        df["symbol"] = df["symbol"].str.strip()
+        df["headline"] = df["headline"].str.strip()
+        df = df.drop_duplicates(subset=["date", "symbol", "headline"])
         if df.empty:
             return pd.DataFrame(dtype=float)
 
         # Score every unique headline once for efficiency, then map back.
         unique_headlines = pd.unique(df["headline"].astype(str))
         scores = self.sentiment.score(list(unique_headlines))
+        scores = np.asarray(scores, dtype=float)
+        if scores.shape != (len(unique_headlines),) or not np.all(np.isfinite(scores)):
+            raise ValueError("sentiment backend returned malformed scores")
         score_map = dict(zip(unique_headlines, scores))
         df["sentiment"] = df["headline"].astype(str).map(score_map).astype(float)
 
@@ -197,8 +249,11 @@ class NewsScorer:
 
         # --- Single as-of evaluation date ---------------------------------
         if as_of is not None:
-            asof_ts = pd.to_datetime(as_of)
-            window = df[df["date"] <= asof_ts]  # strictly causal
+            asof_exact = pd.to_datetime(as_of, utc=True)
+            if pd.isna(asof_exact):
+                raise ValueError("as_of must be a valid timestamp")
+            asof_ts = pd.Timestamp(asof_exact).tz_convert(None).normalize()
+            window = df[df["published_at"] <= asof_exact]
             if lookback_days is not None:
                 lower = asof_ts - pd.Timedelta(days=int(lookback_days))
                 window = window[window["date"] >= lower]

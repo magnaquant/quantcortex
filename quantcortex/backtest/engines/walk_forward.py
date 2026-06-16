@@ -70,6 +70,17 @@ class WalkForwardOptimizer:
         mode: str = "expanding",
         label_horizon: int = 1,
     ) -> None:
+        values = {
+            "train_size": train_size,
+            "test_size": test_size,
+            "embargo_gap": embargo_gap,
+            "label_horizon": label_horizon,
+        }
+        if any(
+            isinstance(value, bool) or int(value) != value
+            for value in values.values()
+        ):
+            raise ValueError("window and gap parameters must be integers")
         if train_size < 1:
             raise ValueError("train_size must be >= 1.")
         if test_size < 1:
@@ -90,8 +101,12 @@ class WalkForwardOptimizer:
     def _resolve_n(index_or_n: IndexLike) -> int:
         """Return the number of positional samples for an int or index/array."""
         if isinstance(index_or_n, (int, np.integer)):
-            return int(index_or_n)
-        return len(index_or_n)
+            n = int(index_or_n)
+        else:
+            n = len(index_or_n)
+        if n < 0:
+            raise ValueError("sample count must be non-negative")
+        return n
 
     def n_splits(self, index_or_n: IndexLike) -> int:
         """Number of folds produced for ``n`` samples (or a given index).

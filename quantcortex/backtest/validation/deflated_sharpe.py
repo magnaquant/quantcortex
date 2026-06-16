@@ -75,7 +75,21 @@ EULER_MASCHERONI = 0.5772156649015329
 def _clean_returns(returns: pd.Series) -> np.ndarray:
     """Coerce a return series to a 1-D float array, dropping NaNs."""
     arr = np.asarray(pd.Series(returns).dropna(), dtype=float)
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("returns must contain only finite values after dropping NaN")
     return arr
+
+
+def _validate_n_trials(n_trials: int) -> int:
+    if isinstance(n_trials, (bool, np.bool_)):
+        raise ValueError("n_trials must be a positive integer")
+    try:
+        n = int(n_trials)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("n_trials must be a positive integer") from exc
+    if n != n_trials or n < 1:
+        raise ValueError("n_trials must be a positive integer")
+    return n
 
 
 def sharpe_ratio(
@@ -108,6 +122,8 @@ def sharpe_ratio(
         return float("nan")
     sr = arr.mean() / sd
     if periods_per_year is not None:
+        if not np.isfinite(periods_per_year) or periods_per_year <= 0.0:
+            raise ValueError("periods_per_year must be finite and positive")
         sr *= math.sqrt(periods_per_year)
     return float(sr)
 
@@ -138,10 +154,12 @@ def expected_max_sharpe(n_trials: int, sr_variance: float) -> float:
         ``n_trials <= 1`` (no selection effect) or when the variance is
         non-positive / non-finite.
     """
-    n = int(n_trials)
-    if n <= 1:
+    n = _validate_n_trials(n_trials)
+    if n == 1:
         return 0.0
-    if not np.isfinite(sr_variance) or sr_variance <= 0.0:
+    if not np.isfinite(sr_variance) or sr_variance < 0.0:
+        raise ValueError("sr_variance must be finite and non-negative")
+    if sr_variance == 0.0:
         return 0.0
     g = EULER_MASCHERONI
     z1 = stats.norm.ppf(1.0 - 1.0 / n)
@@ -190,6 +208,8 @@ def probabilistic_sharpe_ratio(
     float
         A probability in ``[0, 1]``, or ``nan`` if undefined.
     """
+    if not np.isfinite(sr_benchmark):
+        raise ValueError("sr_benchmark must be finite")
     return _psr(returns, sr_benchmark)
 
 
@@ -197,7 +217,7 @@ def _psr(returns: pd.Series, sr_zero: float) -> float:
     """Core PSR evaluation against an arbitrary benchmark ``sr_zero``."""
     arr = _clean_returns(returns)
     t = arr.size
-    if t < 2:
+    if t < 4:
         return float("nan")
 
     sr = sharpe_ratio(pd.Series(arr))  # per-observation
@@ -264,11 +284,18 @@ def compute_dsr(
     -------
     float
         The DSR, a probability in ``[0, 1]``.  Returns ``nan`` when the Sharpe
-        is undefined (``T < 2`` or zero dispersion).
+        is undefined (``T < 4`` or zero dispersion).
     """
+    n_trials = _validate_n_trials(n_trials)
+    if not np.isfinite(sr_benchmark):
+        raise ValueError("sr_benchmark must be finite")
+    if sr_variance is not None and (
+        not np.isfinite(sr_variance) or sr_variance < 0.0
+    ):
+        raise ValueError("sr_variance must be finite and non-negative")
     arr = _clean_returns(returns)
     t = arr.size
-    if t < 2:
+    if t < 4:
         return float("nan")
 
     sr = sharpe_ratio(pd.Series(arr))

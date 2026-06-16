@@ -6,9 +6,9 @@ callers are responsible for confirming that their use and redistribution are
 permitted. See https://ranaroussi.github.io/yfinance/.
 ``yfinance`` does not expose exact SEC filing dates, so the point-in-time
 ``announcement_date`` is approximated as ``period_end + 45 calendar days`` - a
-conservative reporting-lag proxy (the SEC 10-Q deadline for large accelerated
-filers is 40 days; smaller filers get 45).  Macro series are not available
-here; use :class:`FREDProvider`.
+heuristic reporting-lag proxy, not an observed publication timestamp or a
+guarantee against lookahead. Macro series are not available here; use
+:class:`FREDProvider`.
 
 All heavy/optional imports happen lazily inside the methods so the module
 imports with only the core scientific stack present.
@@ -24,6 +24,8 @@ from quantcortex.data.providers.base import (
     FUNDAMENTAL_COLUMNS,
     DataProvider,
     _as_symbol_list,
+    _canonical_fundamental_fields,
+    _canonicalize_fundamental_records,
 )
 
 __all__ = ["YFinanceProvider"]
@@ -47,8 +49,7 @@ class YFinanceProvider(DataProvider):
         "30m": "30m",
     }
 
-    #: conservative reporting-lag (days) added to ``period_end`` because
-    #: yfinance lacks exact filing dates.
+    #: heuristic reporting lag (days) added because exact filing dates are absent.
     _REPORTING_LAG_DAYS: int = 45
 
     # ------------------------------------------------------------------ #
@@ -112,7 +113,7 @@ class YFinanceProvider(DataProvider):
         start: Optional[str] = None,
         end: Optional[str] = None,
     ) -> pd.DataFrame:
-        """Return tidy quarterly fundamentals from income & balance statements.
+        """Return canonical quarterly income, balance, and cash-flow data.
 
         ``announcement_date`` is set to ``period_end`` plus
         :attr:`_REPORTING_LAG_DAYS` calendar days because yfinance does not
@@ -126,13 +127,14 @@ class YFinanceProvider(DataProvider):
                 "install it with `pip install yfinance`."
             ) from exc
 
-        wanted = {str(f) for f in fields} if fields else None
+        wanted = _canonical_fundamental_fields(fields)
         frames: List[pd.DataFrame] = []
         for symbol in _as_symbol_list(symbols):
             ticker = yf.Ticker(symbol)
             for statement in (
                 ticker.quarterly_financials,
                 ticker.quarterly_balance_sheet,
+                ticker.quarterly_cashflow,
             ):
                 tidy = self._melt_statement(symbol, statement, wanted)
                 if not tidy.empty:
@@ -142,10 +144,19 @@ class YFinanceProvider(DataProvider):
             return pd.DataFrame(columns=FUNDAMENTAL_COLUMNS)
 
         result = pd.concat(frames, ignore_index=True)
+        result = result.drop_duplicates(
+            ["symbol", "period_end", "announcement_date", "field"], keep="first"
+        )
         if start is not None:
-            result = result[result["period_end"] >= pd.Timestamp(start)]
+            result = result[
+                result["period_end"]
+                >= pd.to_datetime(start, errors="raise", utc=True).tz_localize(None)
+            ]
         if end is not None:
-            result = result[result["period_end"] <= pd.Timestamp(end)]
+            result = result[
+                result["period_end"]
+                <= pd.to_datetime(end, errors="raise", utc=True).tz_localize(None)
+            ]
         return result.reset_index(drop=True)
 
     def _melt_statement(
@@ -158,25 +169,27 @@ class YFinanceProvider(DataProvider):
         if statement is None or statement.empty:
             return pd.DataFrame(columns=FUNDAMENTAL_COLUMNS)
 
-        df = statement.copy()
-        df.index = df.index.astype(str)
-        if wanted is not None:
-            df = df.loc[df.index.intersection(wanted)]
-            if df.empty:
-                return pd.DataFrame(columns=FUNDAMENTAL_COLUMNS)
-
-        df = df.reset_index().rename(columns={"index": "field"})
-        tidy = df.melt(
-            id_vars="field", var_name="period_end", value_name="value"
-        )
-        tidy["period_end"] = pd.to_datetime(tidy["period_end"])
-        tidy["announcement_date"] = tidy["period_end"] + pd.Timedelta(
-            days=self._REPORTING_LAG_DAYS
-        )
-        tidy["symbol"] = symbol
-        tidy["value"] = pd.to_numeric(tidy["value"], errors="coerce")
-        tidy = tidy.dropna(subset=["value"])
-        return tidy[FUNDAMENTAL_COLUMNS]
+        rows: List[pd.DataFrame] = []
+        for period_end in statement.columns:
+            period_ts = pd.to_datetime(period_end, errors="coerce", utc=True)
+            if pd.isna(period_ts):
+                continue
+            period_ts = period_ts.tz_localize(None)
+            records = _canonicalize_fundamental_records(
+                zip(statement.index.astype(str), statement[period_end]), wanted
+            )
+            if not records:
+                continue
+            tidy = pd.DataFrame(records)
+            tidy["symbol"] = symbol
+            tidy["period_end"] = period_ts
+            tidy["announcement_date"] = period_ts + pd.Timedelta(
+                days=self._REPORTING_LAG_DAYS
+            )
+            rows.append(tidy[FUNDAMENTAL_COLUMNS])
+        if not rows:
+            return pd.DataFrame(columns=FUNDAMENTAL_COLUMNS)
+        return pd.concat(rows, ignore_index=True)
 
     # ------------------------------------------------------------------ #
     # Macro

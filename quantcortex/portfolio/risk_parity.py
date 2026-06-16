@@ -20,7 +20,6 @@ the returned weights satisfy the canonical *weight contract*.
 
 from __future__ import annotations
 
-import warnings
 from typing import Union
 
 import numpy as np
@@ -28,7 +27,12 @@ import pandas as pd
 from scipy.optimize import minimize
 from sklearn.covariance import LedoitWolf
 
-from quantcortex.portfolio.base import PortfolioMode, PortfolioOptimizer
+from quantcortex.portfolio.base import (
+    PortfolioMode,
+    PortfolioOptimizer,
+    prepare_return_panel,
+    validate_return_panel,
+)
 
 __all__ = ["RiskParity"]
 
@@ -51,7 +55,7 @@ class RiskParity(PortfolioOptimizer):
     tol:
         Solver convergence tolerance on the ERC dispersion objective.
     **kw:
-        Forwarded to :class:`~portfolio.base.PortfolioOptimizer`
+        Forwarded to :class:`~quantcortex.portfolio.base.PortfolioOptimizer`
         (``tolerance``, ``weight_bounds``).
     """
 
@@ -65,14 +69,26 @@ class RiskParity(PortfolioOptimizer):
         **kw,
     ) -> None:
         super().__init__(mode, **kw)
+        if not isinstance(shrinkage, (bool, np.bool_)):
+            raise TypeError("shrinkage must be a boolean")
         if self.mode is not PortfolioMode.LONG_ONLY:
             raise ValueError(
                 "RiskParity is a long-only construction; "
                 f"mode={self.mode.value!r} is not supported."
             )
+        if isinstance(max_iter, (bool, np.bool_)) or not isinstance(
+            max_iter, (int, np.integer)
+        ):
+            raise TypeError("max_iter must be an integer")
+        if isinstance(tol, (bool, np.bool_)):
+            raise TypeError("tol must be numeric, not boolean")
         self.shrinkage = bool(shrinkage)
         self.max_iter = int(max_iter)
         self.tol = float(tol)
+        if self.max_iter <= 0:
+            raise ValueError("max_iter must be positive")
+        if not np.isfinite(self.tol) or self.tol <= 0.0:
+            raise ValueError("tol must be finite and positive")
 
     # ------------------------------------------------------------------
     # Static helpers
@@ -103,11 +119,7 @@ class RiskParity(PortfolioOptimizer):
     # ------------------------------------------------------------------
     @staticmethod
     def _clean(returns: pd.DataFrame) -> pd.DataFrame:
-        df = pd.DataFrame(returns).apply(pd.to_numeric, errors="coerce")
-        df = df.replace([np.inf, -np.inf], np.nan)
-        df = df.dropna(how="all")
-        df = df.ffill().bfill().fillna(0.0)
-        return df
+        return prepare_return_panel(returns, name="RiskParity returns")
 
     def _covariance(self, returns: pd.DataFrame) -> np.ndarray:
         X = self._clean(returns)
@@ -167,39 +179,16 @@ class RiskParity(PortfolioOptimizer):
             bounds=bounds,
             options={"maxiter": self.max_iter, "ftol": self.tol, "gtol": self.tol},
         )
-        candidate = res.x if (res.success and np.all(np.isfinite(res.x))) else x0
+        if not res.success or not np.all(np.isfinite(res.x)):
+            raise RuntimeError(f"RiskParity solver failed: {res.message}")
+        candidate = res.x
 
         total = candidate.sum()
         if total <= 0.0 or not np.isfinite(total):
-            return np.full(n, 1.0 / n, dtype=np.float64)
+            raise RuntimeError("RiskParity solver returned invalid weights")
         w = candidate / total
 
-        # Respect the configured upper bound via iterative water-filling: a
-        # single clip + global renormalisation would re-inflate weights above
-        # the bound.  Instead, weights exceeding `upper` are fixed AT `upper`
-        # and only the remaining mass is renormalised over the uncapped assets,
-        # repeating until no weight violates the bound.  Feasibility
-        # (n * upper >= 1) is checked upfront in `_compute_weights`.
-        upper = self.weight_bounds[1]
-        if np.any(w > upper):
-            w = w.copy()
-            capped = np.zeros(n, dtype=bool)
-            while True:
-                over = (w > upper + 1e-12) & ~capped
-                if not over.any():
-                    break
-                capped |= over
-                w[capped] = upper
-                free = ~capped
-                if not free.any():
-                    break
-                remaining = 1.0 - upper * float(capped.sum())
-                s = float(w[free].sum())
-                if s <= 0.0 or not np.isfinite(s):
-                    w[free] = remaining / float(free.sum())
-                else:
-                    w[free] *= remaining / s
-        return w
+        return self._project_configured_bounds(w)
 
     # ------------------------------------------------------------------
     # PortfolioOptimizer API
@@ -211,22 +200,21 @@ class RiskParity(PortfolioOptimizer):
         usable risk information; forward/backward/zero-filling them would
         create zero-variance pseudo-assets that absorb most of the book.  They
         are excluded from the optimization and re-inserted with weight 0.0 at
-        their original positions.  If *all* columns are dead the optimizer
-        falls back to equal weight with a warning.
+        their original positions. If all columns are dead, optimization fails.
         """
-        df = pd.DataFrame(returns).apply(pd.to_numeric, errors="coerce")
-        df = df.replace([np.inf, -np.inf], np.nan)
+        df = validate_return_panel(returns, name="RiskParity returns")
         n_total = df.shape[1]
         alive = (df.notna().sum(axis=0) >= 2).to_numpy()
 
         if not alive.any():
-            warnings.warn(
-                "RiskParity: every column has fewer than 2 finite "
-                "observations; falling back to equal weight.",
-                RuntimeWarning,
-                stacklevel=2,
+            raise ValueError(
+                "RiskParity requires at least one asset with two observations"
             )
-            return np.full(n_total, 1.0 / n_total, dtype=np.float64)
+        if (~alive).any() and max(0.0, self.weight_bounds[0]) > self.tolerance:
+            raise ValueError(
+                "RiskParity cannot assign the configured positive minimum weight "
+                "to assets without enough observations"
+            )
 
         sub = df.loc[:, df.columns[alive]]
         w_sub = self._optimize_subset(sub)
@@ -245,20 +233,9 @@ class RiskParity(PortfolioOptimizer):
         sigma = self._covariance(returns)
         n = sigma.shape[0]
 
-        # Upper-bound feasibility for the fully-invested book: there is no
-        # weight vector summing to 1 with every element <= upper when
-        # n * upper < 1.  Fail loudly rather than silently violating a bound.
-        upper = self.weight_bounds[1]
-        if n * upper < 1.0 - 1e-12:
-            raise ValueError(
-                f"RiskParity: upper weight bound {upper} is infeasible for "
-                f"{n} assets (n * upper = {n * upper:.6f} < 1.0)."
+        if n == 1:
+            return self._project_configured_bounds(
+                np.array([1.0], dtype=np.float64)
             )
 
-        if n == 1:
-            return np.array([1.0], dtype=np.float64)
-
-        try:
-            return self._solve(sigma)
-        except Exception:
-            return np.full(n, 1.0 / n, dtype=np.float64)
+        return self._solve(sigma)

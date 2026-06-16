@@ -13,6 +13,7 @@ across position flips (long -> short).
 
 from __future__ import annotations
 
+import math
 from typing import Dict, List, Mapping, Optional, Union
 
 import pandas as pd
@@ -31,6 +32,9 @@ class PositionManager:
 
     def __init__(self) -> None:
         self._positions: Dict[str, Position] = {}
+        # Broker updates generally report cumulative filled quantity and VWAP.
+        # Track what has already been applied so repeated updates are idempotent.
+        self._applied_fills: Dict[str, tuple[float, float]] = {}
 
     # ------------------------------------------------------------------ #
     # state access
@@ -42,6 +46,7 @@ class PositionManager:
 
     def get_position(self, symbol: str) -> Position:
         """Return the current position for ``symbol`` (flat if untracked)."""
+        symbol = self._symbol_key(symbol)
         return self._positions.get(symbol, Position(symbol=symbol, quantity=0.0))
 
     # ------------------------------------------------------------------ #
@@ -55,8 +60,21 @@ class PositionManager:
         closing, the average price is preserved; when flipping sign, the new
         side's average price is reset to ``price``.
         """
-        qty_delta = float(qty_delta)
-        price = float(price)
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise ValueError("symbol must be non-empty")
+        symbol = symbol.strip()
+        qty_delta_value = self._to_float(qty_delta)
+        price_value = self._to_float(price)
+        if qty_delta_value is None:
+            raise ValueError("qty_delta must be finite and numeric")
+        if price_value is None:
+            raise ValueError("price must be finite and numeric")
+        qty_delta = qty_delta_value
+        price = price_value
+        if not math.isfinite(qty_delta):
+            raise ValueError("qty_delta must be finite")
+        if not math.isfinite(price) or price <= 0.0:
+            raise ValueError("price must be finite and positive")
         pos = self._positions.get(symbol, Position(symbol=symbol, quantity=0.0))
 
         old_qty = pos.quantity
@@ -88,24 +106,44 @@ class PositionManager:
     def update_fill(self, order: Order) -> Position:
         """Apply a filled (or partially filled) :class:`Order` to the book.
 
-        Uses ``order.filled_quantity`` and ``order.avg_fill_price``; the sign is
-        derived from ``order.side``.  Orders with no fill quantity are ignored.
+        Broker updates are cumulative. Only the newly reported quantity and
+        notional are applied, making repeated snapshots idempotent.
         """
-        filled = float(order.filled_quantity or 0.0)
-        if filled <= 0.0:
+        order.validate()
+        filled = float(order.filled_quantity)
+        prior_filled, prior_notional = self._applied_fills.get(
+            order.order_id, (0.0, 0.0)
+        )
+        if filled < prior_filled - 1e-9:
+            raise ValueError(
+                f"cumulative fill for {order.order_id!r} decreased from "
+                f"{prior_filled} to {filled}"
+            )
+        increment = filled - prior_filled
+        if increment <= 1e-12:
             return self.get_position(order.symbol)
-        price = order.avg_fill_price
+        price = order.avg_fill_price or order.limit_price
         if price is None:
-            price = order.limit_price if order.limit_price is not None else 0.0
-        signed = filled if order.side is OrderSide.BUY else -filled
-        return self.update(order.symbol, signed, float(price))
+            raise ValueError("filled orders require avg_fill_price or limit_price")
+        cumulative_notional = filled * float(price)
+        incremental_notional = cumulative_notional - prior_notional
+        if incremental_notional <= 0.0 or not math.isfinite(incremental_notional):
+            raise ValueError("cumulative fill notional must increase and remain finite")
+        incremental_price = incremental_notional / increment
+        signed = increment if order.side is OrderSide.BUY else -increment
+        position = self.update(order.symbol, signed, incremental_price)
+        self._applied_fills[order.order_id] = (filled, cumulative_notional)
+        return position
 
     def mark(self, prices: PriceLike) -> None:
         """Update ``market_price`` on tracked positions from ``prices``."""
         prices = self._as_mapping(prices)
         for symbol, pos in self._positions.items():
             if symbol in prices:
-                pos.market_price = float(prices[symbol])
+                price = self._to_float(prices[symbol])
+                if price is None or price <= 0.0:
+                    raise ValueError(f"invalid mark price for {symbol!r}")
+                pos.market_price = price
 
     # ------------------------------------------------------------------ #
     # valuation
@@ -115,7 +153,9 @@ class PositionManager:
         prices = self._as_mapping(prices)
         total = 0.0
         for symbol, pos in self._positions.items():
-            px = float(prices.get(symbol, pos.market_price))
+            px = self._to_float(prices.get(symbol, pos.market_price))
+            if px is None or px <= 0.0:
+                raise ValueError(f"no valid price for position {symbol!r}")
             total += pos.quantity * px
         return total
 
@@ -132,7 +172,9 @@ class PositionManager:
         prices = self._as_mapping(prices)
         total = 0.0
         for symbol, pos in self._positions.items():
-            px = float(prices.get(symbol, pos.market_price))
+            px = self._to_float(prices.get(symbol, pos.market_price))
+            if px is None or px <= 0.0:
+                raise ValueError(f"no valid price for position {symbol!r}")
             total += abs(pos.quantity * px)
         return total
 
@@ -157,8 +199,8 @@ class PositionManager:
             Weights are interpreted against ``capital`` (so ``0.25`` means hold
             25% of capital in that symbol's notional).
         prices:
-            Mapping (or ``pd.Series``) of ``symbol -> price``.  A symbol without
-            a positive price is skipped (it cannot be sized).
+            Mapping (or ``pd.Series``) of ``symbol -> price``. Every targeted or
+            held symbol must have a finite positive price.
         capital:
             Total capital base the weights apply to.
         current_positions:
@@ -170,12 +212,12 @@ class PositionManager:
         allow_fractional:
             When ``True``, no rounding is applied and the raw float share
             delta is used (fractional venues, e.g. crypto).  When ``False``
-            (default), the delta is computed from the *unrounded* current and
-            target share quantities and only the final delta share count is
-            rounded to a whole number.  Note that this equities-style rounding
-            can strand sub-half-share dust (a delta of magnitude < 0.5 rounds
-            to no trade); venues that support fractional quantities should
-            pass ``allow_fractional=True``.
+            (default), target positions are rounded toward zero before the
+            delta is computed.  This keeps whole-share orders inside the
+            requested absolute exposure instead of letting nearest-share
+            rounding exceed the portfolio risk budget.  Current positions
+            must then also be whole-share quantities; use
+            ``allow_fractional=True`` for fractional books.
 
         Returns
         -------
@@ -184,15 +226,36 @@ class PositionManager:
             ``{"symbol": str, "side": OrderSide, "quantity": float}`` with a
             positive ``quantity`` (whole-share unless ``allow_fractional``).
         """
-        weights = self._as_mapping(target_weights)
-        price_map = self._as_mapping(prices)
+        weights = self._symbol_mapping(target_weights, "target weights")
+        price_map = self._symbol_mapping(prices, "prices")
+        if not isinstance(allow_fractional, bool):
+            raise TypeError("allow_fractional must be a boolean")
+        capital_value = self._to_float(capital)
+        min_trade_value = self._to_float(min_trade_notional)
+        if capital_value is None or capital_value <= 0.0:
+            raise ValueError("capital must be finite and positive")
+        if min_trade_value is None or min_trade_value < 0.0:
+            raise ValueError("min_trade_notional must be finite and non-negative")
+        capital = capital_value
+        min_trade_notional = min_trade_value
+        for symbol, weight in weights.items():
+            value = self._to_float(weight)
+            if value is None:
+                raise ValueError(f"target weight for {symbol!r} must be finite")
+            weights[symbol] = value
 
         if current_positions is None:
             current = {s: p.quantity for s, p in self._positions.items()}
         else:
-            current = {s: float(q) for s, q in self._as_mapping(
-                current_positions
-            ).items()}
+            current = {}
+            normalized_positions = self._symbol_mapping(
+                current_positions, "current positions"
+            )
+            for symbol, quantity in normalized_positions.items():
+                value = self._to_float(quantity)
+                if value is None:
+                    raise ValueError(f"position quantity for {symbol!r} must be finite")
+                current[symbol] = value
 
         # Universe is every symbol we either target or already hold, so that
         # dropped names get an explicit liquidation order.
@@ -202,25 +265,29 @@ class PositionManager:
         for symbol in sorted(symbols):
             price = self._to_float(price_map.get(symbol))
             if price is None or price <= 0.0:
-                # Cannot size without a valid price (covers a held name with no
-                # quote, too - we leave it untouched rather than guess).
-                continue
+                raise ValueError(f"no finite positive price for symbol {symbol!r}")
 
             target_w = self._to_float(weights.get(symbol)) or 0.0
-            target_notional = target_w * float(capital)
+            target_notional = target_w * capital
             target_shares = target_notional / price
 
             current_shares = self._to_float(current.get(symbol)) or 0.0
-            # Delta from the UNrounded current and target share quantities;
-            # only the final delta is rounded (whole-share venues).
-            delta = target_shares - current_shares
             if not allow_fractional:
-                delta = float(round(delta))
+                if not math.isclose(
+                    current_shares, round(current_shares), abs_tol=1e-9
+                ):
+                    raise ValueError(
+                        f"current position for {symbol!r} is fractional; "
+                        "pass allow_fractional=True"
+                    )
+                target_shares = float(math.trunc(target_shares))
+                current_shares = float(round(current_shares))
+            delta = target_shares - current_shares
             if delta == 0:
                 continue
 
             notional = abs(delta) * price
-            if notional < float(min_trade_notional):
+            if notional < min_trade_notional:
                 continue
 
             orders.append(
@@ -238,16 +305,37 @@ class PositionManager:
     @staticmethod
     def _as_mapping(obj: Union[Mapping, "pd.Series"]) -> Dict:
         if isinstance(obj, pd.Series):
+            if obj.index.has_duplicates:
+                raise ValueError("Series mappings must not contain duplicate symbols")
             return obj.to_dict()
         if obj is None:
             return {}
+        if not isinstance(obj, Mapping):
+            raise TypeError("expected a mapping or pandas Series")
         return dict(obj)
 
     @staticmethod
+    def _symbol_key(symbol) -> str:
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise ValueError("symbols must be non-empty strings")
+        return symbol.strip()
+
+    @classmethod
+    def _symbol_mapping(cls, obj, name: str) -> Dict:
+        normalized: Dict = {}
+        for symbol, value in cls._as_mapping(obj).items():
+            key = cls._symbol_key(symbol)
+            if key in normalized:
+                raise ValueError(f"{name} contains duplicate symbol {key!r}")
+            normalized[key] = value
+        return normalized
+
+    @staticmethod
     def _to_float(value) -> Optional[float]:
-        if value is None:
+        if value is None or isinstance(value, bool):
             return None
         try:
-            return float(value)
+            result = float(value)
         except (TypeError, ValueError):
             return None
+        return result if math.isfinite(result) else None

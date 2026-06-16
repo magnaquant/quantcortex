@@ -48,7 +48,7 @@ _DEFAULT_TEMPORARY_EXPONENT = 0.5
 
 
 class AlmgrenChriss(ExecutionModel):
-    """Permanent + temporary market-impact fill model (Almgren-Chriss, 2000).
+    """Simplified permanent + temporary market-impact fill model.
 
     Parameters
     ----------
@@ -78,10 +78,24 @@ class AlmgrenChriss(ExecutionModel):
         daily_volume: Optional[float] = None,
         temporary_exponent: float = _DEFAULT_TEMPORARY_EXPONENT,
     ) -> None:
-        if eta < 0 or gamma < 0:
+        if any(
+            isinstance(value, (bool, np.bool_))
+            for value in (eta, gamma, volatility, daily_volume, temporary_exponent)
+            if value is not None
+        ):
+            raise TypeError("market-impact parameters must be numeric, not boolean")
+        if not np.isfinite(eta) or not np.isfinite(gamma) or eta < 0 or gamma < 0:
             raise ValueError("eta and gamma must be non-negative.")
-        if temporary_exponent <= 0:
+        if not np.isfinite(temporary_exponent) or temporary_exponent <= 0:
             raise ValueError("temporary_exponent must be positive.")
+        if volatility is not None and (
+            not np.isfinite(volatility) or volatility < 0.0
+        ):
+            raise ValueError("volatility must be finite and non-negative")
+        if daily_volume is not None and (
+            not np.isfinite(daily_volume) or daily_volume <= 0.0
+        ):
+            raise ValueError("daily_volume must be finite and positive")
         self.eta = float(eta)
         self.gamma = float(gamma)
         self.volatility = None if volatility is None else float(volatility)
@@ -92,9 +106,13 @@ class AlmgrenChriss(ExecutionModel):
     # Impact components (fractional price moves)
     # ------------------------------------------------------------------ #
     def _participation(self, qty: float, adv: float) -> float:
-        """Signed participation ``qty / adv`` (NaN-safe, returns 0 if adv<=0)."""
+        """Return signed participation ``qty / adv``."""
+        if isinstance(qty, (bool, np.bool_)) or isinstance(adv, (bool, np.bool_)):
+            raise TypeError("quantity and ADV must be numeric, not boolean")
         if adv is None or not np.isfinite(adv) or adv <= 0:
-            return 0.0
+            raise ValueError("market-impact model requires finite positive ADV")
+        if not np.isfinite(qty):
+            raise ValueError("quantity must be finite")
         return float(qty) / float(adv)
 
     def temporary_impact(self, qty: float, adv: float, sigma: float) -> float:
@@ -130,7 +148,10 @@ class AlmgrenChriss(ExecutionModel):
             sigma = self.volatility
         if sigma is None:
             sigma = _DEFAULT_SIGMA
-        return float(sigma)
+        sigma = float(sigma)
+        if not np.isfinite(sigma) or sigma < 0.0:
+            raise ValueError("sigma must be finite and non-negative")
+        return sigma
 
     def _resolve_adv(self, bar: "pd.Series", kw: dict) -> Optional[float]:
         adv = kw.get("adv")
@@ -160,18 +181,28 @@ class AlmgrenChriss(ExecutionModel):
         Almgren-Chriss accounting embeds only ~half the permanent impact in
         the average execution price of a schedule).
         """
+        if isinstance(target_qty, (bool, np.bool_)):
+            raise TypeError("target_qty must be numeric, not boolean")
         close = float(bar["close"])
-        if target_qty == 0:
+        quantity = float(target_qty)
+        if not np.isfinite(close) or close <= 0.0:
+            raise ValueError("bar close must be finite and positive")
+        if not np.isfinite(quantity):
+            raise ValueError("target_qty must be finite")
+        if quantity == 0:
             return close
 
         sigma = self._resolve_sigma(bar, kw)
         adv = self._resolve_adv(bar, kw)
 
-        perm = self.permanent_impact(target_qty, adv, sigma)
-        temp = self.temporary_impact(target_qty, adv, sigma)
-        direction = 1.0 if target_qty > 0 else -1.0
+        perm = self.permanent_impact(quantity, adv, sigma)
+        temp = self.temporary_impact(quantity, adv, sigma)
+        direction = 1.0 if quantity > 0 else -1.0
         total_impact = direction * (abs(perm) + abs(temp))
-        return float(close * (1.0 + total_impact))
+        fill_price = float(close * (1.0 + total_impact))
+        if not np.isfinite(fill_price) or fill_price <= 0.0:
+            raise ValueError("market impact produced a non-positive fill price")
+        return fill_price
 
     # ------------------------------------------------------------------ #
     # Optimal execution trajectory (closed form)
@@ -231,29 +262,47 @@ class AlmgrenChriss(ExecutionModel):
             ``trade`` is ``0`` since no interval starts at ``T``.
             ``holdings`` runs from ``X`` down to ``0``.
         """
-        if T <= 0 or n < 1:
+        if not np.isfinite(X) or not np.isfinite(T) or T <= 0:
+            raise ValueError("X must be finite and T must be finite and positive")
+        if isinstance(n, bool) or int(n) != n or n < 1:
             raise ValueError("T must be > 0 and n >= 1.")
+        n = int(n)
         eta_v = self.eta if eta is None else float(eta)
         gamma_v = self.gamma if gamma is None else float(gamma)
+        if (
+            not np.isfinite(eta_v)
+            or not np.isfinite(gamma_v)
+            or eta_v < 0.0
+            or gamma_v < 0.0
+        ):
+            raise ValueError("eta and gamma must be finite and non-negative")
+        if not np.isfinite(sigma) or sigma < 0.0:
+            raise ValueError("sigma must be finite and non-negative")
+        if not np.isfinite(risk_aversion) or risk_aversion < 0.0:
+            raise ValueError("risk_aversion must be finite and non-negative")
 
         tau = T / n
         eta_tilde = eta_v - 0.5 * gamma_v * tau
         times = np.arange(0, n + 1) * tau
 
-        # Solve for kappa.  When risk_aversion->0 (or eta_tilde<=0) fall back to
-        # the uniform TWAP schedule.
-        if risk_aversion <= 0 or eta_tilde <= 0:
+        if eta_tilde <= 0.0:
+            raise ValueError("eta - 0.5 * gamma * tau must be positive")
+        # Solve for kappa. Zero risk aversion gives the uniform TWAP schedule.
+        if risk_aversion == 0.0 or sigma == 0.0:
             holdings = X * (1.0 - times / T)
         else:
             kappa_tilde_sq = risk_aversion * sigma ** 2 / eta_tilde
             # cosh(kappa*tau) = 1 + 0.5 * kappa_tilde^2 * tau^2
             cosh_arg = 1.0 + 0.5 * kappa_tilde_sq * tau ** 2
             kappa = float(np.arccosh(cosh_arg)) / tau
-            sinh_kT = np.sinh(kappa * T)
-            if sinh_kT == 0:
+            if kappa == 0.0:
                 holdings = X * (1.0 - times / T)
             else:
-                holdings = X * np.sinh(kappa * (T - times)) / sinh_kT
+                numerator = np.exp(-kappa * times) * (
+                    1.0 - np.exp(-2.0 * kappa * (T - times))
+                )
+                denominator = 1.0 - np.exp(-2.0 * kappa * T)
+                holdings = X * numerator / denominator
 
         holdings[0] = X
         holdings[-1] = 0.0

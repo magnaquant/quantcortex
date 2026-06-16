@@ -53,6 +53,53 @@ def _check_unique_dates(*panels: pd.DataFrame) -> None:
             )
 
 
+def _validate_panel(panel: pd.DataFrame, name: str) -> pd.DataFrame:
+    if not isinstance(panel, pd.DataFrame):
+        raise TypeError(f"{name} must be a pandas DataFrame")
+    if not isinstance(panel.index, pd.DatetimeIndex):
+        raise TypeError(f"{name} must use a DatetimeIndex")
+    if panel.index.hasnans:
+        raise ValueError(f"{name} index must contain valid timestamps")
+    if not panel.index.is_monotonic_increasing:
+        raise ValueError(f"{name} dates must be sorted in increasing order")
+    if panel.columns.has_duplicates:
+        raise ValueError(f"{name} columns must be unique")
+    _check_unique_dates(panel)
+    numeric = panel.apply(pd.to_numeric, errors="coerce")
+    if (numeric.isna() & panel.notna()).any(axis=None):
+        raise ValueError(f"{name} contains non-numeric observations")
+    if np.isinf(numeric.to_numpy(dtype=float)).any():
+        raise ValueError(f"{name} contains infinite observations")
+    return numeric.astype(float)
+
+
+def _validate_quantiles(quantiles: int) -> int:
+    if isinstance(quantiles, bool) or int(quantiles) != quantiles or quantiles < 2:
+        raise ValueError("quantiles must be an integer >= 2")
+    return int(quantiles)
+
+
+def _newey_west_tstat(values: pd.Series, max_lag: int | None = None) -> float:
+    """HAC t-statistic for a potentially autocorrelated mean."""
+    clean = values.dropna().to_numpy(dtype=float)
+    n = clean.size
+    if n < 2:
+        return float("nan")
+    if max_lag is None:
+        max_lag = int(np.floor(4.0 * (n / 100.0) ** (2.0 / 9.0)))
+    max_lag = max(0, min(int(max_lag), n - 1))
+    demeaned = clean - clean.mean()
+    long_run_variance = float(np.dot(demeaned, demeaned) / n)
+    for lag in range(1, max_lag + 1):
+        covariance = float(np.dot(demeaned[lag:], demeaned[:-lag]) / n)
+        weight = 1.0 - lag / (max_lag + 1.0)
+        long_run_variance += 2.0 * weight * covariance
+    variance_of_mean = max(long_run_variance, 0.0) / n
+    if variance_of_mean <= 0.0:
+        return float("nan")
+    return float(clean.mean() / np.sqrt(variance_of_mean))
+
+
 def compute_information_coefficient(
     factor: pd.DataFrame,
     forward_returns: pd.DataFrame,
@@ -81,9 +128,9 @@ def compute_information_coefficient(
     method = method.lower()
     if method not in ("spearman", "pearson"):
         raise ValueError("method must be 'spearman' or 'pearson'")
-    _check_unique_dates(factor, forward_returns)
-
-    fac, fwd = factor.align(forward_returns, join="inner")
+    fac = _validate_panel(factor, "factor")
+    fwd = _validate_panel(forward_returns, "forward_returns")
+    fac, fwd = fac.align(fwd, join="inner")
     ics = pd.Series(index=fac.index, dtype=float)
 
     for date in fac.index:
@@ -119,12 +166,14 @@ def _quantile_labels(row: pd.Series, quantiles: int) -> pd.Series:
     valid = row.dropna()
     if len(valid) < quantiles:
         return pd.Series(np.nan, index=row.index)
-    ranks = valid.rank(method="first")
+    ranks = valid.rank(method="average")
     try:
         labels = pd.qcut(ranks, quantiles, labels=False, duplicates="drop") + 1
     except ValueError:
         return pd.Series(np.nan, index=row.index)
-    out = pd.Series(np.nan, index=row.index)
+    if labels.nunique() != quantiles:
+        return pd.Series(np.nan, index=row.index)
+    out = pd.Series(np.nan, index=row.index, dtype=float)
     out.loc[valid.index] = labels.astype(float)
     return out
 
@@ -155,11 +204,10 @@ def quantile_returns(
         ``1..quantiles`` plus a final row ``"long_short"`` holding the
         top-minus-bottom spread.
     """
-    if quantiles < 2:
-        raise ValueError("quantiles must be >= 2")
-    _check_unique_dates(factor, forward_returns)
-
-    fac, fwd = factor.align(forward_returns, join="inner")
+    quantiles = _validate_quantiles(quantiles)
+    fac = _validate_panel(factor, "factor")
+    fwd = _validate_panel(forward_returns, "forward_returns")
+    fac, fwd = fac.align(fwd, join="inner")
     per_date = []  # list of Series indexed by quantile label, one per date
 
     for date in fac.index:
@@ -181,8 +229,8 @@ def quantile_returns(
 
     out = mean_by_q.to_frame(name="mean_return")
     top, bottom = quantiles, 1
-    if top in mean_by_q.index and bottom in mean_by_q.index:
-        long_short = mean_by_q.loc[top] - mean_by_q.loc[bottom]
+    if top in by_date.columns and bottom in by_date.columns:
+        long_short = (by_date[top] - by_date[bottom]).dropna().mean()
     else:
         long_short = np.nan
     out.loc["long_short"] = long_short
@@ -211,9 +259,8 @@ def factor_turnover(factor: pd.DataFrame, quantiles: int = 5) -> pd.Series:
         Turnover in ``[0, 1]`` indexed by date. The first date is NaN (no
         prior set to compare against).
     """
-    if quantiles < 2:
-        raise ValueError("quantiles must be >= 2")
-    _check_unique_dates(factor)
+    quantiles = _validate_quantiles(quantiles)
+    factor = _validate_panel(factor, "factor")
 
     top_sets: Dict[pd.Timestamp, set] = {}
     for date in factor.index:
@@ -266,11 +313,10 @@ class AlphalensReport:
             forward_returns, pd.DataFrame
         ):
             raise TypeError("factor and forward_returns must be DataFrames")
-        if quantiles < 2:
-            raise ValueError("quantiles must be >= 2")
+        quantiles = _validate_quantiles(quantiles)
         self.factor = factor
         self.forward_returns = forward_returns
-        self.quantiles = int(quantiles)
+        self.quantiles = quantiles
         self.ic_method = ic_method
         self._results: Dict[str, object] | None = None
 
@@ -293,12 +339,14 @@ class AlphalensReport:
         ic_std = float(ic_clean.std(ddof=1)) if len(ic_clean) > 1 else np.nan
         icir = ic_mean / ic_std if ic_std and not np.isnan(ic_std) else np.nan
 
-        # t-stat of mean IC = mean / (std / sqrt(n)) = ICIR * sqrt(n).
+        # Keep the iid statistic for comparison, but use a HAC estimate as the
+        # headline because daily IC series are commonly autocorrelated.
         n = len(ic_clean)
         if n > 1 and ic_std and not np.isnan(ic_std):
-            ic_tstat = ic_mean / (ic_std / np.sqrt(n))
+            ic_tstat_naive = ic_mean / (ic_std / np.sqrt(n))
         else:
-            ic_tstat = np.nan
+            ic_tstat_naive = np.nan
+        ic_tstat = _newey_west_tstat(ic_clean)
 
         # Hit rate: fraction of dates with positive IC (directional accuracy).
         hit_rate = float((ic_clean > 0).mean()) if n else np.nan
@@ -319,6 +367,9 @@ class AlphalensReport:
             "ic_mean": ic_mean,
             "icir": icir,
             "ic_tstat": float(ic_tstat) if not np.isnan(ic_tstat) else np.nan,
+            "ic_tstat_naive": (
+                float(ic_tstat_naive) if not np.isnan(ic_tstat_naive) else np.nan
+            ),
             "turnover": turnover,
             "quantile_returns": qret,
             "long_short_return": long_short,
@@ -356,7 +407,8 @@ class AlphalensReport:
         lines.append("-" * 46)
         lines.append(f"  IC mean              : {fmt(r['ic_mean'])}")
         lines.append(f"  IC IR (mean/std)     : {fmt(r['icir'])}")
-        lines.append(f"  IC t-stat            : {fmt(r['ic_tstat'])}")
+        lines.append(f"  IC t-stat (Newey-West): {fmt(r['ic_tstat'])}")
+        lines.append(f"  IC t-stat (iid)      : {fmt(r['ic_tstat_naive'])}")
         lines.append(f"  IC hit rate          : {fmt(r['hit_rate'])}")
         lines.append(f"  Long-short return    : {fmt(r['long_short_return'])}")
         lines.append(f"  Mean top-q turnover  : {fmt(mean_turnover)}")

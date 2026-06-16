@@ -42,7 +42,9 @@ class FactorDecay:
     """
 
     def __init__(self, ic_method: str = "spearman") -> None:
-        self.ic_method = ic_method
+        self.ic_method = str(ic_method).lower()
+        if self.ic_method not in {"spearman", "pearson"}:
+            raise ValueError("ic_method must be 'spearman' or 'pearson'")
 
     # ------------------------------------------------------------------
     # Forward-return construction
@@ -57,10 +59,19 @@ class FactorDecay:
         period ending at ``t``, which is not a tradeable payoff for a
         decision taken at the close of ``t``.
         """
-        if lag < 1:
+        if isinstance(lag, bool) or int(lag) != lag or lag < 1:
             raise ValueError("lag must be >= 1 (lag 0 is not tradeable)")
+        lag = int(lag)
+        if not isinstance(returns, pd.DataFrame):
+            raise TypeError("returns must be a pandas DataFrame")
+        numeric = returns.apply(pd.to_numeric, errors="coerce")
+        if (numeric.isna() & returns.notna()).any(axis=None):
+            raise ValueError("returns contain non-numeric observations")
+        values = numeric.to_numpy(dtype=float)
+        if np.isinf(values).any() or (numeric.dropna(how="all") <= -1.0).any(axis=None):
+            raise ValueError("returns must be finite when present and greater than -100%")
         # Cumulative gross return over a trailing window of `lag` periods...
-        gross = (1.0 + returns).rolling(window=lag, min_periods=lag).apply(
+        gross = (1.0 + numeric).rolling(window=lag, min_periods=lag).apply(
             np.prod, raw=True
         )
         cum = gross - 1.0
@@ -96,8 +107,9 @@ class FactorDecay:
             Indexed by ``lag`` (1..``max_lag``) with columns ``ic_mean``,
             ``ic_std`` and ``icir`` (= ``ic_mean / ic_std``).
         """
-        if max_lag < 1:
+        if isinstance(max_lag, bool) or int(max_lag) != max_lag or max_lag < 1:
             raise ValueError("max_lag must be >= 1")
+        max_lag = int(max_lag)
 
         rows = {}
         for lag in range(1, max_lag + 1):
@@ -140,9 +152,17 @@ class FactorDecay:
         pandas.Series
             Autocorrelation indexed by lag ``1..max_lag``.
         """
-        if max_lag < 1:
+        if isinstance(max_lag, bool) or int(max_lag) != max_lag or max_lag < 1:
             raise ValueError("max_lag must be >= 1")
-        clean = ic.dropna()
+        max_lag = int(max_lag)
+        if not isinstance(ic, pd.Series):
+            raise TypeError("ic must be a pandas Series")
+        numeric = pd.to_numeric(ic, errors="coerce")
+        if (numeric.isna() & ic.notna()).any():
+            raise ValueError("ic must contain numeric observations")
+        if np.isinf(numeric.to_numpy(dtype=float)).any():
+            raise ValueError("ic must not contain infinite values")
+        clean = numeric.dropna()
         ac = {lag: clean.autocorr(lag=lag) for lag in range(1, max_lag + 1)}
         out = pd.Series(ac, dtype=float)
         out.index.name = "lag"
@@ -157,7 +177,7 @@ class FactorDecay:
         below half of ``|ic_mean(1)|``. Linear interpolation between the
         bracketing lags gives a fractional half-life. If the IC never decays
         that far within the available lags, ``inf`` is returned; if the
-        reference IC is non-positive or unavailable, ``nan`` is returned.
+        reference IC magnitude is zero or unavailable, ``nan`` is returned.
 
         Parameters
         ----------
@@ -170,10 +190,31 @@ class FactorDecay:
         float
             Estimated half-life in periods.
         """
+        if not isinstance(decay, pd.DataFrame):
+            raise TypeError("decay must be a pandas DataFrame")
+        if decay.index.has_duplicates:
+            raise ValueError("decay lags must be unique")
+        try:
+            lags_array = np.asarray(decay.index, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("decay lags must be numeric") from exc
+        if (
+            not np.all(np.isfinite(lags_array))
+            or np.any(lags_array < 1)
+            or np.any(lags_array != np.floor(lags_array))
+        ):
+            raise ValueError("decay lags must be positive integers")
+        if not decay.index.is_monotonic_increasing:
+            raise ValueError("decay lags must be sorted in increasing order")
         if "ic_mean" not in decay.columns or 1 not in decay.index:
             return float("nan")
 
-        series = decay["ic_mean"].abs()
+        series = pd.to_numeric(decay["ic_mean"], errors="coerce")
+        if (series.isna() & decay["ic_mean"].notna()).any():
+            raise ValueError("decay ic_mean values must be numeric")
+        if np.isinf(series.to_numpy(dtype=float)).any():
+            raise ValueError("decay ic_mean values must not be infinite")
+        series = series.abs()
         ref = series.loc[1]
         if pd.isna(ref) or ref <= 0:
             return float("nan")

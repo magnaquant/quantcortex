@@ -17,10 +17,8 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import warnings
 from datetime import date, timedelta
 
-warnings.filterwarnings("ignore")
 # yfinance reports failed (delisted) downloads via logging + stderr; quiet it so
 # the survivorship summary is readable (the failures are the point, counted below).
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)

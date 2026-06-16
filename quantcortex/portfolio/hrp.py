@@ -18,8 +18,8 @@ single global optimization with three robust, sequential steps:
    tree, allocating between the two halves inversely to their cluster variance.
 
 The result is a long-only, fully-invested portfolio that requires neither
-matrix inversion nor a return forecast, and that empirically delivers better
-out-of-sample diversification than inverse-variance or min-variance portfolios.
+matrix inversion nor a return forecast. Its out-of-sample behavior remains an
+empirical question for the dataset and validation design in use.
 """
 
 from __future__ import annotations
@@ -31,7 +31,11 @@ import pandas as pd
 from scipy.cluster.hierarchy import linkage
 from scipy.spatial.distance import squareform
 
-from quantcortex.portfolio.base import PortfolioMode, PortfolioOptimizer
+from quantcortex.portfolio.base import (
+    PortfolioMode,
+    PortfolioOptimizer,
+    prepare_return_panel,
+)
 
 __all__ = ["HierarchicalRiskParity"]
 
@@ -50,14 +54,13 @@ class HierarchicalRiskParity(PortfolioOptimizer):
         (e.g. ``"single"``, ``"complete"``, ``"average"``, ``"ward"``).  The
         original paper uses single linkage; it is the default here.
     **kw:
-        Forwarded to :class:`~portfolio.base.PortfolioOptimizer` (``tolerance``,
+        Forwarded to :class:`~quantcortex.portfolio.base.PortfolioOptimizer` (``tolerance``,
         ``weight_bounds``).
 
     Notes
     -----
-    For ``N == 1``, or whenever the covariance matrix is degenerate
-    (non-finite entries or zero variances), HRP gracefully falls back to an
-    equal-weight portfolio.  ``N == 2`` is handled exactly as a single
+    ``N == 1`` returns the sole asset. Degenerate covariance inputs are
+    rejected. ``N == 2`` is handled exactly as a single
     recursive-bisection step (López de Prado's allocation is well-defined
     there): capital is split inversely to the two cluster variances.
     """
@@ -74,6 +77,17 @@ class HierarchicalRiskParity(PortfolioOptimizer):
                 "HierarchicalRiskParity only supports PortfolioMode.LONG_ONLY"
             )
         self.linkage_method = str(linkage_method)
+        supported = {
+            "single",
+            "complete",
+            "average",
+            "weighted",
+            "centroid",
+            "median",
+            "ward",
+        }
+        if self.linkage_method not in supported:
+            raise ValueError(f"unsupported linkage_method {self.linkage_method!r}")
 
     # ------------------------------------------------------------------ #
     # Static / helper methods implementing the López de Prado algorithm.
@@ -186,15 +200,18 @@ class HierarchicalRiskParity(PortfolioOptimizer):
         """
         if not isinstance(returns, pd.DataFrame):
             returns = pd.DataFrame(np.asarray(returns, dtype=float))
+        returns = prepare_return_panel(returns, name="HRP returns")
 
         n = returns.shape[1]
         columns = list(returns.columns)
 
-        # --- Degenerate / tiny-universe fallback: equal weight. ---
+        # --- Tiny universes. ---
         if n == 0:
             raise ValueError("HRP requires at least one asset")
         if n == 1:
-            return np.array([1.0], dtype=np.float64)
+            return self._project_configured_bounds(
+                np.array([1.0], dtype=np.float64)
+            )
         if n == 2:
             # LdP's recursive bisection is well-defined for two assets: a
             # single bisection allocating inversely to the cluster variances,
@@ -204,27 +221,27 @@ class HierarchicalRiskParity(PortfolioOptimizer):
             cov2 = returns.cov()
             diag2 = np.diag(cov2.values)
             if not np.all(np.isfinite(cov2.values)) or not np.all(diag2 > 0.0):
-                return np.full(2, 0.5, dtype=np.float64)
+                raise ValueError("HRP requires positive variance for every asset")
             var_left = self._get_cluster_var(cov2, [columns[0]])
             var_right = self._get_cluster_var(cov2, [columns[1]])
             denom = var_left + var_right
             if denom <= 0.0 or not np.isfinite(denom):
-                return np.full(2, 0.5, dtype=np.float64)
+                raise ValueError("HRP cluster variances must be finite and positive")
             alpha = 1.0 - var_left / denom
-            return np.array([alpha, 1.0 - alpha], dtype=np.float64)
+            return self._project_configured_bounds(
+                np.array([alpha, 1.0 - alpha], dtype=np.float64)
+            )
 
         cov = returns.cov()
         corr = returns.corr()
         if (
             not np.all(np.isfinite(cov.values))
             or not np.all(np.isfinite(corr.values))
-            or np.allclose(np.diag(cov.values), 0.0)
+            or np.any(np.diag(cov.values) <= 0.0)
         ):
-            return np.full(n, 1.0 / n, dtype=np.float64)
+            raise ValueError("HRP requires finite positive asset variances")
 
-        # Any residual NaNs in the correlation matrix (e.g. a constant column)
-        # would break clustering - fall back to equal weight.
-        corr_arr = corr.fillna(0.0).to_numpy(dtype=np.float64, copy=True)
+        corr_arr = corr.to_numpy(dtype=np.float64, copy=True)
         np.fill_diagonal(corr_arr, 1.0)
         corr = pd.DataFrame(corr_arr, index=corr.index, columns=corr.columns)
 
@@ -247,5 +264,5 @@ class HierarchicalRiskParity(PortfolioOptimizer):
         weights = np.clip(weights, 0.0, None)
         total = weights.sum()
         if total <= 0.0 or not np.isfinite(total):
-            return np.full(n, 1.0 / n, dtype=np.float64)
-        return weights / total
+            raise RuntimeError("HRP produced invalid recursive-bisection weights")
+        return self._project_configured_bounds(weights / total)

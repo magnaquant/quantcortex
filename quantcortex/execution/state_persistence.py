@@ -2,12 +2,11 @@
 
 A trading process must survive crashes and restarts without losing track of its
 open orders and positions.  :class:`StatePersistence` provides a small key/value
-store for exactly that, backed by **Redis** when it is available and reachable,
-and transparently falling back to an on-disk **JSON file** store otherwise - so
-the execution layer always has somewhere durable to write, even offline or in
-local development where Redis is not installed.
+store for exactly that, backed by **Redis** when explicitly configured or an
+on-disk **JSON file** otherwise. An unreachable configured Redis instance fails
+closed unless the caller explicitly allows file fallback.
 
-All values are JSON-serialised.  :class:`~execution.order_manager.Order`
+All values are JSON-serialised.  :class:`~quantcortex.execution.order_manager.Order`
 dataclasses and the ``OrderStatus`` / ``OrderSide`` / ``OrderType`` enums are
 converted to plain dicts on save and rehydrated into ``Order`` instances on
 load, so callers round-trip rich objects without bespoke serialisation.
@@ -17,15 +16,25 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
+import threading
+from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from quantcortex.execution.brokers.base import Position
-from quantcortex.execution.order_manager import Order, OrderStatus
+from quantcortex.execution.brokers.base import BrokerError, Position
+from quantcortex.execution.order_manager import Order, OrderError, OrderStatus
 
-__all__ = ["StatePersistence"]
+__all__ = ["StatePersistence", "StatePersistenceError"]
+
+_NAMESPACE_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+class StatePersistenceError(RuntimeError):
+    """Raised when execution state cannot be read or written safely."""
 
 
 class StatePersistence:
@@ -34,21 +43,44 @@ class StatePersistence:
     Parameters
     ----------
     url:
-        Redis connection URL (e.g. ``redis://localhost:6379/0``).  Falls back to
-        the ``REDIS_URL`` environment variable.  If Redis cannot be imported or
-        the connection fails, the store silently switches to the file backend.
+        Redis connection URL (e.g. ``redis://localhost:6379/0``). Falls back to
+        the ``REDIS_URL`` environment variable. With no URL, the file backend is
+        used.
     namespace:
         Key prefix isolating this store's keys from others sharing the backend.
+    file_path:
+        Explicit JSON path for the file backend. Takes precedence over
+        ``QC_STATE_PATH`` and is useful for isolated tests or demonstrations.
+        When supplied without an explicit ``url``, it also disables the
+        ambient ``REDIS_URL`` fallback.
     """
 
     POSITIONS_KEY = "positions"
     ORDERS_KEY = "orders"
 
-    def __init__(self, url: Optional[str] = None, namespace: str = "qc") -> None:
+    def __init__(
+        self,
+        url: Optional[str] = None,
+        namespace: str = "qc",
+        *,
+        allow_file_fallback: bool = False,
+        file_path: str | os.PathLike[str] | None = None,
+    ) -> None:
+        if not isinstance(namespace, str) or not _NAMESPACE_RE.fullmatch(namespace):
+            raise ValueError("namespace must contain only letters, digits, _, ., or -")
         self.namespace = namespace
-        self.url = url or os.environ.get("REDIS_URL")
+        if url is not None:
+            self.url = url
+        elif file_path is not None:
+            self.url = None
+        else:
+            self.url = os.environ.get("REDIS_URL")
+        if not isinstance(allow_file_fallback, bool):
+            raise TypeError("allow_file_fallback must be a boolean")
+        self.allow_file_fallback = allow_file_fallback
         self._redis = None
-        self._file_path = self._resolve_file_path()
+        self._file_path = self._resolve_file_path(file_path)
+        self._thread_lock = threading.RLock()
         self._connect_redis()
 
     # ------------------------------------------------------------------ #
@@ -60,89 +92,171 @@ class StatePersistence:
         return "redis" if self._redis is not None else "file"
 
     def _connect_redis(self) -> None:
-        """Try to connect to Redis; on any failure stay on the file backend."""
+        """Connect to configured Redis without silently changing durability."""
         if self.url is None:
             return
         try:
             import redis  # noqa: F401  (lazy optional dependency)
-        except ImportError:
-            self._redis = None
-            return
+        except ImportError as exc:
+            if self.allow_file_fallback:
+                self._redis = None
+                return
+            raise StatePersistenceError(
+                "REDIS_URL is configured but the redis package is unavailable"
+            ) from exc
         try:
             client = redis.Redis.from_url(self.url, decode_responses=True)
             client.ping()
             self._redis = client
-        except Exception:
-            # Unreachable / auth failure / etc. -> fall back to file store.
-            self._redis = None
+        except Exception as exc:
+            if self.allow_file_fallback:
+                self._redis = None
+                return
+            raise StatePersistenceError(
+                "could not connect to configured Redis state backend"
+            ) from exc
 
-    def _resolve_file_path(self) -> str:
-        path = os.environ.get("QC_STATE_PATH")
+    def _resolve_file_path(
+        self, file_path: str | os.PathLike[str] | None
+    ) -> str:
+        path = os.fspath(file_path) if file_path is not None else None
+        if path is not None and not path.strip():
+            raise ValueError("file_path must not be empty")
+        path = path or os.environ.get("QC_STATE_PATH")
         if path:
-            return path
-        return os.path.join(
-            tempfile.gettempdir(), f"quantcortex_state_{self.namespace}.json"
+            return str(Path(path).expanduser().resolve())
+        state_home = Path(
+            os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")
+        )
+        return str(
+            (state_home / "quantcortex" / f"state_{self.namespace}.json").resolve()
         )
 
+    def _state_key(self, key: str) -> str:
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("state key must be a non-empty string")
+        return key.strip()
+
     def _key(self, key: str) -> str:
-        return f"{self.namespace}:{key}"
+        return f"{self.namespace}:{self._state_key(key)}"
 
     # ------------------------------------------------------------------ #
     # generic key/value API
     # ------------------------------------------------------------------ #
     def save_state(self, key: str, obj: Any) -> None:
         """Persist ``obj`` (JSON-serialised) under ``key``."""
-        payload = json.dumps(obj, default=_json_default)
+        state_key = self._state_key(key)
+        redis_key = self._key(state_key)
+        payload = json.dumps(obj, default=_json_default, allow_nan=False)
         if self._redis is not None:
-            self._redis.set(self._key(key), payload)
+            try:
+                self._redis.set(redis_key, payload)
+            except Exception as exc:
+                raise StatePersistenceError("Redis state write failed") from exc
         else:
-            store = self._read_file()
-            store[key] = json.loads(payload)
-            self._write_file(store)
+            try:
+                with self._file_lock(exclusive=True):
+                    store = self._read_file()
+                    store[state_key] = json.loads(payload)
+                    self._write_file(store)
+            except StatePersistenceError:
+                raise
+            except Exception as exc:
+                raise StatePersistenceError("file state write failed") from exc
 
     def load_state(self, key: str, default: Any = None) -> Any:
         """Load and JSON-decode the value stored under ``key``."""
+        state_key = self._state_key(key)
+        redis_key = self._key(state_key)
         if self._redis is not None:
-            raw = self._redis.get(self._key(key))
-            return json.loads(raw) if raw is not None else default
-        store = self._read_file()
-        return store.get(key, default)
+            try:
+                raw = self._redis.get(redis_key)
+                return json.loads(raw) if raw is not None else default
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise StatePersistenceError("Redis state contains invalid JSON") from exc
+            except Exception as exc:
+                raise StatePersistenceError("Redis state read failed") from exc
+        try:
+            with self._file_lock(exclusive=False):
+                store = self._read_file()
+                return store.get(state_key, default)
+        except StatePersistenceError:
+            raise
+        except Exception as exc:
+            raise StatePersistenceError("file state read failed") from exc
 
     def delete_state(self, key: str) -> None:
         """Remove ``key`` from the store (no-op if absent)."""
+        state_key = self._state_key(key)
+        redis_key = self._key(state_key)
         if self._redis is not None:
-            self._redis.delete(self._key(key))
+            try:
+                self._redis.delete(redis_key)
+            except Exception as exc:
+                raise StatePersistenceError("Redis state delete failed") from exc
         else:
-            store = self._read_file()
-            if key in store:
-                del store[key]
-                self._write_file(store)
+            try:
+                with self._file_lock(exclusive=True):
+                    store = self._read_file()
+                    if state_key in store:
+                        del store[state_key]
+                        self._write_file(store)
+            except StatePersistenceError:
+                raise
+            except Exception as exc:
+                raise StatePersistenceError("file state delete failed") from exc
 
     # ------------------------------------------------------------------ #
     # positions
     # ------------------------------------------------------------------ #
-    def save_positions(self, positions: Dict[str, Position]) -> None:
-        """Persist a ``symbol -> Position`` mapping."""
-        serialised = {
-            symbol: _serialise(pos) for symbol, pos in positions.items()
-        }
+    def save_positions(self, positions: Dict[str, Position | float]) -> None:
+        """Persist a ``symbol -> Position`` or signed-quantity mapping."""
+        if not isinstance(positions, dict):
+            raise StatePersistenceError("positions must be a dictionary")
+        serialised = {}
+        for symbol, position in positions.items():
+            if not isinstance(symbol, str) or not symbol.strip():
+                raise StatePersistenceError("position keys must be non-empty strings")
+            key = symbol.strip()
+            if key in serialised:
+                raise StatePersistenceError(f"duplicate position symbol {key!r}")
+            if isinstance(position, Position):
+                if position.symbol != key:
+                    raise StatePersistenceError(
+                        f"position key {key!r} does not match payload symbol "
+                        f"{position.symbol!r}"
+                    )
+                serialised[key] = _serialise(position)
+            else:
+                if isinstance(position, bool):
+                    raise StatePersistenceError("position quantities must be numeric")
+                try:
+                    validated = Position(symbol=key, quantity=position)
+                except (BrokerError, TypeError, ValueError) as exc:
+                    raise StatePersistenceError("position quantities are invalid") from exc
+                serialised[key] = validated.quantity
         self.save_state(self.POSITIONS_KEY, serialised)
 
     def load_positions(self) -> Dict[str, Position]:
         """Load positions back into a ``symbol -> Position`` mapping."""
         raw = self.load_state(self.POSITIONS_KEY, default={}) or {}
+        if not isinstance(raw, dict):
+            raise StatePersistenceError("persisted positions must be a JSON object")
         out: Dict[str, Position] = {}
-        for symbol, data in raw.items():
-            if isinstance(data, dict):
-                out[symbol] = Position(
-                    symbol=data.get("symbol", symbol),
-                    quantity=float(data.get("quantity", 0.0)),
-                    avg_price=float(data.get("avg_price", 0.0)),
-                    market_price=float(data.get("market_price", 0.0)),
-                )
-            else:
-                # A bare scalar quantity was persisted (symbol -> qty mapping).
-                out[symbol] = Position(symbol=symbol, quantity=float(data))
+        try:
+            for symbol, data in raw.items():
+                if isinstance(data, dict):
+                    out[symbol] = Position(
+                        symbol=data.get("symbol", symbol),
+                        quantity=data.get("quantity", 0.0),
+                        avg_price=data.get("avg_price", 0.0),
+                        market_price=data.get("market_price", 0.0),
+                    )
+                else:
+                    # A bare scalar quantity was persisted (symbol -> qty mapping).
+                    out[symbol] = Position(symbol=symbol, quantity=data)
+        except (BrokerError, TypeError, ValueError) as exc:
+            raise StatePersistenceError("persisted positions are invalid") from exc
         return out
 
     # ------------------------------------------------------------------ #
@@ -150,13 +264,37 @@ class StatePersistence:
     # ------------------------------------------------------------------ #
     def save_orders(self, orders) -> None:
         """Persist an iterable of :class:`Order` objects (or order dicts)."""
-        serialised = [_serialise(o) for o in orders]
+        if isinstance(orders, (str, bytes, dict)):
+            raise StatePersistenceError("orders must be an iterable of order objects")
+        serialised = []
+        try:
+            iterator = iter(orders)
+        except TypeError as exc:
+            raise StatePersistenceError("orders must be iterable") from exc
+        try:
+            for order in iterator:
+                if isinstance(order, Order):
+                    order.validate()
+                    serialised.append(_serialise(order))
+                elif isinstance(order, dict):
+                    serialised.append(_serialise(_deserialise_order(order)))
+                else:
+                    raise StatePersistenceError(
+                        "orders must contain Order instances or order dictionaries"
+                    )
+        except (KeyError, OrderError, TypeError, ValueError) as exc:
+            raise StatePersistenceError("orders contain invalid state") from exc
         self.save_state(self.ORDERS_KEY, serialised)
 
     def load_orders(self) -> List[Order]:
         """Load orders back into a list of :class:`Order` instances."""
         raw = self.load_state(self.ORDERS_KEY, default=[]) or []
-        return [_deserialise_order(item) for item in raw]
+        if not isinstance(raw, list) or any(not isinstance(item, dict) for item in raw):
+            raise StatePersistenceError("persisted orders must be a list of objects")
+        try:
+            return [_deserialise_order(item) for item in raw]
+        except (KeyError, OrderError, TypeError, ValueError) as exc:
+            raise StatePersistenceError("persisted orders are invalid") from exc
 
     # ------------------------------------------------------------------ #
     # file backend helpers
@@ -164,9 +302,16 @@ class StatePersistence:
     def _read_file(self) -> Dict[str, Any]:
         try:
             with open(self._file_path, "r", encoding="utf-8") as fh:
-                return json.load(fh)
-        except (FileNotFoundError, json.JSONDecodeError):
+                store = json.load(fh)
+        except FileNotFoundError:
             return {}
+        except (OSError, json.JSONDecodeError) as exc:
+            raise StatePersistenceError(
+                f"could not read execution state {self._file_path!r}"
+            ) from exc
+        if not isinstance(store, dict):
+            raise StatePersistenceError("execution state root must be a JSON object")
+        return store
 
     def _write_file(self, store: Dict[str, Any]) -> None:
         # Atomic write: dump to a temp file in the same dir, then rename.
@@ -175,12 +320,43 @@ class StatePersistence:
         fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(store, fh, default=_json_default)
+                json.dump(store, fh, default=_json_default, allow_nan=False)
+                fh.flush()
+                os.fsync(fh.fileno())
             os.replace(tmp, self._file_path)
+            try:
+                dir_fd = os.open(directory, os.O_RDONLY)
+            except OSError:  # pragma: no cover - platform/filesystem dependent
+                dir_fd = None
+            if dir_fd is not None:
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
         except Exception:
             if os.path.exists(tmp):
                 os.remove(tmp)
             raise
+
+    @contextmanager
+    def _file_lock(self, *, exclusive: bool):
+        """Serialize file-backend operations across threads and POSIX processes."""
+        lock_path = f"{self._file_path}.lock"
+        directory = os.path.dirname(lock_path) or "."
+        os.makedirs(directory, exist_ok=True)
+        with self._thread_lock, open(lock_path, "a", encoding="utf-8") as lock_file:
+            try:
+                import fcntl
+            except ImportError:  # pragma: no cover - Windows fallback
+                fcntl = None
+            if fcntl is not None:
+                mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                fcntl.flock(lock_file.fileno(), mode)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 # ---------------------------------------------------------------------- #
@@ -214,17 +390,31 @@ def _deserialise_order(data: Dict[str, Any]) -> Order:
         order_id=data["order_id"],
         symbol=data["symbol"],
         side=data["side"],
-        quantity=float(data["quantity"]),
+        quantity=data["quantity"],
         order_type=data.get("order_type", "MARKET"),
         limit_price=data.get("limit_price"),
     )
     # Restore mutable lifecycle fields that the constructor does not take.
-    order.filled_quantity = float(data.get("filled_quantity", 0.0))
-    order.avg_fill_price = data.get("avg_fill_price")
+    order.filled_quantity = _coerce_persisted_number(
+        data.get("filled_quantity", 0.0), "filled_quantity"
+    )
+    avg_fill_price = data.get("avg_fill_price")
+    order.avg_fill_price = (
+        None
+        if avg_fill_price is None
+        else _coerce_persisted_number(avg_fill_price, "avg_fill_price")
+    )
     order.reject_reason = data.get("reject_reason")
     status = data.get("status", OrderStatus.NEW.value)
     order.status = OrderStatus(status)
     history = data.get("history")
     if history:
         order.history = [OrderStatus(s) for s in history]
+    order.validate()
     return order
+
+
+def _coerce_persisted_number(value: Any, field_name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"persisted {field_name} must be numeric, not boolean")
+    return float(value)

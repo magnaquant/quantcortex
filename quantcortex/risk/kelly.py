@@ -37,9 +37,13 @@ class KellyCriterion:
     """
 
     def __init__(self, fraction: float = 0.5, *, max_leverage: float = 1.0) -> None:
-        if not 0.0 < fraction <= 1.0:
+        if isinstance(fraction, (bool, np.bool_)):
+            raise TypeError("fraction must be numeric, not boolean")
+        if isinstance(max_leverage, (bool, np.bool_)):
+            raise TypeError("max_leverage must be numeric, not boolean")
+        if not np.isfinite(fraction) or not 0.0 < fraction <= 1.0:
             raise ValueError("fraction must lie in (0, 1].")
-        if max_leverage <= 0:
+        if not np.isfinite(max_leverage) or max_leverage <= 0:
             raise ValueError("max_leverage must be positive.")
         self.fraction = float(fraction)
         self.max_leverage = float(max_leverage)
@@ -55,8 +59,10 @@ class KellyCriterion:
         net payoff per unit on a win (``b`` in the canonical ``f = (bp - q)/b``
         form, where ``edge = bp - q``).
         """
-        if odds == 0:
-            raise ValueError("odds must be non-zero.")
+        if not np.isfinite(edge):
+            raise ValueError("edge must be finite")
+        if not np.isfinite(odds) or odds <= 0:
+            raise ValueError("odds must be finite and positive")
         return self.fraction * (edge / odds)
 
     def kelly_continuous(self, mean: float, var: float) -> float:
@@ -65,7 +71,7 @@ class KellyCriterion:
         For a continuously-compounded return with drift ``mean`` and variance
         ``var`` the growth-optimal leverage is ``mean / var``.
         """
-        if var <= 0:
+        if not np.isfinite(mean) or not np.isfinite(var) or var <= 0:
             raise ValueError("var must be positive.")
         return self.fraction * (mean / var)
 
@@ -93,16 +99,32 @@ class KellyCriterion:
             gross is the leverage Kelly prescribes; downstream layers decide how
             to deploy it.
         """
-        mu = np.asarray(expected_returns, dtype=np.float64).ravel()
+        mu = np.asarray(expected_returns, dtype=np.float64)
         sigma = np.asarray(cov, dtype=np.float64)
+        if mu.ndim != 1 or mu.size == 0 or not np.all(np.isfinite(mu)):
+            raise ValueError("expected_returns must be a non-empty finite 1-D vector")
         if sigma.shape != (mu.size, mu.size):
             raise ValueError(
                 f"cov shape {sigma.shape} incompatible with expected_returns "
                 f"length {mu.size}."
             )
-        # Solve Sigma f = mu (more stable than forming the explicit inverse);
-        # lstsq tolerates a singular / near-singular covariance.
-        f_star, *_ = np.linalg.lstsq(sigma, mu, rcond=None)
+        self._validate_covariance(sigma)
+        # A positive expected return in a zero-variance direction makes the
+        # unconstrained Kelly problem unbounded. Reject that ill-posed case
+        # rather than returning an arbitrary least-squares allocation.
+        eigenvalues, eigenvectors = np.linalg.eigh(sigma)
+        scale = max(1.0, float(np.max(np.abs(eigenvalues))))
+        tol = np.finfo(np.float64).eps * max(sigma.shape) * scale
+        null = eigenvalues <= tol
+        rotated_mu = eigenvectors.T @ mu
+        if np.any(np.abs(rotated_mu[null]) > np.sqrt(tol)):
+            raise ValueError(
+                "Kelly problem is unbounded: expected return has a component "
+                "in a zero-variance covariance direction"
+            )
+        inverse = np.zeros_like(eigenvalues)
+        inverse[~null] = 1.0 / eigenvalues[~null]
+        f_star = eigenvectors @ (inverse * rotated_mu)
         return self.fraction * f_star
 
     # ------------------------------------------------------------------ #
@@ -136,9 +158,13 @@ class KellyCriterion:
         A non-positive expected return (or non-positive variance) yields a zero
         scale - Kelly declines to take a bet with no edge.
         """
-        w = np.asarray(weights, dtype=np.float64).ravel()
-        mu = np.asarray(expected_returns, dtype=np.float64).ravel()
+        w = np.asarray(weights, dtype=np.float64)
+        mu = np.asarray(expected_returns, dtype=np.float64)
         sigma = np.asarray(cov, dtype=np.float64)
+        if w.ndim != 1 or w.size == 0 or not np.all(np.isfinite(w)):
+            raise ValueError("weights must be a non-empty finite 1-D vector")
+        if mu.ndim != 1 or not np.all(np.isfinite(mu)):
+            raise ValueError("expected_returns must be a finite 1-D vector")
         if mu.size != w.size:
             raise ValueError(
                 f"expected_returns length {mu.size} does not match weights "
@@ -149,6 +175,7 @@ class KellyCriterion:
                 f"cov shape {sigma.shape} incompatible with weights length "
                 f"{w.size}."
             )
+        self._validate_covariance(sigma)
 
         port_mean = float(w @ mu)
         port_var = float(w @ sigma @ w)
@@ -161,7 +188,10 @@ class KellyCriterion:
 
         # Cap the scalar so no element leaves the [-1, 1] per-asset contract;
         # the capped scale is applied unclipped to preserve proportions.
-        max_abs = float(np.max(np.abs(w))) if w.size else 0.0
+        in_gross = float(np.abs(w).sum())
+        if in_gross > 0.0:
+            scale = min(scale, self.max_leverage / in_gross)
+        max_abs = float(np.max(np.abs(w)))
         if max_abs > 0.0:
             scale = min(scale, 1.0 / max_abs)
 
@@ -171,8 +201,17 @@ class KellyCriterion:
         # Gross of the scaled book is in_gross * scale. Size the cap to the
         # larger of the input gross and the levered gross so both a de-risk
         # and a legitimate lever-up pass.
-        in_gross = float(np.abs(w).sum())
-        max_gross = max(1.0, in_gross, in_gross * scale) + 1e-9
         return enforce_exposure_contract(
-            scaled, max_gross=max_gross, name="KellyCriterion"
+            scaled, max_gross=self.max_leverage + 1e-9, name="KellyCriterion"
         )
+
+    @staticmethod
+    def _validate_covariance(sigma: np.ndarray) -> None:
+        if not np.all(np.isfinite(sigma)):
+            raise ValueError("cov must contain only finite values")
+        if not np.allclose(sigma, sigma.T, rtol=1e-10, atol=1e-12):
+            raise ValueError("cov must be symmetric")
+        eigenvalues = np.linalg.eigvalsh(sigma)
+        scale = max(1.0, float(np.max(np.abs(eigenvalues))))
+        if float(np.min(eigenvalues)) < -1e-10 * scale:
+            raise ValueError("cov must be positive semidefinite")

@@ -5,27 +5,31 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: lint + tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
       # The test suite and lint need only the scientific core; every heavy /
       # optional dependency (boosting libs, torch, hmmlearn, broker SDKs, ...)
-      # is lazily imported with a fallback, so it is intentionally not installed
-      # here. This keeps CI fast and proves the package imports + tests pass
-      # without the optional extras.
+      # is lazily imported with an explicit fallback or error, so it is
+      # intentionally not installed here. This proves the core package does not
+      # acquire accidental optional imports.
       - name: Install core dependencies
         run: |
           python -m pip install --upgrade pip
@@ -35,19 +39,48 @@ jobs:
         run: ruff check .
 
       - name: Tests (pytest)
-        run: pytest tests/ -q --tb=short
+        run: pytest tests/ -q --tb=short --cov=quantcortex --cov-report=term --cov-fail-under=60
+
+  notebooks:
+    name: notebook smoke (py3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install notebook dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas scipy scikit-learn pyarrow matplotlib jupyter nbconvert ipykernel
+
+      - name: Build deterministic test-only fixtures
+        run: python tests/build_notebook_fixtures.py /tmp/quantcortex-notebook-fixtures
+
+      - name: Execute research notebooks
+        env:
+          MPLCONFIGDIR: /tmp/quantcortex-mpl
+          QUANTCORTEX_PRICES_CSV: /tmp/quantcortex-notebook-fixtures/prices.csv
+          QUANTCORTEX_OHLCV_CSV: /tmp/quantcortex-notebook-fixtures/aapl_ohlcv.csv
+        run: |
+          jupyter nbconvert --execute --ExecutePreprocessor.timeout=180 --ExecutePreprocessor.shutdown_kernel=immediate --to notebook --output-dir /tmp/quantcortex-notebook-output research/*.ipynb
 
   package:
     name: build + install smoke (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -65,4 +98,5 @@ jobs:
         run: |
           python -m venv /tmp/wheeltest
           /tmp/wheeltest/bin/pip install dist/*.whl
+          /tmp/wheeltest/bin/pip check
           cd /tmp && /tmp/wheeltest/bin/python -c "from pathlib import Path; import quantcortex, quantcortex.portfolio.base, quantcortex.backtest.engines.vectorized, quantcortex.strategies.base_strategy; csv = Path(quantcortex.__file__).resolve().parent / 'data' / 'sample' / 'rotation_prices.csv'; assert not csv.exists(), f'restricted market-data snapshot packaged: {csv}'; print('packaged import OK; market-data snapshot absent')"

@@ -7,7 +7,11 @@ and can be read back with optional column projection and predicate pushdown.
 
 from __future__ import annotations
 
+import base64
+import json
 import shutil
+import tempfile
+import uuid
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -19,6 +23,7 @@ import pyarrow.parquet as pq
 __all__ = ["ParquetStore"]
 
 PathLike = Union[str, Path]
+_DATASET_MARKER = ".quantcortex-dataset"
 
 
 class ParquetStore:
@@ -31,11 +36,19 @@ class ParquetStore:
     """
 
     def __init__(self, root: PathLike) -> None:
-        self.root = Path(root)
+        self.root = Path(root).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _dataset_path(self, dataset: str) -> Path:
-        return self.root / dataset
+        if not isinstance(dataset, str) or not dataset.strip():
+            raise ValueError("dataset must be a non-empty relative path")
+        relative = Path(dataset)
+        if relative.is_absolute():
+            raise ValueError("dataset must be relative to the store root")
+        candidate = (self.root / relative).resolve()
+        if candidate == self.root or not candidate.is_relative_to(self.root):
+            raise ValueError("dataset path escapes the store root")
+        return candidate
 
     def write(
         self,
@@ -67,11 +80,25 @@ class ParquetStore:
         """
         if mode not in ("overwrite", "append"):
             raise ValueError(f"unknown mode {mode!r}; use 'overwrite' or 'append'")
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError("df must be a pandas DataFrame")
+        if df.empty:
+            raise ValueError("df must contain at least one row")
+
+        partition_cols = list(partition_cols or [])
+        if len(partition_cols) != len(set(partition_cols)) or any(
+            not isinstance(column, str) or not column for column in partition_cols
+        ):
+            raise ValueError("partition_cols must contain unique non-empty names")
+        missing_partitions = [
+            column for column in partition_cols if column not in df.columns
+        ]
+        if missing_partitions:
+            raise ValueError(
+                f"partition columns are missing from df: {missing_partitions}"
+            )
 
         path = self._dataset_path(dataset)
-        if mode == "overwrite" and path.exists():
-            shutil.rmtree(path)
-        path.mkdir(parents=True, exist_ok=True)
 
         # Reset a meaningful index into a column so it survives the round trip.
         if df.index.name is not None or not isinstance(df.index, pd.RangeIndex):
@@ -80,14 +107,75 @@ class ParquetStore:
             table_df = df
         table = pa.Table.from_pandas(table_df, preserve_index=False)
 
-        existing = "overwrite_or_ignore"
+        if mode == "append" and path.exists():
+            marker = path / _DATASET_MARKER
+            if marker.exists():
+                metadata = json.loads(marker.read_text(encoding="ascii"))
+                existing_schema = pa.ipc.read_schema(
+                    pa.BufferReader(base64.b64decode(metadata["schema"]))
+                )
+                existing_partitions = metadata["partition_cols"]
+            else:
+                existing_schema = pa_ds.dataset(
+                    str(path), format="parquet", partitioning="hive"
+                ).schema
+                existing_partitions = partition_cols
+            if not table.schema.equals(existing_schema, check_metadata=False):
+                raise ValueError(
+                    "append schema does not match the existing dataset schema"
+                )
+            if partition_cols != existing_partitions:
+                raise ValueError(
+                    "append partition_cols do not match the existing dataset"
+                )
+
+        if mode == "overwrite":
+            path.parent.mkdir(parents=True, exist_ok=True)
+            staging = Path(
+                tempfile.mkdtemp(prefix=f".{path.name}-staging-", dir=path.parent)
+            )
+            backup: Optional[Path] = None
+            try:
+                self._write_table(table, staging, partition_cols)
+                if path.exists():
+                    backup = path.with_name(f".{path.name}-backup-{uuid.uuid4().hex}")
+                    path.rename(backup)
+                try:
+                    staging.rename(path)
+                except Exception:
+                    if backup is not None and backup.exists() and not path.exists():
+                        backup.rename(path)
+                    raise
+                if backup is not None:
+                    shutil.rmtree(backup)
+            finally:
+                if staging.exists():
+                    shutil.rmtree(staging)
+        else:
+            path.mkdir(parents=True, exist_ok=True)
+            self._write_table(table, path, partition_cols)
+        return path
+
+    @staticmethod
+    def _write_table(
+        table: pa.Table, path: Path, partition_cols: List[str]
+    ) -> None:
         pq.write_to_dataset(
             table,
             root_path=str(path),
             partition_cols=partition_cols or None,
-            existing_data_behavior=existing,
+            basename_template=f"part-{uuid.uuid4().hex}-{{i}}.parquet",
+            existing_data_behavior="overwrite_or_ignore",
         )
-        return path
+        metadata = {
+            "partition_cols": partition_cols,
+            "schema": base64.b64encode(table.schema.serialize().to_pybytes()).decode(
+                "ascii"
+            ),
+        }
+        (path / _DATASET_MARKER).write_text(
+            json.dumps(metadata, sort_keys=True), encoding="ascii"
+        )
 
     def read(
         self,
@@ -133,7 +221,12 @@ class ParquetStore:
         if not self.root.exists():
             return []
         return sorted(
-            p.name for p in self.root.iterdir() if p.is_dir() and not p.name.startswith(".")
+            str(marker.parent.relative_to(self.root))
+            for marker in self.root.rglob(_DATASET_MARKER)
+            if not any(
+                part.startswith(".")
+                for part in marker.parent.relative_to(self.root).parts
+            )
         )
 
     def exists(self, dataset: str) -> bool:

@@ -15,7 +15,8 @@ strict **weight-centric interface contract** (inspired by FinRL-X). Every layer
 - from alpha signal to broker adapter - speaks the same language: a normalized
 weight vector `w_t in R^n`.
 
-This eliminates the most common gap in quant stacks: strategies that backtest cleanly but behave differently in paper and live trading because the architecture changes between environments.
+This reduces a common source of research/live drift: changing the portfolio
+representation or component interfaces between backtest and execution code.
 
 ```
 w_t = R_t( T_t( A_t( S_t( X<=t ) ) ) )
@@ -48,6 +49,7 @@ python3.11 -m venv .venv && source .venv/bin/activate
 
 # Core (required) - enough to run the full test suite
 pip install numpy pandas scipy scikit-learn matplotlib pyarrow pytest
+pip install -e . --no-deps       # make quantcortex importable from scripts
 
 # Optional accelerators / integrations (Poetry extras):
 poetry install -E all          # or, with pip:  pip install '.[all]'
@@ -55,14 +57,15 @@ poetry install -E all          # or, with pip:  pip install '.[all]'
 #   nlp       -> transformers, torch               (FinBERT sentiment)
 #   rl        -> stable-baselines3, gymnasium       (PPO DRL allocator)
 #   regime    -> hmmlearn                           (HMM regime overlay)
-#   providers -> yfinance, polygon-api-client, fredapi  (market / macro data)
-#   brokers   -> alpaca-trade-api, ib_insync, ccxt  (live execution)
+#   providers -> yfinance, polygon-api-client, fredapi, lxml (data + PIT parsing)
+#   brokers   -> legacy Alpaca/IB adapters plus ccxt (see caveat below)
 #   storage   -> redis, sqlalchemy, psycopg2-binary (feature cache + TimescaleDB)
 ```
 
 > **macOS note:** LightGBM/XGBoost need the OpenMP runtime (`brew install
-> libomp`). Without it quantcortex transparently falls back to the
-> scikit-learn GBDT backend - nothing breaks.
+> libomp`). With `model="auto"`, an unavailable native backend is skipped in
+> favor of the next backend. For reproducible research, select a concrete
+> backend and pin its version.
 
 ### Run the tests
 
@@ -104,26 +107,36 @@ python scripts/paper_trade_cycle.py --offline # labeled synthetic dry-run; no br
 fixed start-date cohort from historical index membership. `generate_report.py`
 accepts either an owner-supplied wide CSV or explicit live yfinance, writes three
 charts under ignored `reports/img/`, and prints source metadata plus markdown
-tables. `survivorship_demo.py` requires the same explicit live-data opt-in and
-shows the current pricing gap for past index members. `verify_brokers.py` exercises the
-Alpaca/IB/CCXT adapters end-to-end against SDK-shaped mocks (request build +
-response parsing); it does not verify a live SDK/authenticated connection.
+tables. Its default report requires at least 274 pre-evaluation sessions for
+full signal initialization; `--warmup-years 0` explicitly permits and labels a
+cold start. `survivorship_demo.py` requires the same explicit live-data opt-in and
+shows the current pricing gap for past index members. `verify_brokers.py` checks
+Alpaca/IB/CCXT request construction and response parsing against SDK-shaped
+mocks; it does not verify a live SDK or authenticated connection.
 `paper_trade_cycle.py` runs the full execution path (use
-`--live-yfinance --submit` with `ALPACA_*` set to place paper orders).
+`--live-yfinance --submit` with `ALPACA_*` set to place paper orders). It
+refuses unresolved open orders, records deterministic client order IDs before
+submission, and separates sell and buy phases across fresh account snapshots.
 
-> **On UI:** quantcortex is a library + notebooks + exported charts, like its
-> peers (qlib, zipline, vectorbt). There is no bundled web app by design - a
-> heavy SPA would be maintenance overhead for a research platform. Results are
-> surfaced through notebooks and locally generated reports; an
-> optional Streamlit dashboard could be layered on if interactive exploration is
-> wanted, but it is intentionally out of the core.
+The Alpaca adapter currently uses the deprecated
+[`alpaca-trade-api-python`](https://github.com/alpacahq/alpaca-trade-api-python)
+SDK, and the IB adapter uses archived
+[`ib_insync`](https://github.com/erdewit/ib_insync). Migrate and re-certify them
+against [`alpaca-py`](https://github.com/alpacahq/alpaca-py) and a maintained IB
+client such as [`ib_async`](https://github.com/ib-api-reloaded/ib_async) before
+any production or real-money deployment.
 
 ### Paper trading (Phase 4)
 
-Copy `.env.example` to `.env`, add your Alpaca / Interactive Brokers credentials,
-then drive one rebalance cycle through `research/05_live_trading_bridge.ipynb`
-against your paper account. Or bring up the full stack (app + Redis +
-TimescaleDB) with `docker compose up`.
+Copy `.env.example` to `.env`, add your broker credentials, and export them
+before a direct CLI run (`set -a; source .env; set +a` in a trusted shell).
+Then use `scripts/paper_trade_cycle.py --live-yfinance --submit` for the guarded
+Alpaca paper path. `research/05_live_trading_bridge.ipynb` demonstrates order
+translation and adapter wiring but does not establish authenticated live
+compatibility. Bring up local Redis and TimescaleDB with
+`docker compose up -d redis timescaledb`. The stack does not require a `.env`
+for offline use; when present, Compose reads it for explicitly forwarded
+credential variables.
 
 ---
 
@@ -142,7 +155,8 @@ PYTHONPATH=. python scripts/generate_report.py \
 ```
 
 The report records the file path, SHA-256 digest, observed date window, cost
-assumptions, DSR trial count, and whether liquidity constraints are active.
+assumptions, signal warm-up, DSR trial count/variance assumption, and whether
+liquidity constraints are active.
 Generated charts remain under ignored `reports/`. See
 [PERFORMANCE.md](PERFORMANCE.md) for interpretation requirements and known
 limitations.
@@ -151,17 +165,20 @@ limitations.
 
 ## Architecture
 
-The platform is organized as seven composable layers. Each layer produces or consumes the same weight vector interface, so any component can be swapped without touching downstream code.
+The platform is organized as eight layers joined by explicit data and weight
+contracts. Components are replaceable when they preserve those contracts and
+the surrounding data assumptions.
 
 | Layer | Role | Key modules |
 |-------|------|-------------|
-| **Data** | Point-in-time clean market + alternative data | `providers/`, `pit_enforcer.py`, `lookahead_detector.py` |
+| **Data** | Market, fundamental, and alternative-data adapters with PIT validation utilities | `providers/`, `pit_enforcer.py`, `lookahead_detector.py` |
 | **Alpha** | Factor research, ML signals, NLP sentiment | `factors/`, `alpha158.py`, `feature_engineering/` |
 | **Portfolio** | Weight optimization (MV, HRP, RL) | `equal_weight.py`, `hrp.py`, `drl_allocator.py` |
 | **Timing** | Regime detection, momentum overlays | `hmm_regime.py`, `tsmom.py`, `vix_scaler.py` |
 | **Risk** | Drawdown limits, VaR/CVaR, Kelly sizing | `circuit_breaker.py`, `var_cvar.py`, `vol_targeting.py` |
 | **Backtest** | Walk-forward validation, pitfall detection | `walk_forward.py`, `deflated_sharpe.py`, `lookahead_audit.py` |
 | **Execution** | Live broker routing, order/position mgmt | `brokers/`, `order_manager.py`, `pre_trade_risk.py` |
+| **Strategies** | End-to-end select, allocate, timing, and risk pipelines | `base_strategy.py`, `multi_asset_rotation.py`, `momentum_ml.py` |
 
 ### Weight Contract
 
@@ -172,7 +189,7 @@ runtime by `enforce_weight_contract`):
 # output: np.ndarray, shape (n_assets,)
 # dtype:  float64
 # sum:    1.0  (long-only) or 0.0 (market-neutral)
-# range:  each weight in [-1.0, 1.0]
+# range:  [0.0, 1.0] long-only; [-1.0, 1.0] market-neutral
 # violation raises: WeightContractViolationError
 ```
 
@@ -236,32 +253,32 @@ quantcortex/                     # repo root
 │   ├── backtest/
 │   │   ├── engines/
 │   │   │   ├── vectorized.py   # Fast NumPy/pandas vectorized engine
-│   │   │   ├── event_driven.py # Tick-level event loop
+│   │   │   ├── event_driven.py # Bar-by-bar positions and fill accounting
 │   │   │   └── walk_forward.py # Expanding/rolling WFO with embargo
 │   │   ├── execution_models/
 │   │   │   ├── ideal_fill.py
 │   │   │   ├── vwap_fill.py
-│   │   │   └── market_impact.py  # Almgren-Chriss market impact
+│   │   │   └── market_impact.py  # Simplified permanent/temporary impact model
 │   │   ├── costs/
 │   │   │   └── transaction_costs.py  # 3bps commission + 10bps slippage
 │   │   ├── validation/
 │   │   │   ├── deflated_sharpe.py    # Bailey & López de Prado DSR
 │   │   │   ├── multiple_testing.py   # BHY correction
-│   │   │   ├── lookahead_audit.py    # Automated look-ahead bias detection
+│   │   │   ├── lookahead_audit.py    # Perturbation-based leakage diagnostic
 │   │   │   └── survivorship_check.py
 │   │   └── metrics/
-│   │       └── tearsheet.py    # Full pyfolio-compatible tearsheet
+│   │       └── tearsheet.py    # Native performance metrics and charts
 │   │
 │   ├── execution/
 │   │   ├── brokers/
 │   │   │   ├── base.py
 │   │   │   ├── alpaca_broker.py
 │   │   │   ├── ib_broker.py        # Interactive Brokers via ib_insync
-│   │   │   └── ccxt_broker.py      # 100+ crypto exchanges
+│   │   │   └── ccxt_broker.py      # CCXT-supported crypto exchanges
 │   │   ├── order_manager.py
 │   │   ├── position_manager.py
-│   │   ├── state_persistence.py    # Redis-backed state across restarts
-│   │   └── pre_trade_risk.py       # Pre-flight weight contract check
+│   │   ├── state_persistence.py    # Redis or atomic local-JSON state
+│   │   └── pre_trade_risk.py       # Weight, order, and post-trade exposure checks
 │   │
 │   └── strategies/
 │       ├── base_strategy.py
@@ -313,8 +330,9 @@ quantcortex/                     # repo root
 
 ### 1. Point-in-Time (PIT) Discipline
 Financial report data should use **announcement dates**, not period-end dates.
-`pit_enforcer.py` rejects records that violate that contract when the enforcer
-is applied.
+`pit_enforcer.py` rejects records that violate that contract. Date-only inputs
+use strict-before matching; same-timestamp use requires an explicit opt-in for
+sources with observed intraday release times.
 
 ### 2. Walk-Forward Validation with Embargo
 The walk-forward engine supports expanding or rolling windows plus a purge and
@@ -329,12 +347,13 @@ for multiple testing and non-normal return distributions:
 DSR = Phi[ (SR* - SR0)*sqrt(T-1) / sqrt(1 - gamma3*SR* + (gamma4-1)/4*SR*^2) ]
 ```
 
-Where `SR*` = observed max Sharpe, `SR0` = expected max under the null, `gamma3` = skewness, `gamma4` = excess kurtosis.
+Where `SR*` = observed max Sharpe, `SR0` = expected max under the null,
+`gamma3` = skewness, and `gamma4` = non-excess kurtosis.
 
 ### 4. Backtesting Pitfall Controls
-1. **Look-ahead bias** - `lookahead_audit.py` and PIT checks detect leakage when invoked.
+1. **Look-ahead bias** - PIT checks enforce specific timestamp contracts; `lookahead_audit.py` is a sensitivity diagnostic, not a proof of no leakage.
 2. **Overfitting** - DSR and BHY multiple-testing utilities quantify trial risk.
-3. **Survivorship bias** - point-in-time universe utilities reconstruct historical membership; delisted-security prices still require an appropriate feed.
+3. **Survivorship bias** - named index universes require explicit membership data. The Wikipedia S&P reconstruction is coverage-limited and rejects pre-coverage queries; delisted-security prices still require an appropriate feed.
 4. **Data adjustment errors** - processors validate split/dividend-adjusted inputs.
 5. **Multiple testing bias** - BHY correction is available for factor and strategy tests.
 6. **Transaction cost neglect** - every backtest engine requires a cost model.
@@ -353,7 +372,7 @@ volume_cap  = 0.10     # max 10% of ADV when an ADV series is supplied
 
 | Technique | Use case | Module |
 |-----------|----------|--------|
-| XGBoost / LightGBM / CatBoost | Cross-sectional alpha (GBDT dominates tabular financial data) | `quantcortex/alpha/factors/ml/` |
+| XGBoost / LightGBM / CatBoost | Cross-sectional tabular-alpha baselines | `quantcortex/alpha/factors/ml/` |
 | PPO (Stable-Baselines3) | End-to-end RL portfolio allocation | `quantcortex/portfolio/drl_allocator.py` |
 | Hidden Markov Model | Regime detection (bull/bear/sideways) | `quantcortex/timing/hmm_regime.py` |
 | FinBERT | Earnings call & news sentiment scoring | `quantcortex/alpha/factors/nlp/` |
@@ -368,7 +387,8 @@ volume_cap  = 0.10     # max 10% of ADV when an ADV series is supplied
 - **Rebalance:** Weekly
 - **Selection:** Information Ratio relative to QQQ
 - **Allocation:** Residual momentum within selected asset groups
-- **Risk gate:** HMM regime + VIX scaling
+- **Risk gate:** seeded GMM regime by default (HMM is explicit), VIX scaling,
+  and a 60% position cap that leaves residual cash when diversification is infeasible
 - **Design target:** Sharpe > 1.10; this is aspirational, not a published result.
 
 ### Momentum ML (`quantcortex/strategies/momentum_ml.py`)
@@ -378,8 +398,11 @@ volume_cap  = 0.10     # max 10% of ADV when an ADV series is supplied
 
 ### DRL Portfolio (`quantcortex/strategies/drl_portfolio.py`)
 - PPO agent trained on rolling 3-year windows
+- Observation: trailing returns plus current portfolio weights
 - Action space: continuous weight vector over universe
-- Reward: risk-adjusted return minus transaction costs
+- Reward: realized log return minus turnover cost and estimated portfolio variance
+- Missing PPO dependencies and untrained models fail closed by default; the
+  deterministic momentum heuristic requires explicit opt-in.
 
 ---
 
@@ -387,11 +410,11 @@ volume_cap  = 0.10     # max 10% of ADV when an ADV series is supplied
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| **Phase 1** | Data layer + PIT enforcement + universe construction | Complete |
-| **Phase 2** | Alpha factor library + walk-forward validation harness | Complete |
-| **Phase 3** | Portfolio construction + backtest engines + DSR reporting | Complete |
-| **Phase 4** | Live execution layer (Alpaca paper -> IB live) | Adapters are behaviorally covered by SDK-shaped mocks (`scripts/verify_brokers.py`, 15/15), and `scripts/paper_trade_cycle.py` runs the full local cycle. Live SDK compatibility and the account-authenticated paper handshake remain unverified. |
-| **Phase 5** | DRL allocator + FinBERT sentiment overlay | Complete |
+| **Phase 1** | Data layer + PIT enforcement + universe construction | Implemented; licensed data is still required for production research |
+| **Phase 2** | Alpha factor library + walk-forward validation harness | Implemented; empirical validation remains dataset-specific |
+| **Phase 3** | Portfolio construction + backtest engines + DSR reporting | Implemented; execution and cost assumptions remain model-dependent |
+| **Phase 4** | Paper-execution integration | SDK-shaped mocks cover 17 request/response mapping checks, and `scripts/paper_trade_cycle.py` runs the local dry-run plus an idempotent, paper-only submission path. The Alpaca and IB SDK migrations, authenticated connectivity, account permissions, and venue-side behavior remain unverified. |
+| **Phase 5** | DRL allocator + configurable FinBERT/lexicon sentiment overlay | Implemented as research baselines |
 
 ---
 

@@ -19,12 +19,15 @@ date,QQQ,VGT,GLD,TLT,SPY,VIG
 ```
 
 Dates must be unique and parseable. Symbol columns must be numeric and strictly
-positive. Missing observations are forward-filled only from earlier rows; rows
-that remain incomplete are dropped. Notebook universes require their full set
-of symbol columns.
+positive. Missing observations are forward-filled from earlier rows for at
+most five sessions; rows that remain incomplete are dropped. Notebook
+universes require their full set of symbol columns.
 
 Set `QUANTCORTEX_PRICES_CSV` to the absolute path or pass
 `--prices-csv local_data/<file>.csv` to the report generator.
+For a performance report, include at least the requested pre-evaluation warm-up
+history (two calendar years by default); the loader cannot reconstruct signal
+history that is absent from the file.
 
 ## Single-Symbol OHLCV CSV
 

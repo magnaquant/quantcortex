@@ -1,20 +1,21 @@
 """CCXT crypto-exchange adapter.
 
-Routes quantcortex orders to any of the 100+ crypto exchanges supported by the
+Routes quantcortex orders to crypto exchanges supported by the
 `ccxt <https://github.com/ccxt/ccxt>`_ library (Binance, Coinbase, Kraken, ...).
 ``ccxt`` is an *optional* dependency, imported lazily inside
 :meth:`CCXTBroker.connect` - importing this module never requires it.
 
-When ``paper=True`` (the default) the adapter calls ``set_sandbox_mode(True)`` if
-the chosen exchange exposes a testnet/sandbox, so paper trading routes to the
-exchange's test environment rather than live funds.
+When ``paper=True`` (the default) the adapter requires an exchange sandbox and
+calls ``set_sandbox_mode(True)``. It refuses to connect if the exchange cannot
+prove that paper orders are isolated from live funds.
 """
 
 from __future__ import annotations
 
+import math
 import os
 import uuid
-from typing import List, Optional
+from typing import List, Mapping, Optional
 
 from quantcortex.execution.brokers.base import (
     AccountInfo,
@@ -22,7 +23,13 @@ from quantcortex.execution.brokers.base import (
     BrokerError,
     Position,
 )
-from quantcortex.execution.order_manager import Order, OrderSide, OrderStatus, OrderType
+from quantcortex.execution.order_manager import (
+    Order,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    validate_order_request,
+)
 
 __all__ = ["CCXTBroker"]
 
@@ -48,11 +55,28 @@ class CCXTBroker(Broker):
         api_key: Optional[str] = None,
         secret: Optional[str] = None,
         paper: bool = True,
+        account_currency: Optional[str] = None,
     ) -> None:
-        self.exchange_id = exchange
+        if not isinstance(exchange, str) or not exchange.strip():
+            raise ValueError("exchange must be a non-empty string")
+        if not isinstance(paper, bool):
+            raise TypeError("paper must be a boolean")
+        self.exchange_id = exchange.strip()
         self.api_key = api_key or os.environ.get("CCXT_API_KEY")
         self.secret = secret or os.environ.get("CCXT_SECRET")
-        self.paper = bool(paper)
+        self.paper = paper
+        resolved_currency = account_currency or os.environ.get(
+            "CCXT_ACCOUNT_CURRENCY"
+        )
+        if resolved_currency is not None and (
+            not isinstance(resolved_currency, str) or not resolved_currency.strip()
+        ):
+            raise ValueError("account_currency must be a non-empty string")
+        self.account_currency = (
+            resolved_currency.strip().upper()
+            if resolved_currency is not None
+            else None
+        )
         self._exchange = None  # populated by connect()
 
     # ------------------------------------------------------------------ #
@@ -83,9 +107,16 @@ class CCXTBroker(Broker):
 
         try:
             exchange = exchange_cls(config)
-            if self.paper and exchange.has.get("sandbox"):
+            if self.paper:
+                if not exchange.has.get("sandbox"):
+                    raise BrokerError(
+                        f"ccxt exchange {self.exchange_id!r} has no sandbox; "
+                        "refusing paper mode on a live endpoint"
+                    )
                 exchange.set_sandbox_mode(True)
             self._exchange = exchange
+        except BrokerError:
+            raise
         except Exception as exc:  # pragma: no cover - network/config dependent
             raise BrokerError(
                 f"Failed to initialise ccxt exchange {self.exchange_id!r}: {exc}"
@@ -111,11 +142,15 @@ class CCXTBroker(Broker):
         limit_price: Optional[float] = None,
     ) -> Order:
         """Place an order via ``create_order`` and return an :class:`Order`."""
+        request = validate_order_request(
+            symbol, side, quantity, order_type, limit_price
+        )
+        symbol = request.symbol
+        side = request.side
+        quantity = request.quantity
+        order_type = request.order_type
+        limit_price = request.limit_price
         exchange = self._require_exchange()
-        side = OrderSide(side)
-        order_type = OrderType(order_type)
-        if order_type is OrderType.LIMIT and limit_price is None:
-            raise BrokerError("Limit orders require a limit_price.")
 
         ccxt_type = "market" if order_type is OrderType.MARKET else "limit"
         ccxt_side = "buy" if side is OrderSide.BUY else "sell"
@@ -144,9 +179,11 @@ class CCXTBroker(Broker):
         """Translate a ccxt order dict into a quantcortex :class:`Order`."""
         raw = raw or {}
         order_id = str(raw.get("id") or uuid.uuid4())
-        status = _CCXT_STATUS_MAP.get(
-            str(raw.get("status", "")).lower(), OrderStatus.SUBMITTED
-        )
+        raw_status = str(raw.get("status", "")).strip().lower()
+        try:
+            status = _CCXT_STATUS_MAP[raw_status]
+        except KeyError as exc:
+            raise BrokerError(f"Unknown ccxt order status {raw_status!r}.") from exc
         filled = self._to_float(raw.get("filled")) or 0.0
         avg_price = self._to_float(raw.get("average")) or self._to_float(
             raw.get("price")
@@ -166,16 +203,22 @@ class CCXTBroker(Broker):
         order.status = status
         if status not in order.history:
             order.history.append(status)
+        order.validate()
         return order
 
     @staticmethod
     def _to_float(value) -> Optional[float]:
         if value is None or value == "":
             return None
+        if isinstance(value, bool):
+            raise BrokerError("Boolean values are not valid ccxt numeric fields.")
         try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise BrokerError(f"Invalid numeric value from ccxt: {value!r}.") from exc
+        if not math.isfinite(parsed):
+            raise BrokerError(f"Non-finite numeric value from ccxt: {value!r}.")
+        return parsed
 
     def cancel_order(self, broker_order_id: str, symbol: Optional[str] = None) -> None:
         exchange = self._require_exchange()
@@ -185,7 +228,11 @@ class CCXTBroker(Broker):
             raise BrokerError(f"ccxt cancel_order failed: {exc}") from exc
 
     def get_positions(self) -> List[Position]:
-        """Derive positions from non-zero balances in :meth:`fetch_balance`."""
+        """Return non-zero asset balances.
+
+        Symbols are asset codes (for example ``BTC``), not tradable pair names.
+        Callers that target pair symbols must map balances explicitly.
+        """
         exchange = self._require_exchange()
         try:
             balance = exchange.fetch_balance()
@@ -201,10 +248,12 @@ class CCXTBroker(Broker):
         return positions
 
     def get_account(self) -> AccountInfo:
-        """Summarise account funds from :meth:`fetch_balance`.
+        """Return a complete single-currency cash account summary.
 
-        Cash is reported in the exchange's quote stablecoin (USDT) if present,
-        otherwise USD; equity/buying-power are best-effort from the same field.
+        CCXT balances do not provide a standardized total-equity valuation across
+        assets. To avoid understating risk, this method fails when any non-zero
+        balance exists outside the selected account currency. Multi-asset crypto
+        accounts require an explicit, venue-aware valuation layer.
         """
         exchange = self._require_exchange()
         try:
@@ -214,22 +263,47 @@ class CCXTBroker(Broker):
 
         free = balance.get("free", {}) or {}
         total = balance.get("total", {}) or {}
+        if not isinstance(free, Mapping) or not isinstance(total, Mapping):
+            raise BrokerError("ccxt fetch_balance returned malformed balance maps")
 
-        # Pick a sensible "cash" currency: prefer common quote stablecoins.
-        currency = "USD"
-        cash = 0.0
-        for candidate in ("USDT", "USD", "USDC", "BUSD"):
-            if candidate in free:
-                currency = candidate
-                cash = self._to_float(free.get(candidate)) or 0.0
-                break
+        currency = self.account_currency
+        if currency is None:
+            for candidate in ("USDT", "USD", "USDC", "BUSD"):
+                if candidate in free or candidate in total:
+                    currency = candidate
+                    break
+        if currency is None:
+            raise BrokerError(
+                "cannot infer a CCXT account currency; pass account_currency explicitly"
+            )
 
-        equity = self._to_float(total.get(currency)) or cash
+        nonzero_assets = []
+        for asset, raw_amount in total.items():
+            amount = self._to_float(raw_amount)
+            if amount is None:
+                raise BrokerError(f"ccxt total balance for {asset!r} is missing")
+            if str(asset).upper() != currency and abs(amount) > 0.0:
+                nonzero_assets.append(str(asset))
+        if nonzero_assets:
+            raise BrokerError(
+                "cannot compute complete CCXT account equity with non-zero "
+                f"unvalued assets: {sorted(nonzero_assets)}"
+            )
+
+        cash_raw = free.get(currency, 0.0)
+        equity_raw = total.get(currency, cash_raw)
+        cash = self._to_float(cash_raw)
+        equity = self._to_float(equity_raw)
+        if cash is None or equity is None:
+            raise BrokerError(f"ccxt returned an invalid {currency} balance")
 
         return AccountInfo(
             cash=cash,
             equity=equity,
             buying_power=cash,
             currency=currency,
-            extra={"exchange": self.exchange_id},
+            extra={
+                "exchange": self.exchange_id,
+                "valuation_scope": "single_currency_cash_only",
+            },
         )

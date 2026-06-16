@@ -1,7 +1,7 @@
 """GBDT cross-sectional momentum strategy with walk-forward refitting.
 
 :class:`MomentumMLStrategy` learns a cross-sectional return predictor with a
-gradient-boosted decision tree (:class:`~alpha.factors.ml.gbdt_factor.GBDTFactor`).
+gradient-boosted decision tree (:class:`~quantcortex.alpha.factors.ml.gbdt_factor.GBDTFactor`).
 At each rebalance it builds a strictly-causal feature matrix from the price
 panel (multi-horizon momentum, trailing volatility, recent return and
 moving-average ratios) - optionally enriched with Alpha158 features when an
@@ -12,7 +12,7 @@ instance between rebalances.
 
 The top ``top_quantile`` of symbols by predicted score are held, equal-weighted
 (or routed through the optimizer).  A cold start with insufficient history falls
-back to a plain 12-1 :class:`~alpha.factors.classical.momentum.MomentumFactor`.
+back to a plain 12-1 :class:`~quantcortex.alpha.factors.classical.momentum.MomentumFactor`.
 
 All features and labels are causal: a feature on date ``t`` uses only prices
 ``<= t`` and the training label is the *historical* next-period cross-sectional
@@ -60,7 +60,7 @@ class MomentumMLStrategy(Strategy):
     max_train:
         Maximum number of trailing *dates* contributing training samples.
     **kw:
-        Forwarded to :class:`~strategies.base_strategy.Strategy`.
+        Forwarded to :class:`~quantcortex.strategies.base_strategy.Strategy`.
     """
 
     def __init__(
@@ -76,14 +76,39 @@ class MomentumMLStrategy(Strategy):
     ) -> None:
         optimizer = optimizer if optimizer is not None else EqualWeight()
         super().__init__(optimizer, mode=PortfolioMode.LONG_ONLY, **kw)
-        if not 0.0 < top_quantile <= 1.0:
+        if (
+            isinstance(top_quantile, (bool, np.bool_))
+            or not np.isfinite(top_quantile)
+            or not 0.0 < top_quantile <= 1.0
+        ):
             raise ValueError("top_quantile must be in (0, 1]")
+        integer_parameters = {
+            "lookback": lookback,
+            "gap": gap,
+            "max_train": max_train,
+        }
+        if any(
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))
+            for value in integer_parameters.values()
+        ):
+            raise TypeError("lookback, gap, and max_train must be integers")
         self.top_quantile = float(top_quantile)
         self.refit_freq = str(refit_freq)
         self.lookback = int(lookback)
         self.gap = int(gap)
         self.max_train = int(max_train)
         self.label_horizon = _LABEL_HORIZON
+        try:
+            pd.Period(pd.Timestamp("2000-01-01"), freq=self.refit_freq)
+        except Exception as exc:
+            raise ValueError(f"invalid refit_freq {self.refit_freq!r}") from exc
+        if self.lookback <= 0:
+            raise ValueError("lookback must be positive")
+        if self.gap < 0:
+            raise ValueError("gap must be non-negative")
+        if self.max_train <= 0:
+            raise ValueError("max_train must be positive")
 
         # Cached model state (walk-forward refit).
         self._model: Optional[GBDTFactor] = None
@@ -109,7 +134,7 @@ class MomentumMLStrategy(Strategy):
         current = self._current_features(prices, ohlcv)
 
         # Cold start: not enough history for a labelled training set.
-        min_history = max(_MOM_HORIZONS) + self.label_horizon + 30
+        min_history = max(_MOM_HORIZONS) + self.gap + self.label_horizon + 30
         if (
             feature_panel is None
             or current is None
@@ -123,11 +148,8 @@ class MomentumMLStrategy(Strategy):
         if self._model is None or self._feature_cols is None:
             return self._cold_start(prices)
 
-        try:
-            X = current.reindex(columns=self._feature_cols)
-            preds = self._model.predict(X)
-        except Exception:
-            return self._cold_start(prices)
+        X = current.reindex(columns=self._feature_cols)
+        preds = self._model.predict(X)
 
         scores = pd.Series(preds, index=current.index, dtype=float).dropna()
         if scores.empty:
@@ -145,8 +167,7 @@ class MomentumMLStrategy(Strategy):
         """
         clean = scores.dropna()
         if clean.empty:
-            n = len(scores)
-            return np.full(n, 1.0 / n, dtype=np.float64) if n else np.array([])
+            raise ValueError("momentum ML allocation requires non-empty scores")
 
         n_keep = max(1, int(np.ceil(len(clean) * self.top_quantile)))
         chosen = clean.sort_values(ascending=False).head(n_keep).index
@@ -194,17 +215,14 @@ class MomentumMLStrategy(Strategy):
             return
 
         feature_cols = [c for c in train.columns if c != "__y__"]
-        model = GBDTFactor(model="auto")
-        try:
-            # Train on the cross-sectional rank of the forward return (robust to
-            # heavy tails), matching GBDTFactor's recommended target transform.
-            y = train.groupby(level=0)["__y__"].transform(
-                lambda s: pd.Series(GBDTFactor.rank_scores(s.to_numpy()), index=s.index)
-            )
-            mask = y.notna()
-            model.fit(train.loc[mask, feature_cols], y[mask])
-        except Exception:
-            return
+        # Use the core sklearn backend explicitly so results do not change when
+        # an optional LightGBM/XGBoost/CatBoost installation appears or vanishes.
+        model = GBDTFactor(model="sklearn")
+        y = train.groupby(level=0)["__y__"].transform(
+            lambda s: pd.Series(GBDTFactor.rank_scores(s.to_numpy()), index=s.index)
+        )
+        mask = y.notna()
+        model.fit(train.loc[mask, feature_cols], y[mask])
 
         self._model = model
         self._feature_cols = feature_cols
@@ -212,12 +230,9 @@ class MomentumMLStrategy(Strategy):
 
     def _refit_due(self, last: pd.Timestamp, now: pd.Timestamp) -> bool:
         """True if ``now`` falls in a later ``refit_freq`` period than ``last``."""
-        try:
-            p_last = pd.Period(last, freq=self.refit_freq)
-            p_now = pd.Period(now, freq=self.refit_freq)
-            return p_now > p_last
-        except Exception:
-            return True
+        p_last = pd.Period(last, freq=self.refit_freq)
+        p_now = pd.Period(now, freq=self.refit_freq)
+        return p_now > p_last
 
     # ------------------------------------------------------------------ #
     # Feature engineering (strictly causal)
@@ -240,7 +255,9 @@ class MomentumMLStrategy(Strategy):
         # Label: forward ``label_horizon`` return, shifted back so row t carries
         # the return realised over (t, t+h].  Tail rows with no realised future
         # become NaN and are dropped from training.
-        fwd = prices.pct_change(self.label_horizon).shift(-self.label_horizon)
+        fwd = prices.pct_change(
+            self.label_horizon, fill_method=None
+        ).shift(-self.label_horizon)
         label_long = fwd.stack(future_stack=True)
         label_long.index = label_long.index.set_names(["date", "symbol"])
 
@@ -261,18 +278,20 @@ class MomentumMLStrategy(Strategy):
         """Multi-horizon momentum / vol / MA-ratio features (close-only)."""
         if prices.shape[1] == 0:
             return None
-        ret = prices.pct_change()
+        ret = prices.pct_change(fill_method=None)
         frames: Dict[str, pd.DataFrame] = {}
 
         for h in _MOM_HORIZONS:
-            frames[f"mom_{h}"] = prices.shift(self.gap) / prices.shift(h) - 1.0
+            frames[f"mom_{h}"] = (
+                prices.shift(self.gap) / prices.shift(self.gap + h) - 1.0
+            )
         for w in _MA_WINDOWS:
             ma = prices.rolling(w, min_periods=w).mean()
             frames[f"ma_ratio_{w}"] = prices / ma - 1.0
         frames["vol_63"] = ret.rolling(63, min_periods=20).std()
         frames["vol_21"] = ret.rolling(21, min_periods=10).std()
-        frames["ret_5"] = prices.pct_change(5)
-        frames["ret_21"] = prices.pct_change(21)
+        frames["ret_5"] = prices.pct_change(5, fill_method=None)
+        frames["ret_21"] = prices.pct_change(21, fill_method=None)
 
         long_frames = []
         for name, wide in frames.items():
@@ -289,24 +308,33 @@ class MomentumMLStrategy(Strategy):
         """Alpha158 features per symbol stacked into a long panel."""
         from quantcortex.alpha.feature_engineering.alpha158 import Alpha158
 
+        missing = [
+            symbol
+            for symbol in prices.columns
+            if symbol not in ohlcv
+            or not isinstance(ohlcv[symbol], pd.DataFrame)
+            or ohlcv[symbol].empty
+        ]
+        if missing:
+            raise ValueError(
+                "ctx.extra['ohlcv'] must contain a non-empty DataFrame for every "
+                f"price symbol; missing {missing}"
+            )
         engine = Alpha158()
         per_symbol = []
         for sym in prices.columns:
             df = ohlcv.get(sym)
-            if df is None or df.empty:
-                continue
+            assert isinstance(df, pd.DataFrame)
             try:
                 feats = engine.compute(df)
-            except Exception:
-                continue
+            except Exception as exc:
+                raise RuntimeError(f"Alpha158 feature generation failed for {sym}") from exc
             feats = feats.replace([np.inf, -np.inf], np.nan)
             feats = feats.reindex(prices.index)
             feats.index = pd.MultiIndex.from_product(
                 [feats.index, [sym]], names=["date", "symbol"]
             )
             per_symbol.append(feats)
-        if not per_symbol:
-            return self._price_features(prices)
         out = pd.concat(per_symbol).sort_index()
         return out
 
@@ -334,11 +362,8 @@ class MomentumMLStrategy(Strategy):
             return pd.Series(dtype=float)
         lb = min(self.lookback, len(prices) - 1)
         gap = min(self.gap, lb - 1) if lb > 1 else 0
-        try:
-            factor = MomentumFactor(lookback=lb, gap=gap)
-            panel = factor.compute(prices)
-        except Exception:
-            return pd.Series(dtype=float)
+        factor = MomentumFactor(lookback=lb, gap=gap)
+        panel = factor.compute(prices)
         last = panel.iloc[-1].dropna()
         if last.empty:
             # Final fallback: simple total return.

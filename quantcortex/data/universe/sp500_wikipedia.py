@@ -1,26 +1,28 @@
 """Reconstruct point-in-time S&P 500 membership from Wikipedia.
 
-The static snapshot in :mod:`data.universe.sp500_universe` is survivorship-biased
-(it only knows today's members). This module fetches Wikipedia's *current
-constituents* table together with its dated *change log* (index additions and
-removals) and reconstructs an approximate point-in-time membership so that
+The opt-in demo subset in
+:mod:`quantcortex.data.universe.sp500_universe` is survivorship-biased. This
+module fetches Wikipedia's *current constituents* table together with its dated
+*change log* (index additions and removals) and reconstructs an approximate
+point-in-time membership so that
 ``members_asof(date)`` returns the names that were actually in the index then -
 including companies later dropped (acquired, bankrupt, demoted).
 
 Reconstruction
 --------------
-* Each current member contributes one *open* interval ``[date_added, NaT]`` using
+* Each current member contributes one *open* interval ``[date_added, NaT)`` using
   Wikipedia's "Date added" (the start of its current continuous tenure).
 * Each removed name in the change log contributes a *closed* interval ending on
-  its removal date and starting at the matching prior addition (or a configurable
-  ``floor`` date when it joined before the log begins).
+  its removal date and starting at the matching prior addition. When the
+  addition predates the available log, reconstruction starts at the log's first
+  effective date rather than inventing earlier membership.
 
 Limitations (documented, not hidden): the change log only reaches back a finite
-number of years, so membership before the log's earliest entry is approximate,
-and a company removed *and re-added* keeps only its current open tenure plus any
-fully-closed prior cycles. This is a free, reproducible source for research and
-a drop-in upgrade over the static snapshot; a licensed point-in-time vendor feed
-remains the gold standard. Network + ``lxml`` are required (imported lazily).
+number of years, so membership before the log's earliest entry is unsupported.
+The reconstruction preserves fully closed prior cycles for companies that were
+removed and later re-added. This is a free research source and a material
+upgrade over a static subset, not a substitute for a licensed index-history
+feed. Network + ``lxml`` are required (imported lazily).
 """
 
 from __future__ import annotations
@@ -38,7 +40,6 @@ __all__ = ["WIKI_SP500_URL", "fetch_sp500_tables", "build_pit_membership"]
 
 WIKI_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 _USER_AGENT = "quantcortex-research (https://github.com/magnaquant/quantcortex)"
-_DEFAULT_FLOOR = pd.Timestamp("2000-01-01")
 
 
 def _normalize_ticker(t: object) -> Optional[str]:
@@ -83,74 +84,133 @@ def build_pit_membership(
     current: pd.DataFrame,
     changes: pd.DataFrame,
     *,
-    floor: pd.Timestamp = _DEFAULT_FLOOR,
+    floor: Optional[pd.Timestamp] = None,
 ) -> PITMembership:
-    """Reconstruct a :class:`PITMembership` from the two Wikipedia tables."""
-    # ---- current members: open interval from "Date added" ----
-    cur = current.copy()
-    cur.columns = [str(c) for c in cur.columns]
-    sym_col = "Symbol"
-    added_col = next((c for c in cur.columns if c.lower().startswith("date added")), None)
-    current_syms = {}
-    for _, row in cur.iterrows():
-        sym = _normalize_ticker(row[sym_col])
-        if sym is None:
-            continue
-        start = pd.to_datetime(row[added_col], errors="coerce") if added_col else pd.NaT
-        current_syms[sym] = start if pd.notna(start) else floor
-    current_set = set(current_syms)
+    """Reconstruct half-open membership intervals from Wikipedia tables.
 
-    rows = [{"symbol": s, "start_date": st, "end_date": pd.NaT} for s, st in current_syms.items()]
+    ``floor`` may explicitly narrow the supported history. When omitted, the
+    earliest valid change-log date is used for tenures whose additions predate
+    the log. Queries earlier than that inferred boundary should not be treated
+    as complete index membership.
+    """
+    if not isinstance(current, pd.DataFrame) or current.empty:
+        raise ValueError("current constituents table must be a non-empty DataFrame")
+    if not isinstance(changes, pd.DataFrame):
+        raise TypeError("changes must be a DataFrame")
+    if changes.empty:
+        raise ValueError(
+            "change log must be non-empty for point-in-time reconstruction"
+        )
 
-    # ---- change log: closed intervals for removed (non-current) names ----
+    events = defaultdict(list)
+    change_dates: list[pd.Timestamp] = []
     if not changes.empty:
         ch = changes.copy()
-        # Flatten the MultiIndex header to (date, added, removed).
         cols = {}
         for c in ch.columns:
             label = " ".join(map(str, c)) if isinstance(c, tuple) else str(c)
             low = label.lower()
-            if "effective date" in low or low.strip() == "date":
+            words = low.split()
+            if "effective date" in low or (words and set(words) == {"date"}):
                 cols["date"] = c
             elif "added" in low and "ticker" in low:
                 cols["added"] = c
             elif "removed" in low and "ticker" in low:
                 cols["removed"] = c
-        if {"date", "added", "removed"} <= set(cols):
-            events = defaultdict(list)  # ticker -> list of (date, "add"|"remove")
-            for _, row in ch.iterrows():
-                d = pd.to_datetime(row[cols["date"]], errors="coerce")
-                if pd.isna(d):
-                    continue
-                add_t = _normalize_ticker(row[cols["added"]])
-                rem_t = _normalize_ticker(row[cols["removed"]])
-                if add_t:
-                    events[add_t].append((d, "add"))
-                if rem_t:
-                    events[rem_t].append((d, "remove"))
+        if changes.shape[0] and not {"date", "added", "removed"} <= set(cols):
+            raise ValueError("could not identify date/added/removed change-log columns")
+        for _, row in ch.iterrows():
+            d = pd.to_datetime(row[cols["date"]], errors="coerce", utc=True)
+            if pd.isna(d):
+                continue
+            d = pd.Timestamp(d).tz_localize(None).normalize()
+            change_dates.append(d)
+            add_t = _normalize_ticker(row[cols["added"]])
+            rem_t = _normalize_ticker(row[cols["removed"]])
+            if add_t:
+                events[add_t].append((d, "add"))
+            if rem_t:
+                events[rem_t].append((d, "remove"))
 
-            for tkr, evs in events.items():
-                if tkr in current_set:
-                    # Current tenure already captured via the open interval above;
-                    # only emit fully-closed PRIOR cycles (add followed by remove
-                    # that both precede the current tenure). Rare; skip for safety.
-                    continue
-                evs.sort()
-                open_start = None
-                for d, act in evs:
-                    if act == "add":
-                        open_start = d
-                    elif act == "remove":
-                        rows.append({
-                            "symbol": tkr,
-                            "start_date": open_start if open_start is not None else floor,
-                            "end_date": d,
-                        })
-                        open_start = None
-                # A trailing unmatched "add" for a non-current ticker means it was
-                # added then (per current table) is no longer listed -> treat as a
-                # short open-ended membership from that add to now is wrong, so we
-                # leave it out rather than fabricate an end date.
+    if not change_dates:
+        raise ValueError("change log contains no valid effective dates")
+    earliest_change = min(change_dates)
+
+    if floor is not None:
+        coverage_start = pd.to_datetime(floor, errors="coerce", utc=True)
+        if pd.isna(coverage_start):
+            raise ValueError("floor must be a valid timestamp")
+        coverage_start = coverage_start.tz_localize(None).normalize()
+        if coverage_start < earliest_change:
+            raise ValueError(
+                "floor cannot precede the earliest available change-log date"
+            )
+    else:
+        coverage_start = earliest_change
+
+    def closed_intervals(
+        ticker: str, cutoff: Optional[pd.Timestamp] = None
+    ) -> list[dict[str, object]]:
+        prior_events = [
+            (date, action)
+            for date, action in events.get(ticker, [])
+            if cutoff is None
+            or date < cutoff
+            or (date == cutoff and action == "remove")
+        ]
+        # Close a prior tenure before opening a new one on the same date.
+        prior_events.sort(key=lambda item: (item[0], 0 if item[1] == "remove" else 1))
+        out: list[dict[str, object]] = []
+        open_start: Optional[pd.Timestamp] = None
+        for date, action in prior_events:
+            if action == "add":
+                if open_start is None:
+                    open_start = date
+                continue
+            start = open_start if open_start is not None else coverage_start
+            start = max(start, coverage_start)
+            if start < date:
+                out.append(
+                    {"symbol": ticker, "start_date": start, "end_date": date}
+                )
+            open_start = None
+        return out
+
+    # ---- current members: prior closed cycles + current open tenure ----
+    cur = current.copy()
+    cur.columns = [str(c) for c in cur.columns]
+    sym_col = "Symbol"
+    if sym_col not in cur.columns:
+        raise ValueError("current constituents table has no Symbol column")
+    added_col = next((c for c in cur.columns if c.lower().startswith("date added")), None)
+    current_syms: dict[str, pd.Timestamp] = {}
+    for _, row in cur.iterrows():
+        sym = _normalize_ticker(row[sym_col])
+        if sym is None:
+            continue
+        start = (
+            pd.to_datetime(row[added_col], errors="coerce", utc=True)
+            if added_col
+            else pd.NaT
+        )
+        if pd.isna(start):
+            adds = [date for date, action in events.get(sym, []) if action == "add"]
+            start = max(adds) if adds else coverage_start
+        else:
+            start = pd.Timestamp(start).tz_localize(None)
+        start = max(pd.Timestamp(start).normalize(), coverage_start)
+        if sym in current_syms:
+            raise ValueError(f"duplicate current constituent {sym!r}")
+        current_syms[sym] = start
+
+    rows: list[dict[str, object]] = []
+    for symbol, start in current_syms.items():
+        rows.extend(closed_intervals(symbol, cutoff=start))
+        rows.append({"symbol": symbol, "start_date": start, "end_date": pd.NaT})
+
+    # ---- non-current names: emit only closed, source-supported tenures ----
+    for symbol in sorted(set(events) - set(current_syms)):
+        rows.extend(closed_intervals(symbol))
 
     frame = pd.DataFrame(rows, columns=["symbol", "start_date", "end_date"])
     return PITMembership(frame)

@@ -20,12 +20,15 @@ and lint. Run everything from the repo root.
   `generate_report.py --live-yfinance`; `validate_performance.py` requires
   `--live-yfinance`; `survivorship_demo.py` requires `--live-yfinance`;
   `paper_trade_cycle.py` requires either `--offline` or `--live-yfinance`.
-- CI (`.github/workflows/ci.yml`) runs ruff + pytest on Python 3.11/3.12 with
-  core deps only; optional extras are deliberately not installed there.
+- CI (`.github/workflows/ci.yml`) runs ruff + pytest with a 60% coverage floor
+  on Python 3.11-3.14 using core deps only; optional extras are deliberately not
+  installed there. Separate jobs execute all notebooks on deterministic
+  test-only fixtures and build/smoke-install the wheel.
 
 ## Working norms
 
-This repo is in a verified, audited state; keep it that way.
+Treat every change as unaudited until the relevant tests and invariants have
+been checked directly.
 - Keep the gates green: `ruff check .` and `pytest tests/ -q` must pass before a
   change is done (CI enforces both). When fixing a bug, add a regression test
   under `tests/` (see `tests/test_regression_guards.py` for the style: assert a
@@ -46,8 +49,9 @@ This repo is in a verified, audited state; keep it that way.
 Every component that emits weights validates them through one of two functions;
 which one depends on where it sits in the pipeline:
 
-- `enforce_weight_contract` (STRICT): float64 `(n_assets,)`, each in `[-1, 1]`,
-  sum `== 1.0` long-only or `== 0.0` market-neutral. This is the **allocation**
+- `enforce_weight_contract` (STRICT): float64 `(n_assets,)`; long-only weights
+  are in `[0, 1]` and sum to `1.0`, while market-neutral weights are in
+  `[-1, 1]` and sum to `0.0`. This is the **allocation**
   layer contract; `PortfolioOptimizer.optimize` applies it automatically, so
   subclasses only implement `_compute_weights` returning a raw vector that
   already satisfies the contract for the configured mode.
@@ -85,11 +89,13 @@ or vol-scaled book is NOT required to sum to 1. Violations raise
   if constructed without a `TransactionCostModel`. Slippage in that model is a
   flat per-trade rate; size/impact-aware costs live in
   `quantcortex/backtest/execution_models/market_impact.py`.
-- **Strict causality / PIT.** Factors and features use only past data;
-  `quantcortex/data/processors/pit_enforcer.py` keys fundamentals off
-  `announcement_date`, `quantcortex/data/processors/lookahead_detector.py` scans
-  for leakage, and `quantcortex/backtest/engines/walk_forward.py` applies a purge
-  + embargo gap.
+- **Causality / PIT controls.** Research code must use only information
+  available at the decision time. `pit_enforcer.py` validates fundamentals
+  against `announcement_date`; date-only records use strict-before matching,
+  while exact matches require observed intraday timestamps and an explicit
+  opt-in. The look-ahead tools are diagnostics, not proof that an arbitrary
+  pipeline is leakage-free; walk-forward purge/embargo controls only apply when
+  the caller actually uses that engine.
 - **Determinism.** `quantcortex/timing/hmm_regime.py` pins BLAS to one thread
   (threadpoolctl) around the HMM fit so backtests are bit-for-bit reproducible; a
   non-converged EM near a regime boundary otherwise flips under multithreaded
@@ -106,11 +112,18 @@ or vol-scaled book is NOT required to sum to 1. Violations raise
 `DataProvider` (quantcortex/data/providers/base.py): `fetch_ohlcv/
 fetch_fundamentals/fetch_macro`, canonical UTC-naive OHLCV schema. `Universe`
 (quantcortex/data/universe/base.py): point-in-time membership;
-`SP500Universe.from_wikipedia()` reconstructs real historical constituents
-(survivorship-safe membership). `Broker` (quantcortex/execution/brokers/
+`SP500Universe.from_wikipedia()` reconstructs historical constituents from the
+current Wikipedia change table, rejects dates before source coverage, and is
+still only an approximation. Named index classes do not silently select their
+survivorship-biased demo subsets. `Broker` (quantcortex/execution/brokers/
 base.py): `submit_order/get_positions/get_account`, adapters lazy-load their SDK.
 `OrderManager`: a NEW -> SUBMITTED -> FILLED state machine that validates the
 transition before mutating the order.
+
+The current Alpaca and IB adapters target deprecated/archived SDKs
+(`alpaca-trade-api` and `ib_insync`). Treat migration to `alpaca-py` and a
+maintained IB client, followed by authenticated conformance tests, as a release
+requirement rather than a cosmetic dependency update.
 
 ## Packaging
 
@@ -129,6 +142,6 @@ The strategies' Sharpe targets (1.10 / 0.9 in the README) are aspirational
 design goals, not measured claims. Do not tune toward a single backtest; record
 the true trial count for DSR/BHY analysis and report unfavorable results as-is.
 Every published run needs source, permission, date-window, adjustment, and input
-digest metadata. See PERFORMANCE.md. Source and docs are ASCII-only (no
-em-dashes, en-dashes, or arrows); the README directory-tree block is the one
-exception (box-drawing).
+digest metadata. See PERFORMANCE.md. Use ASCII punctuation in source and docs;
+the README directory-tree block and established proper-name diacritics are the
+only intentional exceptions.

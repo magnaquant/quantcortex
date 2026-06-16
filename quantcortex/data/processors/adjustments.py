@@ -34,6 +34,28 @@ class AdjustmentValidator:
     _PRICE_COLS = ("open", "high", "low", "close")
     _VOLUME_COLS = ("volume",)
 
+    @staticmethod
+    def _normalize_actions(
+        actions: Optional[pd.Series], name: str, *, strictly_positive: bool
+    ) -> Optional[pd.Series]:
+        if actions is None or len(actions) == 0:
+            return None
+        series = pd.Series(actions).copy()
+        index = pd.to_datetime(series.index, errors="coerce", utc=True)
+        if index.isna().any():
+            raise AdjustmentError(f"{name} contains invalid event dates")
+        series.index = index.tz_localize(None)
+        if series.index.has_duplicates:
+            raise AdjustmentError(f"{name} contains duplicate event dates")
+        series = pd.to_numeric(series, errors="coerce")
+        if series.isna().any() or not np.all(np.isfinite(series.to_numpy())):
+            raise AdjustmentError(f"{name} must contain only finite numeric values")
+        if strictly_positive and (series <= 0.0).any():
+            raise AdjustmentError(f"{name} ratios must be strictly positive")
+        if not strictly_positive and (series < 0.0).any():
+            raise AdjustmentError(f"{name} amounts must be non-negative")
+        return series.sort_index()
+
     def _split_factors(
         self, index: pd.DatetimeIndex, splits: Optional[pd.Series]
     ) -> pd.Series:
@@ -45,14 +67,11 @@ class AdjustmentValidator:
         date.
         """
         factor = pd.Series(1.0, index=index)
-        if splits is None or len(splits) == 0:
+        splits = self._normalize_actions(splits, "splits", strictly_positive=True)
+        if splits is None:
             return factor
-        splits = pd.Series(splits).copy()
-        splits.index = pd.to_datetime(splits.index)
-        splits = splits[(splits.values != 0) & (splits.values != 1.0)]
+        splits = splits[splits != 1.0]
         for split_date, ratio in splits.items():
-            if ratio == 0:
-                continue
             # Prices strictly before the split date are divided by the ratio.
             mask = index < pd.Timestamp(split_date)
             factor[mask] = factor[mask] / float(ratio)
@@ -71,22 +90,27 @@ class AdjustmentValidator:
         multiplicatively across all dividends after each date.
         """
         factor = pd.Series(1.0, index=index)
-        if dividends is None or len(dividends) == 0:
+        dividends = self._normalize_actions(
+            dividends, "dividends", strictly_positive=False
+        )
+        if dividends is None:
             return factor
-        dividends = pd.Series(dividends).copy()
-        dividends.index = pd.to_datetime(dividends.index)
-        dividends = dividends[dividends.values != 0]
+        dividends = dividends[dividends != 0.0]
         for ex_date, amount in dividends.items():
             ex_ts = pd.Timestamp(ex_date)
             prior = close[close.index < ex_ts]
             if len(prior) == 0:
-                continue
+                raise AdjustmentError(
+                    f"dividend on {ex_ts.date()} has no prior close in the input"
+                )
             prior_close = float(prior.iloc[-1])
-            if prior_close <= 0:
-                continue
+            if not np.isfinite(prior_close) or prior_close <= 0:
+                raise AdjustmentError("dividend prior close must be finite and positive")
             ratio = 1.0 - float(amount) / prior_close
             if ratio <= 0:
-                continue
+                raise AdjustmentError(
+                    f"dividend on {ex_ts.date()} is not smaller than prior close"
+                )
             mask = index < ex_ts
             factor[mask] = factor[mask] * ratio
         return factor
@@ -113,17 +137,41 @@ class AdjustmentValidator:
         dividends:
             Series indexed by ex-dividend date with the cash amount per share.
         """
-        if not isinstance(ohlcv.index, pd.DatetimeIndex):
-            df = ohlcv.copy()
-            df.index = pd.to_datetime(df.index)
-        else:
-            df = ohlcv.copy()
+        if not isinstance(ohlcv, pd.DataFrame) or ohlcv.empty:
+            raise AdjustmentError("ohlcv must be a non-empty DataFrame")
+        df = ohlcv.copy()
+        index = pd.to_datetime(df.index, errors="coerce", utc=True)
+        if index.isna().any():
+            raise AdjustmentError("ohlcv contains invalid timestamps")
+        df.index = index.tz_localize(None)
         df = df.sort_index()
+        if df.index.has_duplicates:
+            raise AdjustmentError("ohlcv contains duplicate timestamps")
         index = df.index
 
         if "close" not in df.columns:
             raise AdjustmentError("apply_adjustments requires a 'close' column")
-        raw_close = df["close"].astype(float)
+        numeric_cols = [
+            col for col in (*self._PRICE_COLS, *self._VOLUME_COLS) if col in df.columns
+        ]
+        df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
+        if df[numeric_cols].isna().any().any() or not np.all(
+            np.isfinite(df[numeric_cols].to_numpy(dtype=float))
+        ):
+            raise AdjustmentError("ohlcv numeric fields must be finite and complete")
+        for col in self._PRICE_COLS:
+            if col in df.columns and (df[col] <= 0.0).any():
+                raise AdjustmentError(f"{col} prices must be strictly positive")
+        if "volume" in df.columns and (df["volume"] < 0.0).any():
+            raise AdjustmentError("volume must be non-negative")
+        if {"high", "low"} <= set(df.columns):
+            comparable = [col for col in ("open", "low", "close") if col in df.columns]
+            if (df["high"] < df[comparable].max(axis=1)).any():
+                raise AdjustmentError("high is below another observed price field")
+            comparable = [col for col in ("open", "high", "close") if col in df.columns]
+            if (df["low"] > df[comparable].min(axis=1)).any():
+                raise AdjustmentError("low is above another observed price field")
+        raw_close = df["close"].copy()
 
         split_factor = self._split_factors(index, splits)
         div_factor = self._dividend_factors(index, raw_close, dividends)
@@ -161,20 +209,39 @@ class AdjustmentValidator:
         AdjustmentError
             If the relative discrepancy exceeds ``tol`` on any date.
         """
-        raw = pd.Series(raw_close).astype(float).copy()
-        adj = pd.Series(adj_close).astype(float).copy()
-        raw.index = pd.to_datetime(raw.index)
-        adj.index = pd.to_datetime(adj.index)
-        common = raw.index.intersection(adj.index).sort_values()
+        if not np.isfinite(tol) or tol < 0.0:
+            raise ValueError("tol must be finite and non-negative")
+        raw = pd.to_numeric(pd.Series(raw_close).copy(), errors="coerce")
+        adj = pd.to_numeric(pd.Series(adj_close).copy(), errors="coerce")
+        raw.index = pd.to_datetime(raw.index, errors="coerce", utc=True).tz_localize(
+            None
+        )
+        adj.index = pd.to_datetime(adj.index, errors="coerce", utc=True).tz_localize(
+            None
+        )
+        if raw.index.isna().any() or adj.index.isna().any():
+            raise AdjustmentError("raw_close and adj_close require valid timestamps")
+        if raw.index.has_duplicates or adj.index.has_duplicates:
+            raise AdjustmentError("raw_close and adj_close require unique timestamps")
+        raw = raw.sort_index()
+        adj = adj.sort_index()
+        if not raw.index.equals(adj.index):
+            raise AdjustmentError(
+                "raw_close and adj_close must have identical timestamp coverage"
+            )
+        common = raw.index
         if len(common) == 0:
-            raise AdjustmentError("raw_close and adj_close share no dates")
-        raw = raw.reindex(common)
-        adj = adj.reindex(common)
+            raise AdjustmentError("raw_close and adj_close must not be empty")
 
         with np.errstate(divide="ignore", invalid="ignore"):
             implied = adj / raw
-        if implied.isna().any() or (raw <= 0).any():
-            raise AdjustmentError("non-positive or missing raw close prices")
+        if (
+            implied.isna().any()
+            or not np.all(np.isfinite(implied.to_numpy()))
+            or (raw <= 0).any()
+            or (adj <= 0).any()
+        ):
+            raise AdjustmentError("raw and adjusted closes must be finite and positive")
 
         expected = self._split_factors(common, splits) * self._dividend_factors(
             common, raw, dividends
@@ -215,15 +282,32 @@ class AdjustmentValidator:
             Minimum absolute overnight return to flag (default ``0.30``).  Ordinary
             daily equity moves are far smaller, so this isolates split-sized jumps.
         """
+        if not isinstance(prices, pd.DataFrame) or prices.empty:
+            raise ValueError("prices must be a non-empty DataFrame")
+        if prices.columns.has_duplicates or prices.shape[1] == 0:
+            raise ValueError("prices must have unique, non-empty columns")
         df = prices.copy()
-        if not isinstance(df.index, pd.DatetimeIndex):
-            df.index = pd.to_datetime(df.index)
+        index = pd.to_datetime(df.index, errors="coerce", utc=True)
+        if index.isna().any():
+            raise ValueError("prices contain invalid timestamps")
+        df.index = index.tz_localize(None)
         df = df.sort_index()
+        if df.index.has_duplicates:
+            raise ValueError("prices timestamps must be unique")
+        if not np.isfinite(jump_threshold) or jump_threshold <= 0.0:
+            raise ValueError("jump_threshold must be finite and positive")
+
+        df = df.apply(pd.to_numeric, errors="coerce")
+        values = df.to_numpy(dtype=float)
+        if np.isinf(values).any():
+            raise ValueError("prices must not contain infinite values")
+        if (df.notna() & (df <= 0.0)).any(axis=None):
+            raise ValueError("observed prices must be strictly positive")
 
         flagged: Dict[str, List[pd.Timestamp]] = {}
         for symbol in df.columns:
-            series = df[symbol].astype(float)
-            rets = series.pct_change()
+            series = df[symbol]
+            rets = series.pct_change(fill_method=None)
             # A clean split shows a near-exact fractional jump; require both a
             # large magnitude and that it is "split-shaped" (not just volatile).
             suspicious = rets[rets.abs() >= jump_threshold]

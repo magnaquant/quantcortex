@@ -15,6 +15,7 @@ import os
 import re
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 __all__ = ["TimescaleStore"]
@@ -35,6 +36,73 @@ def _safe_table(table: str) -> str:
             f"[schema.]name with only letters, digits and underscores"
         )
     return table
+
+
+def _prepare_ohlcv(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """Normalize and validate one symbol's OHLCV batch for persistence."""
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError("df must be a pandas DataFrame")
+    if not isinstance(symbol, str) or not symbol.strip():
+        raise ValueError("symbol must be a non-empty string")
+    if df.empty:
+        return pd.DataFrame()
+
+    out = df.copy()
+    if "time" not in out.columns:
+        out = out.reset_index()
+        first = out.columns[0]
+        if first != "time":
+            out = out.rename(columns={first: "time"})
+    if "close" not in out.columns:
+        raise ValueError("OHLCV writes require a close column")
+    out["time"] = pd.to_datetime(out["time"], errors="coerce", utc=True)
+    if out["time"].isna().any():
+        raise ValueError("OHLCV timestamps must be valid")
+    if out["time"].duplicated().any():
+        raise ValueError("OHLCV batch contains duplicate timestamps")
+
+    numeric = [
+        col
+        for col in ("open", "high", "low", "close", "adj_close", "volume")
+        if col in out.columns
+    ]
+    out[numeric] = out[numeric].apply(pd.to_numeric, errors="coerce")
+    values = out[numeric].to_numpy(dtype=float)
+    if np.isinf(values).any():
+        raise ValueError("OHLCV numeric fields must not contain infinities")
+    if out["close"].isna().any():
+        raise ValueError("close prices must be present on every OHLCV row")
+    for col in ("open", "high", "low", "close", "adj_close"):
+        if col in out.columns and (out[col].dropna() <= 0.0).any():
+            raise ValueError(f"{col} prices must be positive when present")
+    if "volume" in out.columns and (out["volume"].dropna() < 0.0).any():
+        raise ValueError("volume must be non-negative when present")
+    if {"high", "low"} <= set(out.columns):
+        invalid = out[["high", "low"]].dropna()
+        if (invalid["high"] < invalid["low"]).any():
+            raise ValueError("high must be greater than or equal to low")
+    for reference in ("open", "close"):
+        if {"high", reference} <= set(out.columns):
+            invalid = out[["high", reference]].dropna()
+            if (invalid["high"] < invalid[reference]).any():
+                raise ValueError(f"high must be at least {reference}")
+        if {"low", reference} <= set(out.columns):
+            invalid = out[["low", reference]].dropna()
+            if (invalid["low"] > invalid[reference]).any():
+                raise ValueError(f"low must be at most {reference}")
+
+    out["symbol"] = symbol.strip()
+    keep = [
+        "time",
+        "symbol",
+        "open",
+        "high",
+        "low",
+        "close",
+        "adj_close",
+        "volume",
+    ]
+    return out[[col for col in keep if col in out.columns]].sort_values("time")
 
 
 class TimescaleStore:
@@ -90,6 +158,7 @@ class TimescaleStore:
                 high        DOUBLE PRECISION,
                 low         DOUBLE PRECISION,
                 close       DOUBLE PRECISION,
+                adj_close   DOUBLE PRECISION,
                 volume      DOUBLE PRECISION,
                 PRIMARY KEY (symbol, time)
             );
@@ -99,8 +168,12 @@ class TimescaleStore:
             f"SELECT create_hypertable('{table}', 'time', "
             f"if_not_exists => TRUE, migrate_data => TRUE);"
         )
+        add_adj_close_sql = sqlalchemy.text(
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS adj_close DOUBLE PRECISION;"
+        )
         with engine.begin() as conn:
             conn.execute(create_sql)
+            conn.execute(add_adj_close_sql)
             conn.execute(hypertable_sql)
 
     def write_ohlcv(
@@ -113,21 +186,28 @@ class TimescaleStore:
         number of rows written.
         """
         table = _safe_table(table)
-        engine = self.connect()
-        out = df.copy()
-        if "time" not in out.columns:
-            out = out.reset_index()
-            # Normalize the index column name to 'time'.
-            first = out.columns[0]
-            if first != "time":
-                out = out.rename(columns={first: "time"})
-        out["symbol"] = symbol
-        out["time"] = pd.to_datetime(out["time"])
+        out = _prepare_ohlcv(df, symbol)
+        if out.empty:
+            return 0
+        import sqlalchemy  # lazy optional import
 
-        keep = ["time", "symbol", "open", "high", "low", "close", "volume"]
-        cols = [c for c in keep if c in out.columns]
-        out = out[cols]
-        out.to_sql(table, engine, if_exists="append", index=False, method="multi")
+        engine = self.connect()
+        cols = list(out.columns)
+        placeholders = ", ".join(f":{col}" for col in cols)
+        updates = [col for col in cols if col not in {"time", "symbol"}]
+        conflict = (
+            "DO UPDATE SET "
+            + ", ".join(f"{col} = EXCLUDED.{col}" for col in updates)
+            if updates
+            else "DO NOTHING"
+        )
+        statement = sqlalchemy.text(
+            f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders}) "
+            f"ON CONFLICT (symbol, time) {conflict}"
+        )
+        records = out.astype(object).where(pd.notna(out), None).to_dict("records")
+        with engine.begin() as conn:
+            conn.execute(statement, records)
         return len(out)
 
     def read_ohlcv(
@@ -141,18 +221,25 @@ class TimescaleStore:
 
         Returns a DataFrame indexed by ``time`` and ordered ascending.
         """
+        table = _safe_table(table)
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise ValueError("symbol must be a non-empty string")
+        symbol = symbol.strip()
+        start_ts = self._coerce_bound(start, "start")
+        end_ts = self._coerce_bound(end, "end")
+        if start_ts is not None and end_ts is not None and start_ts > end_ts:
+            raise ValueError("start must be before or equal to end")
         import sqlalchemy  # lazy optional import
 
-        table = _safe_table(table)
         engine = self.connect()
         clauses = ["symbol = :symbol"]
         params: dict = {"symbol": symbol}
-        if start is not None:
+        if start_ts is not None:
             clauses.append("time >= :start")
-            params["start"] = pd.Timestamp(start).to_pydatetime()
-        if end is not None:
+            params["start"] = start_ts.to_pydatetime()
+        if end_ts is not None:
             clauses.append("time <= :end")
-            params["end"] = pd.Timestamp(end).to_pydatetime()
+            params["end"] = end_ts.to_pydatetime()
         where = " AND ".join(clauses)
         query = sqlalchemy.text(
             f"SELECT * FROM {table} WHERE {where} ORDER BY time ASC"
@@ -162,3 +249,19 @@ class TimescaleStore:
         if "time" in frame.columns:
             frame = frame.set_index("time")
         return frame
+
+    @staticmethod
+    def _coerce_bound(value, name: str) -> Optional[pd.Timestamp]:
+        if value is None:
+            return None
+        try:
+            timestamp = pd.Timestamp(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be a valid timestamp") from exc
+        if pd.isna(timestamp):
+            raise ValueError(f"{name} must be a valid timestamp")
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.tz_localize("UTC")
+        else:
+            timestamp = timestamp.tz_convert("UTC")
+        return timestamp

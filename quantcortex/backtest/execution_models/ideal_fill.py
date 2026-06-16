@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import abc
 
+import numpy as np
 import pandas as pd
 
 __all__ = ["ExecutionModel", "IdealFill"]
@@ -86,7 +87,13 @@ class IdealFill(ExecutionModel):
         **kw,
     ) -> float:
         """Return ``bar['close']`` unchanged (no slippage)."""
-        return float(bar["close"])
+        quantity = float(target_qty)
+        close = float(bar["close"])
+        if not np.isfinite(quantity):
+            raise ValueError("target_qty must be finite")
+        if not np.isfinite(close) or close <= 0.0:
+            raise ValueError("bar close must be finite and positive")
+        return close
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
         return "IdealFill()"

@@ -1,12 +1,9 @@
 """S&P 500 investable universe.
 
 .. warning::
-   The bundled membership is a **static snapshot** of large-cap S&P 500 names,
-   all marked active from 2010-01-01 with no end date.  It is intended for demos
-   and smoke tests only.  Using a static present-day membership for historical
-   research introduces **survivorship bias**: companies that were dropped from
-   the index (acquired, bankrupt, demoted) are missing, which inflates backtest
-   returns.
+   ``STATIC_SP500`` is only a representative demo subset, not the S&P 500 and
+   not point-in-time data. It is never selected implicitly. Opting into it marks
+   every name active from 2010-01-01 and is suitable only for smoke tests.
 
    For survivorship-safe research, supply a real point-in-time constituents file
    via ``SP500Universe(membership_csv="path/to/constituents.csv")``.  The CSV
@@ -17,6 +14,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import List, Optional
 
@@ -26,7 +24,7 @@ from quantcortex.data.universe.base import PITMembership, Universe
 
 __all__ = ["SP500Universe", "STATIC_SP500"]
 
-# Representative large-cap S&P 500 tickers (static snapshot; not point-in-time).
+# Representative large-cap S&P 500 demo subset; not point-in-time membership.
 STATIC_SP500: List[str] = [
     "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "GOOG", "META", "BRK-B", "JPM",
     "TSLA", "LLY", "V", "UNH", "XOM", "MA", "JNJ", "AVGO", "PG", "HD", "COST",
@@ -40,11 +38,16 @@ STATIC_SP500: List[str] = [
 
 
 class SP500Universe(Universe):
-    """S&P 500 universe backed by a CSV or a bundled static snapshot."""
+    """S&P 500 universe backed by explicit point-in-time membership data."""
 
     name = "sp500"
 
-    def __init__(self, membership_csv: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        membership_csv: Optional[str] = None,
+        *,
+        allow_static_demo: bool = False,
+    ) -> None:
         """Initialize the universe.
 
         Parameters
@@ -52,9 +55,14 @@ class SP500Universe(Universe):
         membership_csv:
             Optional path to a point-in-time constituents CSV with columns
             ``symbol,start_date,end_date``.  When omitted, the bundled static
-            snapshot is used (see module docstring for the survivorship caveat).
+            data is required unless ``allow_static_demo=True``.
+        allow_static_demo:
+            Explicitly opt into the incomplete, survivorship-biased demo subset.
         """
+        if not isinstance(allow_static_demo, bool):
+            raise TypeError("allow_static_demo must be a boolean")
         self._membership_csv = membership_csv
+        self._allow_static_demo = allow_static_demo
         self._membership: Optional[PITMembership] = None
 
     def _build_static(self) -> PITMembership:
@@ -80,7 +88,7 @@ class SP500Universe(Universe):
 
         Fetches the current constituents plus the dated additions/removals and
         reconstructs point-in-time membership (see
-        :mod:`data.universe.sp500_wikipedia`).  Requires network and ``lxml``.
+        :mod:`quantcortex.data.universe.sp500_wikipedia`).  Requires network and ``lxml``.
 
         Parameters
         ----------
@@ -107,6 +115,17 @@ class SP500Universe(Universe):
         if self._membership is None:
             if self._membership_csv is not None:
                 self._membership = self._load_csv(self._membership_csv)
-            else:
+            elif self._allow_static_demo:
+                warnings.warn(
+                    "Using the incomplete, survivorship-biased STATIC_SP500 "
+                    "demo subset.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
                 self._membership = self._build_static()
+            else:
+                raise ValueError(
+                    "SP500Universe requires membership_csv or from_wikipedia(); "
+                    "use allow_static_demo=True only for smoke tests"
+                )
         return self._membership

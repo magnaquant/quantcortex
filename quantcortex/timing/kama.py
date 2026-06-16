@@ -5,7 +5,7 @@ KAMA (Perry Kaufman) is a moving average whose smoothing constant adapts to the
 tracks closely (fast); when price chops sideways the average lags heavily
 (slow), filtering out noise.
 
-Definitions (all strictly causal - value at ``t`` uses only data up to ``t``):
+Definitions (value at ``t`` uses only data up to ``t``):
 
 * **Efficiency Ratio**
   ``ER_t = |P_t - P_{t-er_window}| / sum_{i=t-er_window+1..t} |P_i - P_{i-1}|``
@@ -17,7 +17,8 @@ Definitions (all strictly causal - value at ``t`` uses only data up to ``t``):
 
 The overlay gates exposure on price-vs-KAMA: below the line is treated as a
 down-trend and the book is scaled flat; at/above the line exposure passes
-through.
+through. A signal computed with the close at ``t`` must execute after that
+close, not at the same close.
 """
 
 from __future__ import annotations
@@ -46,9 +47,9 @@ class KAMA:
     """
 
     def __init__(self, er_window: int = 10, fast: int = 2, slow: int = 30) -> None:
-        if er_window < 1:
+        if int(er_window) != er_window or er_window < 1:
             raise ValueError("er_window must be >= 1")
-        if fast < 1 or slow < 1:
+        if int(fast) != fast or int(slow) != slow or fast < 1 or slow < 1:
             raise ValueError("fast and slow must be >= 1")
         if fast >= slow:
             raise ValueError("fast period must be smaller than slow period")
@@ -68,6 +69,8 @@ class KAMA:
         series = self._as_series(prices)
         p = series.to_numpy(dtype=np.float64)
         n = p.size
+        if not np.all(np.isfinite(p)) or np.any(p <= 0.0):
+            raise ValueError("prices must contain only finite, positive values")
 
         kama = np.full(n, np.nan, dtype=np.float64)
         if n == 0:
@@ -101,13 +104,15 @@ class KAMA:
         return pd.Series(kama, index=series.index, name="kama")
 
     def trend_signal(self, prices: pd.Series) -> pd.Series:
-        """Binary trend signal in {0, 1}: 1 when price > KAMA, else 0.
+        """Binary trend signal in {0, 1}: 1 when price >= KAMA, else 0.
 
         ``NaN`` KAMA values (insufficient history) map to 0 (no trend / flat).
         """
         series = self._as_series(prices)
         kama = self.compute(series)
-        signal = (series.to_numpy(dtype=np.float64) > kama.to_numpy(dtype=np.float64)).astype(int)
+        signal = (
+            series.to_numpy(dtype=np.float64) >= kama.to_numpy(dtype=np.float64)
+        ).astype(int)
         # Where KAMA is undefined, force flat (0).
         signal = np.where(np.isnan(kama.to_numpy()), 0, signal)
         return pd.Series(signal, index=series.index, name="kama_trend")
@@ -130,7 +135,9 @@ class KAMA:
 
         Result is validated via :func:`enforce_exposure_contract`.
         """
-        w = np.asarray(weights, dtype=np.float64).ravel()
+        w = np.asarray(weights, dtype=np.float64)
+        if w.ndim != 1 or w.size == 0 or not np.all(np.isfinite(w)):
+            raise ValueError("weights must be a non-empty finite 1-D vector")
         gates = self._latest_gates(prices, n_assets=w.size)
         gated = w * gates
 
@@ -150,6 +157,10 @@ class KAMA:
         prices = self._coerce_prices(prices)
 
         if isinstance(prices, pd.DataFrame):
+            if prices.empty:
+                raise ValueError("prices DataFrame must be non-empty")
+            if not prices.columns.is_unique:
+                raise ValueError("prices columns must be unique")
             gates = np.array(
                 [int(self.trend_signal(prices[col]).iloc[-1]) for col in prices.columns],
                 dtype=np.float64,
@@ -172,10 +183,18 @@ class KAMA:
         if isinstance(prices, (pd.Series, pd.DataFrame)):
             return prices
         if isinstance(prices, np.ndarray):
-            return pd.DataFrame(prices) if prices.ndim == 2 else pd.Series(prices.ravel())
+            if prices.ndim == 2:
+                return pd.DataFrame(prices)
+            if prices.ndim == 1:
+                return pd.Series(prices)
+            raise ValueError("prices array must be 1-D or 2-D")
         if isinstance(prices, (list, tuple)):
             arr = np.asarray(prices, dtype=np.float64)
-            return pd.DataFrame(arr) if arr.ndim == 2 else pd.Series(arr.ravel())
+            if arr.ndim == 2:
+                return pd.DataFrame(arr)
+            if arr.ndim == 1:
+                return pd.Series(arr)
+            raise ValueError("prices must be 1-D or 2-D")
 
         ctx_prices = getattr(prices, "prices", None)
         if ctx_prices is not None:
@@ -190,7 +209,9 @@ class KAMA:
         """Coerce a 1-D price input to a float64 Series."""
         if isinstance(prices, pd.Series):
             return prices.astype(np.float64)
-        arr = np.asarray(prices, dtype=np.float64).ravel()
+        arr = np.asarray(prices, dtype=np.float64)
+        if arr.ndim != 1:
+            raise ValueError("prices must be a 1-D series")
         return pd.Series(arr)
 
     @staticmethod

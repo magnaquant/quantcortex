@@ -47,7 +47,20 @@ class Tearsheet:
     ) -> None:
         if not isinstance(returns, pd.Series):
             returns = pd.Series(returns)
-        self.returns = returns.dropna().astype(float)
+        clean = returns.dropna().astype(float)
+        if not np.all(np.isfinite(clean.to_numpy(dtype=float))):
+            raise ValueError("returns must contain only finite values after dropping NaN")
+        if (clean < -1.0).any():
+            raise ValueError("simple returns cannot be less than -100%")
+        if isinstance(periods_per_year, (bool, np.bool_)):
+            raise TypeError("periods_per_year must be numeric, not boolean")
+        if isinstance(risk_free, (bool, np.bool_)):
+            raise TypeError("risk_free must be numeric, not boolean")
+        if not np.isfinite(periods_per_year) or periods_per_year <= 0.0:
+            raise ValueError("periods_per_year must be finite and positive")
+        if not np.isfinite(risk_free):
+            raise ValueError("risk_free must be finite")
+        self.returns = clean
         self.periods_per_year = float(periods_per_year)
         self.risk_free = float(risk_free)
 
@@ -56,6 +69,10 @@ class Tearsheet:
     # ------------------------------------------------------------------ #
     def equity_curve(self, starting_value: float = 1.0) -> pd.Series:
         """Cumulative compounded equity curve (growth of ``starting_value``)."""
+        if isinstance(starting_value, (bool, np.bool_)):
+            raise TypeError("starting_value must be numeric, not boolean")
+        if not np.isfinite(starting_value) or starting_value <= 0.0:
+            raise ValueError("starting_value must be finite and positive")
         return starting_value * (1.0 + self.returns).cumprod()
 
     def drawdown_series(self) -> pd.Series:
@@ -63,11 +80,15 @@ class Tearsheet:
         if self.returns.empty:
             return pd.Series(dtype=float)
         equity = (1.0 + self.returns).cumprod()
-        peak = equity.cummax()
+        # Seed the running peak with starting NAV. Otherwise a loss in the first
+        # period incorrectly appears as zero drawdown.
+        peak = equity.cummax().clip(lower=1.0)
         return equity / peak - 1.0
 
     def rolling_sharpe(self, window: int = 126) -> pd.Series:
         """Annualized rolling Sharpe ratio over a trailing ``window``."""
+        if isinstance(window, (bool, np.bool_)) or int(window) != window or window < 2:
+            raise ValueError("window must be an integer >= 2")
         if self.returns.empty:
             return pd.Series(dtype=float)
         excess = self.returns - self.risk_free
@@ -158,9 +179,9 @@ class Tearsheet:
         if self.returns.empty:
             return float("nan"), float("nan")
         q = self.returns.quantile(1.0 - level)
-        var = -float(q)
+        var = max(-float(q), 0.0)
         tail = self.returns[self.returns <= q]
-        cvar = -float(tail.mean()) if not tail.empty else var
+        cvar = max(-float(tail.mean()), 0.0) if not tail.empty else var
         return var, cvar
 
     def _tail_ratio(self) -> float:

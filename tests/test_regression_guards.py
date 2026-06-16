@@ -13,6 +13,7 @@ import pandas as pd
 import pytest
 
 from quantcortex.backtest.costs.transaction_costs import TransactionCostModel
+from quantcortex.backtest.engines.event_driven import EventDrivenBacktest
 from quantcortex.backtest.engines.vectorized import VectorizedBacktest
 from quantcortex.backtest.engines.walk_forward import WalkForwardOptimizer
 from quantcortex.backtest.validation.deflated_sharpe import (
@@ -30,13 +31,16 @@ from quantcortex.portfolio.hrp import HierarchicalRiskParity
 def test_vectorized_engine_accounting_hand_example():
     """Weights set at close t earn t->t+1; the rebalance cost is charged once.
 
-    Asset A rises +10%/day; a single day-0 rebalance buys 100% A at a 10 bps
-    one-way cost. Expected net returns are [-0.0010, +0.10, +0.10, +0.10] and
-    final equity (1-0.001)*1.1**3.
+    Asset A rises +10%/day. A pre-sample decision executes on day 0 and buys
+    100% A at a 10 bps one-way cost. Expected net returns are
+    [-0.0010, +0.10, +0.10, +0.10] and final equity
+    (1-0.001)*1.1**3.
     """
     dates = pd.bdate_range("2024-01-01", periods=4)
     prices = pd.DataFrame({"A": [100.0, 110.0, 121.0, 133.1], "B": [100.0] * 4}, index=dates)
-    weights = pd.DataFrame({"A": [1.0], "B": [0.0]}, index=[dates[0]])
+    weights = pd.DataFrame(
+        {"A": [1.0], "B": [0.0]}, index=[dates[0] - pd.Timedelta(days=1)]
+    )
     cm = TransactionCostModel(commission=0.001, slippage=0.0, tax=0.0)
 
     res = VectorizedBacktest(cm, capital=1.0).run(weights, prices)
@@ -58,6 +62,36 @@ def test_vectorized_empty_weights_is_all_cash():
         pd.DataFrame(columns=["A", "B"]), prices
     )
     assert res.equity_curve.iloc[-1] == pytest.approx(1000.0)
+
+
+def test_vectorized_cost_uses_current_pretrade_nav_denominator():
+    dates = pd.bdate_range("2024-01-01", periods=2)
+    prices = pd.DataFrame({"A": [100.0, 110.0]}, index=dates)
+    weights = pd.DataFrame(
+        {"A": [1.0, 0.0]},
+        index=[dates[0] - pd.Timedelta(days=1), dates[0]],
+    )
+    model = TransactionCostModel(commission=0.01, slippage=0.0, tax=0.0)
+
+    result = VectorizedBacktest(model, capital=1.0).run(weights, prices)
+
+    assert result.gross_returns.iloc[1] == pytest.approx(0.10)
+    assert result.costs.iloc[1] == pytest.approx(0.011)
+    assert result.returns.iloc[1] == pytest.approx(0.089)
+    assert result.equity_curve.iloc[-1] == pytest.approx(0.99 * 1.10 * 0.99)
+
+
+@pytest.mark.parametrize("engine", [VectorizedBacktest, EventDrivenBacktest])
+def test_backtest_engines_reject_excess_gross_targets(engine):
+    dates = pd.bdate_range("2024-01-01", periods=3)
+    prices = pd.DataFrame(
+        {"A": [100.0, 101.0, 102.0], "B": [100.0, 99.0, 98.0]},
+        index=dates,
+    )
+    weights = pd.DataFrame({"A": [1.0], "B": [0.5]}, index=[dates[0]])
+
+    with pytest.raises(ValueError, match="gross exposure"):
+        engine(TransactionCostModel()).run(weights, prices)
 
 
 # --------------------------------------------------------------------------- #

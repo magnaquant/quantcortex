@@ -48,10 +48,17 @@ class FactorExposureLimiter:
         *,
         factors: Optional[Sequence[str]] = None,
     ) -> None:
-        if max_exposure < 0:
+        if isinstance(max_exposure, (bool, np.bool_)):
+            raise TypeError("max_exposure must be numeric, not boolean")
+        if not np.isfinite(max_exposure) or max_exposure < 0:
             raise ValueError("max_exposure must be non-negative.")
         self.max_exposure = float(max_exposure)
         self.factors = list(factors) if factors is not None else None
+        if self.factors is not None and (
+            len(set(self.factors)) != len(self.factors)
+            or any(not isinstance(f, str) or not f for f in self.factors)
+        ):
+            raise ValueError("factors must contain unique, non-empty names")
         self.last_exposures: Optional[pd.Series] = None
 
     # ------------------------------------------------------------------ #
@@ -77,7 +84,9 @@ class FactorExposureLimiter:
         pandas.Series
             Exposure per factor, indexed by factor name.
         """
-        w = np.asarray(weights, dtype=np.float64).ravel()
+        w = np.asarray(weights, dtype=np.float64)
+        if w.ndim != 1 or w.size == 0 or not np.all(np.isfinite(w)):
+            raise ValueError("weights must be a non-empty finite 1-D vector")
         if loadings.shape[0] != w.size:
             raise ValueError(
                 f"weights length {w.size} does not match loadings rows "
@@ -85,11 +94,23 @@ class FactorExposureLimiter:
             )
         cols = self._selected_columns(loadings)
         L = loadings[cols].to_numpy(dtype=np.float64)
+        if not np.all(np.isfinite(L)):
+            raise ValueError("loadings must contain only finite values")
         exposures = L.T @ w
         return pd.Series(exposures, index=cols, name="factor_exposure")
 
     def _selected_columns(self, loadings: pd.DataFrame) -> list:
         """Resolve which factor columns to police for this call."""
+        if not isinstance(loadings, pd.DataFrame):
+            raise TypeError("loadings must be a pandas DataFrame")
+        if loadings.shape[1] == 0:
+            raise ValueError("loadings must contain at least one factor column")
+        if not loadings.columns.is_unique:
+            raise ValueError("loadings factor columns must be unique")
+        if any(not isinstance(column, str) or not column for column in loadings.columns):
+            raise ValueError("loadings factor columns must be non-empty strings")
+        if not loadings.index.is_unique:
+            raise ValueError("loadings asset index must be unique")
         if self.factors is None:
             return list(loadings.columns)
         missing = [f for f in self.factors if f not in loadings.columns]
@@ -144,18 +165,19 @@ class FactorExposureLimiter:
         validated via :func:`enforce_exposure_contract`.  The validator's
         gross-cap is sized to the input so a benign no-op still passes.
         """
-        w = np.asarray(weights, dtype=np.float64).ravel()
-        # Operate on a book that already satisfies the per-asset [-1, 1]
-        # contract.  For an in-spec overlay input this is a no-op; it only
-        # matters for a malformed input, and it keeps the two return paths
-        # consistent (the no-offending-factor path must not hand back an
-        # out-of-box vector that the contract validator would then reject).
-        w = np.clip(w, -1.0, 1.0)
+        w = np.asarray(weights, dtype=np.float64)
+        if w.ndim != 1 or w.size == 0 or not np.all(np.isfinite(w)):
+            raise ValueError("weights must be a non-empty finite 1-D vector")
+        if np.any(np.abs(w) > 1.0 + 1e-9):
+            raise ValueError("weights must already satisfy the per-asset [-1, 1] box")
+        if loadings.shape[0] != w.size:
+            raise ValueError("loadings rows must match weights length")
         cols = self._selected_columns(loadings)
         L_all = loadings[cols].to_numpy(dtype=np.float64)
+        if not np.all(np.isfinite(L_all)):
+            raise ValueError("loadings must contain only finite values")
 
         exposures = L_all.T @ w
-        self.last_exposures = pd.Series(exposures, index=cols, name="factor_exposure")
 
         cap = self.max_exposure
         tol = 1e-12
@@ -164,6 +186,9 @@ class FactorExposureLimiter:
 
         if not np.any(np.abs(exposures) > cap + tol):
             # Nothing to do; validate and return a clean copy.
+            self.last_exposures = pd.Series(
+                exposures, index=cols, name="factor_exposure"
+            )
             return enforce_exposure_contract(
                 w, max_gross=max_gross, name="FactorExposureLimiter"
             )
@@ -181,12 +206,11 @@ class FactorExposureLimiter:
             # Signed target: pull each offending exposure to the nearer cap edge.
             t = np.sign(e) * cap             # (k,)
 
-            gram = L.T @ L                   # (k, k)
             rhs = t - e                      # (k,)
-            # Minimum-norm solution; lstsq handles rank-deficient / collinear
-            # loadings gracefully.
-            coef, *_ = np.linalg.lstsq(gram, rhs, rcond=None)
-            adjusted = adjusted + L @ coef
+            # Solve the stated minimum-norm problem directly. This is more
+            # stable than forming the normal-equation Gram matrix.
+            delta, *_ = np.linalg.lstsq(L.T, rhs, rcond=None)
+            adjusted = adjusted + delta
 
         # Neutralising a tilt can, in principle, nudge gross above the input.
         # An exposure overlay must never *add* gross, so if that happens we
@@ -211,6 +235,11 @@ class FactorExposureLimiter:
         worst = float(np.max(np.abs(exposures))) if exposures.size else 0.0
         if worst > cap + tol:
             adjusted = adjusted * (cap / worst)
+
+        final_exposures = L_all.T @ adjusted
+        self.last_exposures = pd.Series(
+            final_exposures, index=cols, name="factor_exposure"
+        )
 
         return enforce_exposure_contract(
             adjusted, max_gross=max_gross, name="FactorExposureLimiter"

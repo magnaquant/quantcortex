@@ -1,8 +1,8 @@
-"""FinBERT sentiment overlay on a momentum alpha.
+"""News-sentiment overlay on a momentum alpha.
 
 :class:`SentimentNLPStrategy` blends a classical cross-sectional momentum signal
-with a news/earnings sentiment signal derived from FinBERT (or its offline
-finance-lexicon fallback).  The combined alpha is::
+with a news/earnings sentiment signal derived from an explicitly configured
+FinBERT or finance-lexicon backend.  The combined alpha is::
 
     score = (1 - sentiment_weight) * z(momentum) + sentiment_weight * z(sentiment)
 
@@ -10,13 +10,14 @@ where ``z`` is a cross-sectional z-score.  The sentiment input is either:
 
 * ``ctx.extra['news']`` - a long DataFrame of ``(date, symbol, headline)`` rows
   aggregated *causally* (only headlines ``<= as_of``) via
-  :meth:`~alpha.factors.nlp.news_scorer.NewsScorer.aggregate_daily`; or
+  :meth:`~quantcortex.alpha.factors.nlp.news_scorer.NewsScorer.aggregate_daily`; or
 * ``ctx.extra['sentiment']`` - a pre-computed wide ``date x symbol`` sentiment
-  panel.
+  panel whose timestamp contract is supplied by the caller.
 
 If no sentiment source is available the strategy falls back to pure momentum.
 The book holds the top half of names by combined score, weighted by positive
-score.  Everything is strictly causal.
+score. Intraday news must be cut off or delayed consistently with the intended
+execution time.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ __all__ = ["SentimentNLPStrategy"]
 
 
 class SentimentNLPStrategy(Strategy):
-    """Momentum alpha with a FinBERT news/earnings sentiment overlay.
+    """Momentum alpha with a configured news/earnings sentiment overlay.
 
     Parameters
     ----------
@@ -51,8 +52,12 @@ class SentimentNLPStrategy(Strategy):
         Blend weight on the sentiment z-score in ``[0, 1]``.
     half_life:
         Recency half-life (days) for causal news aggregation.
+    sentiment:
+        Optional configured sentiment scorer. The default uses the deterministic
+        lexicon backend; pass ``FinBERTSentiment(backend="transformers")`` to
+        require FinBERT.
     **kw:
-        Forwarded to :class:`~strategies.base_strategy.Strategy`.
+        Forwarded to :class:`~quantcortex.strategies.base_strategy.Strategy`.
     """
 
     def __init__(
@@ -63,17 +68,43 @@ class SentimentNLPStrategy(Strategy):
         base_gap: int = 21,
         sentiment_weight: float = 0.5,
         half_life: float = 3.0,
+        sentiment: Optional[FinBERTSentiment] = None,
         **kw,
     ) -> None:
         optimizer = optimizer if optimizer is not None else EqualWeight()
         super().__init__(optimizer, mode=PortfolioMode.LONG_ONLY, **kw)
-        if not 0.0 <= sentiment_weight <= 1.0:
+        if (
+            isinstance(sentiment_weight, (bool, np.bool_))
+            or not np.isfinite(sentiment_weight)
+            or not 0.0 <= sentiment_weight <= 1.0
+        ):
             raise ValueError("sentiment_weight must be in [0, 1]")
+        for name, value in (
+            ("base_lookback", base_lookback),
+            ("base_gap", base_gap),
+        ):
+            if (
+                isinstance(value, (bool, np.bool_))
+                or not isinstance(value, (int, np.integer))
+            ):
+                raise TypeError(f"{name} must be an integer")
         self.base_lookback = int(base_lookback)
         self.base_gap = int(base_gap)
+        if self.base_lookback <= 0:
+            raise ValueError("base_lookback must be positive")
+        if self.base_gap < 0:
+            raise ValueError("base_gap must be non-negative")
+        if self.base_gap >= self.base_lookback:
+            raise ValueError("base_gap must be smaller than base_lookback")
         self.sentiment_weight = float(sentiment_weight)
-        # Lazy/offline-capable sentiment stack (FinBERT or finance lexicon).
-        self._scorer = NewsScorer(sentiment=FinBERTSentiment(), half_life=half_life)
+        configured_sentiment = (
+            sentiment
+            if sentiment is not None
+            else FinBERTSentiment(backend="lexicon")
+        )
+        self._scorer = NewsScorer(
+            sentiment=configured_sentiment, half_life=half_life
+        )
 
     # ------------------------------------------------------------------ #
     # Selection
@@ -91,13 +122,13 @@ class SentimentNLPStrategy(Strategy):
 
         if sent_z is None or sent_z.dropna().empty:
             # No usable sentiment -> pure momentum.
-            return mom_z.dropna()
+            return self._actionable_scores(mom_z)
 
         combined = self._blend(mom_z, sent_z)
         combined = combined.dropna()
         if combined.empty:
-            return mom_z.dropna()
-        return combined
+            return self._actionable_scores(mom_z)
+        return self._actionable_scores(combined)
 
     # ------------------------------------------------------------------ #
     # Allocation: top half by combined score, weighted by positive score
@@ -105,8 +136,7 @@ class SentimentNLPStrategy(Strategy):
     def allocate(self, scores: pd.Series, ctx: StrategyContext) -> np.ndarray:
         clean = scores.dropna()
         if clean.empty:
-            n = len(scores)
-            return np.full(n, 1.0 / n, dtype=np.float64) if n else np.array([])
+            raise ValueError("sentiment allocation requires non-empty scores")
 
         n_keep = max(1, int(np.ceil(len(clean) / 2)))
         chosen = clean.sort_values(ascending=False).head(n_keep).index
@@ -115,13 +145,15 @@ class SentimentNLPStrategy(Strategy):
         masked = pd.Series(0.0, index=scores.index, dtype=float)
         masked.loc[chosen] = scores.loc[chosen]
         if float(scores.loc[chosen].clip(lower=0).sum()) == 0.0:
-            # Every chosen score is non-positive: equal-weight the CHOSEN set
-            # only.  (Otherwise normalize_long_only's all-non-positive
-            # fallback would equal-weight the whole vector, re-including the
-            # explicitly excluded names.)
-            masked[:] = 0.0
-            masked.loc[chosen] = 1.0
+            raise ValueError("sentiment allocation requires a positive score")
         return self.scores_to_weights(masked)
+
+    @staticmethod
+    def _actionable_scores(scores: pd.Series) -> pd.Series:
+        clean = scores.dropna().astype(float)
+        if clean.empty or not (clean > 0.0).any():
+            return pd.Series(dtype=float)
+        return clean
 
     # ------------------------------------------------------------------ #
     # Signal helpers
@@ -133,14 +165,10 @@ class SentimentNLPStrategy(Strategy):
             ret = (prices.iloc[-1] / prices.iloc[0] - 1.0)
             return self._zscore(ret.astype(float))
         gap = min(self.base_gap, lb - 1)
-        try:
-            factor = MomentumFactor(lookback=lb, gap=gap)
-            panel = factor.compute(prices)
-            z_panel = factor.cross_sectional_zscore(panel)
-            last = z_panel.iloc[-1]
-        except Exception:
-            ret = (prices.iloc[-1] / prices.iloc[0] - 1.0)
-            return self._zscore(ret.astype(float))
+        factor = MomentumFactor(lookback=lb, gap=gap)
+        panel = factor.compute(prices)
+        z_panel = factor.cross_sectional_zscore(panel)
+        last = z_panel.iloc[-1]
         if last.dropna().empty:
             ret = (prices.iloc[-1] / prices.iloc[0] - 1.0)
             return self._zscore(ret.astype(float))
@@ -155,6 +183,32 @@ class SentimentNLPStrategy(Strategy):
         # Pre-computed wide panel takes precedence if supplied.
         panel = extra.get("sentiment")
         if isinstance(panel, pd.DataFrame) and not panel.empty:
+            if not isinstance(panel.index, pd.DatetimeIndex):
+                raise ValueError("sentiment panel must use a DatetimeIndex")
+            if panel.index.hasnans or not panel.index.is_unique:
+                raise ValueError("sentiment panel index must contain unique valid dates")
+            if not panel.index.is_monotonic_increasing:
+                raise ValueError("sentiment panel dates must be sorted in increasing order")
+            if panel.columns.has_duplicates or any(
+                not isinstance(symbol, str) or not symbol.strip()
+                for symbol in panel.columns
+            ):
+                raise ValueError(
+                    "sentiment panel columns must be unique non-empty symbols"
+                )
+            panel = panel.copy()
+            panel.index = pd.to_datetime(panel.index, utc=True).tz_convert(None)
+            panel.columns = pd.Index([symbol.strip() for symbol in panel.columns])
+            if panel.columns.has_duplicates:
+                raise ValueError(
+                    "sentiment symbols must remain unique after whitespace trimming"
+                )
+            numeric = panel.apply(pd.to_numeric, errors="coerce")
+            if (numeric.isna() & panel.notna()).any(axis=None):
+                raise ValueError("sentiment panel contains non-numeric observations")
+            if np.isinf(numeric.to_numpy(dtype=float)).any():
+                raise ValueError("sentiment panel contains infinite observations")
+            panel = numeric
             causal = panel.loc[panel.index <= ctx.as_of]
             if not causal.empty:
                 latest = causal.iloc[-1].reindex(symbols)
@@ -162,15 +216,12 @@ class SentimentNLPStrategy(Strategy):
 
         news = extra.get("news")
         if isinstance(news, pd.DataFrame) and not news.empty:
-            try:
-                row = self._scorer.aggregate_daily(
-                    news,
-                    time_decay=True,
-                    lookback_days=int(self._scorer.half_life * 7),
-                    as_of=ctx.as_of,
-                )
-            except Exception:
-                return None
+            row = self._scorer.aggregate_daily(
+                news,
+                time_decay=True,
+                lookback_days=int(self._scorer.half_life * 7),
+                as_of=ctx.as_of,
+            )
             if row is None or row.empty:
                 return None
             latest = row.iloc[-1].reindex(symbols)

@@ -22,6 +22,7 @@ def test_buy_only_applies_commission_plus_slippage():
     # no sell-side cost on a buy-only rebalance
     assert res.sell_cost.sum() == pytest.approx(0.0)
     assert res.buy_cost.sum() == pytest.approx(expected)
+    assert res.turnover == pytest.approx(1.0)
 
 
 def test_sell_only_applies_commission_plus_slippage_plus_tax():
@@ -46,6 +47,50 @@ def test_mixed_trade_splits_buy_and_sell():
     assert res.buy_cost.sum() == pytest.approx(0.3 * 0.001)
     assert res.sell_cost.sum() == pytest.approx(0.3 * 0.001)
     assert res.total_cost == pytest.approx(0.6 * 0.001)
+    assert res.turnover == pytest.approx(0.3)
+
+
+def test_adv_caps_cannot_create_an_overgross_intermediate_book():
+    model = TransactionCostModel(volume_cap=0.10)
+    result = model.apply_costs(
+        np.array([1.0, 0.0]),
+        np.array([0.0, 1.0]),
+        adv=np.array([0.0, 1_000_000.0]),
+        capital=1.0,
+        max_gross=1.0,
+    )
+
+    assert np.abs(result.executed_weights).sum() <= 1.0 + 1e-12
+    assert result.executed_change[1] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_gross_cap_preserves_feasible_risk_reduction_before_replacement_buy():
+    model = TransactionCostModel(volume_cap=0.10)
+    result = model.apply_costs(
+        np.array([1.0, 0.0]),
+        np.array([0.0, 1.0]),
+        adv=np.array([2.0, 1_000_000.0]),
+        capital=1.0,
+        max_gross=1.0,
+    )
+
+    assert result.executed_change == pytest.approx([-0.2, 0.2])
+    assert result.executed_weights == pytest.approx([0.8, 0.2])
+    assert np.abs(result.executed_weights).sum() == pytest.approx(1.0)
+
+
+def test_overgross_book_executes_reductions_and_opens_no_new_exposure():
+    model = TransactionCostModel(volume_cap=0.10)
+    result = model.apply_costs(
+        np.array([1.2, 0.0]),
+        np.array([0.0, 1.0]),
+        adv=np.array([1.0, 1_000_000.0]),
+        capital=1.0,
+        max_gross=1.0,
+    )
+
+    assert result.executed_change == pytest.approx([-0.1, 0.0])
+    assert result.executed_weights == pytest.approx([1.1, 0.0])
 
 
 def test_adv_cap_truncates_oversized_orders():

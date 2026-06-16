@@ -4,19 +4,18 @@ This module implements :class:`HMMRegime`, a *timing overlay* that classifies th
 prevailing market regime (bear / sideways / bull) from a small set of macro
 features and scales gross portfolio exposure accordingly.
 
-The overlay is **strictly causal**: a regime prediction for time ``t`` uses only
-features observed up to and including ``t``.  Exposure is scaled by the *last*
-predicted regime, which is the only regime an executing strategy could act on
-without look-ahead.
+The actionable overlay is causal when the model is fit on data available at the
+decision time and only the *last* decoded regime is used. Historical labels
+returned from one full-window Viterbi decode are retrospective and must not be
+treated as walk-forward labels for earlier timestamps.
 
 Modelling backend
 -----------------
-The preferred backend is :class:`hmmlearn.hmm.GaussianHMM`, which models the
-serial dependence between regimes.  ``hmmlearn`` is an optional dependency; when
-it is not installed we transparently fall back to
-:class:`sklearn.mixture.GaussianMixture`, a memoryless mixture model that still
-clusters the feature space into ``n_states`` regimes.  Both backends are fully
-offline (no network access, deterministic given ``seed``).
+The ``"hmm"`` backend models serial dependence between regimes and requires the
+optional :mod:`hmmlearn` package. The core ``"gmm"`` backend is a memoryless
+Gaussian mixture. ``"auto"`` selects HMM only when it can be imported; a model
+fit failure never switches backend silently because these models have different
+semantics. Both are offline and deterministic given a fixed environment.
 
 Regime labelling
 -----------------
@@ -49,7 +48,7 @@ def _single_threaded_blas():
         from threadpoolctl import threadpool_limits
 
         return threadpool_limits(limits=1)
-    except Exception:  # pragma: no cover - threadpoolctl ships with sklearn
+    except ImportError:  # pragma: no cover - threadpoolctl ships with sklearn
         return contextlib.nullcontext()
 
 # Canonical regime labels.
@@ -81,6 +80,9 @@ class HMMRegime:
         Maximum EM iterations.
     seed:
         Random seed for reproducible fits.
+    backend:
+        ``"hmm"``, ``"gmm"``, or ``"auto"``. Strategies in this repository
+        choose ``"gmm"`` explicitly so optional packages cannot change results.
     """
 
     def __init__(
@@ -90,13 +92,33 @@ class HMMRegime:
         covariance_type: str = "full",
         n_iter: int = 100,
         seed: int = 42,
+        backend: str = "auto",
     ) -> None:
-        if n_states < 2:
+        if (
+            isinstance(n_states, (bool, np.bool_))
+            or not isinstance(n_states, (int, np.integer))
+            or n_states < 2
+        ):
             raise ValueError("n_states must be >= 2")
+        if (
+            isinstance(n_iter, (bool, np.bool_))
+            or not isinstance(n_iter, (int, np.integer))
+            or n_iter <= 0
+        ):
+            raise ValueError("n_iter must be a positive integer")
+        if isinstance(seed, (bool, np.bool_)) or not isinstance(
+            seed, (int, np.integer)
+        ):
+            raise ValueError("seed must be an integer")
         self.n_states = int(n_states)
         self.covariance_type = str(covariance_type)
         self.n_iter = int(n_iter)
         self.seed = int(seed)
+        self.backend = str(backend)
+        if self.covariance_type not in {"full", "diag", "tied", "spherical"}:
+            raise ValueError("unsupported covariance_type")
+        if self.backend not in {"auto", "hmm", "gmm"}:
+            raise ValueError("backend must be 'auto', 'hmm', or 'gmm'")
 
         # Populated by ``fit``.
         self.model_: Optional[Any] = None
@@ -122,14 +144,6 @@ class HMMRegime:
         """
         X = self._extract_matrix(features)
 
-        # Try each candidate backend in preference order.  A backend is only
-        # accepted if it both fits AND yields finite parameters and a usable
-        # prediction; otherwise we fall through to the next.  hmmlearn's EM can
-        # produce NaN parameters on degenerate data (e.g. a rarely-visited
-        # state with a singular covariance under covariance_type="full"), in
-        # which case the memoryless GMM is the robust fallback.  This keeps the
-        # regime gate *active* rather than silently disabling on a bad fit.
-        #
         # Reproducibility: a non-converged EM near a regime boundary is
         # sensitive to the float-reduction order of multithreaded BLAS, which
         # can flip a borderline classification run to run and make a backtest
@@ -137,53 +151,45 @@ class HMMRegime:
         # fit makes the reductions order-stable, so the same data always yields
         # the same regimes.  threadpoolctl ships with scikit-learn; if it is
         # somehow absent we degrade to a no-op context.
-        last_error: Optional[Exception] = None
-        for model, backend in self._candidate_models():
-            try:
-                with _single_threaded_blas():
-                    model.fit(X)
-                    if not self._params_finite(model):
-                        last_error = RuntimeError(f"{backend} fit produced non-finite params")
-                        continue
-                    states = np.asarray(model.predict(X), dtype=int)
-            except Exception as exc:  # noqa: BLE001 - try next backend
-                last_error = exc
-                continue
-            self.model_ = model
-            self.backend_ = backend
-            # Relabel raw states by mean of the "returns" feature (column 0).
-            self.state_labels_ = self._label_states(states, X[:, 0])
-            return self
-
-        raise RuntimeError(
-            "HMMRegime: no regime backend could fit the data"
-        ) from last_error
-
-    def _candidate_models(self):
-        """Yield ``(model, backend)`` candidates in preference order.
-
-        Preferred: :class:`hmmlearn.hmm.GaussianHMM` (models regime persistence)
-        when importable.  Always-available fallback:
-        :class:`sklearn.mixture.GaussianMixture` with covariance regularisation.
-        """
+        model, backend = self._build_model()
         try:
-            from hmmlearn.hmm import GaussianHMM  # type: ignore
+            with _single_threaded_blas():
+                model.fit(X)
+                if not self._params_finite(model):
+                    raise RuntimeError(f"{backend} fit produced non-finite parameters")
+                states = np.asarray(model.predict(X), dtype=int)
+        except Exception as exc:
+            raise RuntimeError(f"HMMRegime {backend} backend failed") from exc
 
-            yield (
-                GaussianHMM(
-                    n_components=self.n_states,
-                    covariance_type=self.covariance_type,
-                    n_iter=self.n_iter,
-                    random_state=self.seed,
-                ),
-                "hmm",
-            )
-        except Exception:
-            pass  # hmmlearn unavailable/incompatible -> GMM only
+        self.model_ = model
+        self.backend_ = backend
+        self.state_labels_ = self._label_states(states, X[:, 0])
+        return self
+
+    def _build_model(self) -> tuple[Any, str]:
+        """Construct exactly one requested regime model."""
+        if self.backend in {"auto", "hmm"}:
+            try:
+                from hmmlearn.hmm import GaussianHMM  # type: ignore
+            except (ImportError, OSError) as exc:
+                if self.backend == "hmm":
+                    raise ImportError(
+                        "backend='hmm' requires a usable hmmlearn installation"
+                    ) from exc
+            else:
+                return (
+                    GaussianHMM(
+                        n_components=self.n_states,
+                        covariance_type=self.covariance_type,
+                        n_iter=self.n_iter,
+                        random_state=self.seed,
+                    ),
+                    "hmm",
+                )
 
         from sklearn.mixture import GaussianMixture
 
-        yield (
+        return (
             GaussianMixture(
                 n_components=self.n_states,
                 covariance_type=self.covariance_type,
@@ -242,16 +248,14 @@ class HMMRegime:
         return labels
 
     # ------------------------------------------------------------------ #
-    # Prediction (causal)
+    # Prediction
     # ------------------------------------------------------------------ #
     def predict_regime(self, features: pd.DataFrame) -> np.ndarray:
         """Return canonical regime labels for every row of ``features``.
 
-        Causal: each label depends only on features up to and including its own
-        timestamp.  For the HMM backend we use the Viterbi/posterior decoding
-        ``predict`` over the supplied window; because we only ever *act* on the
-        last label (see :meth:`scale_weights`), no future information leaks into
-        an actionable decision.
+        For the HMM backend this is a full-window Viterbi decode. Earlier labels
+        can depend on later rows in the supplied window and are retrospective.
+        Only the last label is suitable for an actionable as-of decision.
         """
         self._check_fitted()
         X = self._extract_matrix(features)
@@ -288,7 +292,9 @@ class HMMRegime:
         bear -> x0.0 (flat), sideways -> x0.5, bull -> x1.0.  The result is
         validated through :func:`enforce_exposure_contract`.
         """
-        w = np.asarray(weights, dtype=np.float64).ravel()
+        w = np.asarray(weights, dtype=np.float64)
+        if w.ndim != 1 or w.size == 0 or not np.all(np.isfinite(w)):
+            raise ValueError("weights must be a non-empty finite 1-D vector")
         regime = self.current_regime(features)
         scale = _REGIME_SCALE.get(int(regime), 0.5)
         scaled = w * scale
@@ -323,9 +329,28 @@ class HMMRegime:
         extra = getattr(features, "extra", None)
         if isinstance(extra, dict) and "regime_features" in extra:
             rf = extra["regime_features"]
-            if isinstance(rf, pd.DataFrame):
-                return rf
-            return pd.DataFrame(rf)
+            if not isinstance(rf, pd.DataFrame):
+                raise TypeError("ctx.extra['regime_features'] must be a DataFrame")
+            if not isinstance(rf.index, pd.DatetimeIndex):
+                raise TypeError(
+                    "ctx.extra['regime_features'] must use a DatetimeIndex"
+                )
+            if rf.index.hasnans or rf.index.has_duplicates:
+                raise ValueError(
+                    "ctx.extra['regime_features'] index must contain unique valid timestamps"
+                )
+            frame = rf.copy()
+            if frame.index.tz is not None:
+                frame.index = frame.index.tz_convert("UTC").tz_localize(None)
+            frame = frame.sort_index()
+            as_of = pd.to_datetime(
+                getattr(features, "as_of", None), errors="coerce", utc=True
+            )
+            if pd.isna(as_of):
+                raise ValueError(
+                    "context with regime_features must expose a valid as_of timestamp"
+                )
+            return frame.loc[frame.index <= as_of.tz_localize(None)]
 
         returns = getattr(features, "returns", None)
         if returns is not None:
@@ -353,7 +378,12 @@ class HMMRegime:
         rv = series.rolling(20, min_periods=1).std().fillna(0.0)
         vix_proxy = (rv * np.sqrt(252.0) * 100.0).fillna(0.0)
         return pd.DataFrame(
-            {"returns": series.to_numpy(), "realized_vol": rv.to_numpy(), "vix": vix_proxy.to_numpy()}
+            {
+                "returns": series.to_numpy(),
+                "realized_vol": rv.to_numpy(),
+                "vix": vix_proxy.to_numpy(),
+            },
+            index=series.index,
         )
 
     @staticmethod
@@ -361,6 +391,15 @@ class HMMRegime:
         """Select the canonical feature columns into a float64 matrix."""
         if not isinstance(features, pd.DataFrame):
             features = pd.DataFrame(features)
+        if features.columns.has_duplicates:
+            raise ValueError("regime feature columns must be unique")
+        if features.index.has_duplicates:
+            raise ValueError("regime feature index must be unique")
+        if isinstance(features.index, pd.DatetimeIndex):
+            if features.index.hasnans:
+                raise ValueError("regime feature index must contain valid timestamps")
+            if not features.index.is_monotonic_increasing:
+                raise ValueError("regime feature dates must be sorted")
         missing = [c for c in _FEATURE_COLUMNS if c not in features.columns]
         if missing:
             raise ValueError(
@@ -371,7 +410,7 @@ class HMMRegime:
         if X.shape[0] == 0:
             raise ValueError("features is empty")
         if not np.all(np.isfinite(X)):
-            X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+            raise ValueError("regime features must contain only finite values")
         return X
 
     def _check_fitted(self) -> None:

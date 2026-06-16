@@ -64,6 +64,13 @@ def test_load_price_matrix_rejects_missing_symbol(tmp_path):
     with pytest.raises(LocalDataError, match="BBB"):
         load_price_matrix(path, symbols=["AAA", "BBB"])
 
+    with pytest.raises(LocalDataError, match="sequence"):
+        load_price_matrix(path, symbols="AAA")
+    with pytest.raises(LocalDataError, match="non-negative integer"):
+        load_price_matrix(path, max_ffill=True)
+    with pytest.raises(LocalDataError, match="valid timestamp"):
+        load_price_matrix(path, start="not-a-date")
+
 
 def test_load_price_matrix_rejects_duplicate_csv_headers(tmp_path):
     path = tmp_path / "prices.csv"

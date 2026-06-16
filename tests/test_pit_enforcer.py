@@ -1,10 +1,8 @@
 """Tests for point-in-time enforcement (the fundamentals anti-lookahead guard).
 
-The cardinal rule: a feature computed on ``feature_date`` may only use
-fundamentals whose ``announcement_date`` is on or before that date. These tests
-assert that rule directly with hand-constructed cases, including the critical
-property that ``point_in_time_merge`` attaches the latest *known* record and
-never a later announcement.
+The default rule is strict-before matching so a date-only announcement is not
+silently assumed available at the start of that same date. Exact matches are an
+explicit opt-in for observed intraday timestamps.
 """
 
 from __future__ import annotations
@@ -35,6 +33,35 @@ def test_enforce_rejects_future_announcement():
     })
     with pytest.raises(PITViolationError, match="not yet public"):
         PITEnforcer().enforce(df)
+
+
+def test_exact_announcement_timestamp_requires_explicit_opt_in():
+    df = pd.DataFrame(
+        {
+            "symbol": ["AAA"],
+            "feature_date": ["2024-02-15"],
+            "announcement_date": ["2024-02-15"],
+        }
+    )
+    with pytest.raises(PITViolationError, match="exact-match policy"):
+        PITEnforcer().enforce(df)
+    pd.testing.assert_frame_equal(
+        PITEnforcer(allow_exact_matches=True).enforce(df),
+        df,
+    )
+
+    features = pd.DataFrame(
+        {"symbol": ["AAA"], "feature_date": ["2024-02-15"]}
+    )
+    fundamentals = pd.DataFrame(
+        {"symbol": ["AAA"], "announcement_date": ["2024-02-15"], "eps": [1.0]}
+    )
+    strict = PITEnforcer().point_in_time_merge(features, fundamentals)
+    exact = PITEnforcer(allow_exact_matches=True).point_in_time_merge(
+        features, fundamentals
+    )
+    assert pd.isna(strict.loc[0, "eps"])
+    assert exact.loc[0, "eps"] == 1.0
 
 
 def test_enforce_rejects_announcement_before_period_end():

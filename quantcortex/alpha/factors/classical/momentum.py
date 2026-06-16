@@ -11,7 +11,7 @@ constructed only from prices observed on or before ``t`` (in fact, on or before
 
 Cross-sectional normalization and price/return helpers are shared with the
 other classical factor modules via the private
-:mod:`alpha.factors.classical._cross_section` module.
+:mod:`quantcortex.alpha.factors.classical._cross_section` module.
 """
 
 from __future__ import annotations
@@ -49,10 +49,18 @@ class MomentumFactor:
     """
 
     def __init__(self, lookback: int = 252, gap: int = 21) -> None:
-        if lookback <= 0:
+        if (
+            isinstance(lookback, (bool, np.bool_))
+            or not isinstance(lookback, (int, np.integer))
+            or lookback <= 0
+        ):
             raise ValueError("lookback must be a positive integer")
-        if gap < 0:
-            raise ValueError("gap must be non-negative")
+        if (
+            isinstance(gap, (bool, np.bool_))
+            or not isinstance(gap, (int, np.integer))
+            or gap < 0
+        ):
+            raise ValueError("gap must be a non-negative integer")
         if gap >= lookback:
             raise ValueError("gap must be strictly smaller than lookback")
         self.lookback = int(lookback)
@@ -116,17 +124,15 @@ class MomentumFactor:
         prices:
             Adjusted close prices indexed by date, columns are symbols.
         market:
-            Market (benchmark) price level or return-proxy series indexed by the
-            same dates. If it looks like a price level (all positive, low
-            relative variation) it is converted to simple returns; if it already
-            looks like a return series it is used as-is.
+            Market (benchmark) price level or return series indexed by the same
+            dates.
         window:
             Rolling window (in trading days) for the beta estimation. Defaults to
             ``lookback``.
         market_is_returns:
             Explicitly declare whether ``market`` is a return series (``True``)
-            or a price level (``False``). ``None`` (default) keeps the
-            heuristic detection described above.
+            or a price level (``False``). ``None`` is rejected because values
+            alone cannot distinguish the two reliably.
 
         Returns
         -------
@@ -136,11 +142,18 @@ class MomentumFactor:
         prices = self._validate_prices(prices)
         if not isinstance(market, pd.Series):
             raise TypeError("market must be a pandas Series")
-        window = int(window) if window is not None else self.lookback
-        if window <= 1:
-            raise ValueError("window must be greater than 1")
+        window = self.lookback if window is None else window
+        if (
+            isinstance(window, (bool, np.bool_))
+            or not isinstance(window, (int, np.integer))
+            or window <= 1
+        ):
+            raise ValueError("window must be an integer greater than 1")
+        window = int(window)
 
-        stock_ret = prices.pct_change()
+        if market.index.has_duplicates:
+            raise ValueError("market index must be unique")
+        stock_ret = prices.pct_change(fill_method=None)
         market = market.reindex(prices.index)
         market_ret = self._to_returns(market, market_is_returns)
 
@@ -148,25 +161,26 @@ class MomentumFactor:
         # beta_t is estimated from returns up to and including t, and applied to
         # the contemporaneous return to form the residual at t. The residual at
         # t therefore uses no information after t.
-        x = market_ret
-        x_mean = x.rolling(window, min_periods=window).mean()
-        # ddof=0 to match the population covariance from _rolling_cov; mixing
-        # ddof=1 variance with ddof=0 covariance biases beta by (w-1)/w.
-        x_var = x.rolling(window, min_periods=window).var(ddof=0)
-
         residuals = pd.DataFrame(index=prices.index, columns=prices.columns, dtype=float)
         for col in prices.columns:
             y = stock_ret[col]
-            cov = self._rolling_cov(x, y, window)
+            x = market_ret.where(y.notna())
+            y_pair = y.where(market_ret.notna())
+            x_mean = x.rolling(window, min_periods=window).mean()
+            x_var = x.rolling(window, min_periods=window).var(ddof=0)
+            cov = self._rolling_cov(x, y_pair, window)
             beta = cov.divide(x_var)
-            alpha = y.rolling(window, min_periods=window).mean() - beta * x_mean
-            residuals[col] = y - (alpha + beta * x)
+            y_mean = y_pair.rolling(window, min_periods=window).mean()
+            alpha = y_mean - beta * x_mean
+            residuals[col] = y_pair - (alpha + beta * x)
 
-        # Accumulate residual log-like contributions over the 12-1 window.
-        # Use cumulative sum of residual returns (approx. cumulative residual
-        # log-return) over [t-lookback, t-gap].
-        cum = residuals.cumsum()
-        res_mom = cum.shift(self.gap) - cum.shift(self.lookback)
+        # Sum residual returns over the same formation interval as price
+        # momentum. A full rolling window is required so missing residuals do
+        # not disappear inside a skip-na cumulative sum.
+        formation = self.lookback - self.gap
+        res_mom = residuals.rolling(
+            formation, min_periods=formation
+        ).sum().shift(self.gap)
         res_mom = res_mom.replace([np.inf, -np.inf], np.nan)
         return res_mom
 
