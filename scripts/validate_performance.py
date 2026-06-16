@@ -125,7 +125,7 @@ def run_momentum_ml(
 def benchmark_returns(
     prices: pd.DataFrame, evaluation_start: pd.Timestamp
 ) -> tuple[pd.Series, pd.Series]:
-    """Return SPY and equal-weight buy-and-hold returns for the test window."""
+    """Return SPY and equal-initial-weight buy-and-hold basket returns."""
     first = int(prices.index.searchsorted(evaluation_start, side="left"))
     if first >= len(prices):
         raise ValueError("evaluation window begins after the available prices")
@@ -276,7 +276,9 @@ def main(argv) -> int:
     spy, ew = benchmark_returns(rot_px, evaluation_start)
     print("Benchmarks (buy & hold, no costs):")
     print(f"  {'SPY':<26} Sharpe {ann_sharpe(spy):+5.2f}")
-    print(f"  {'Equal-weight universe':<26} Sharpe {ann_sharpe(ew):+5.2f}\n")
+    print(
+        f"  {'Equal-initial-weight basket':<30} Sharpe {ann_sharpe(ew):+5.2f}\n"
+    )
 
     print("Strategies (weekly/monthly rebalance, 3bps commission + 10bps slippage):")
     rot = metrics(
