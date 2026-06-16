@@ -158,3 +158,26 @@ jobs:
           diff -u requirements/brokers.lock /tmp/brokers.lock
           diff -u requirements/runtime.lock /tmp/runtime.lock
           diff -u requirements/build.lock /tmp/build.lock
+
+  container:
+    name: container build + offline smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Validate Compose configuration
+        env:
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+        run: docker compose config --quiet
+
+      - name: Build pinned application image
+        run: docker build --tag quantcortex:ci .
+
+      - name: Verify read-only default command
+        run: docker run --rm --read-only --tmpfs /tmp quantcortex:ci
+
+      - name: Run the offline execution cycle
+        run: >-
+          docker run --rm --read-only --tmpfs /tmp quantcortex:ci
+          python scripts/paper_trade_cycle.py --offline

@@ -12,6 +12,12 @@ build
 dist
 local_data
 reports
+paper
+output
+tmp
+docs
+research
+tests
 data_cache
 *.parquet
 *.pkl
