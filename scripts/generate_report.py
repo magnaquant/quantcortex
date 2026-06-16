@@ -1,23 +1,21 @@
-"""Generate separate, publication-quality charts + markdown tables for a backtest.
+"""Generate charts and markdown tables from an explicit real-data source.
 
 Runs the multi_asset_rotation strategy on real data through the mandatory-cost
 engine and emits, as *separate* artifacts (so they can be embedded individually
 in docs):
 
-* ``docs/img/equity_vs_benchmarks.png`` - growth of $1 vs SPY and equal-weight
-* ``docs/img/drawdown.png``             - underwater drawdown
-* ``docs/img/rolling_sharpe.png``       - rolling 126-day Sharpe
+* ``equity_vs_benchmarks.png`` - growth of $1 vs SPY and equal-weight
+* ``drawdown.png``             - underwater drawdown
+* ``rolling_sharpe.png``       - rolling 126-day Sharpe
 * a **performance metrics** markdown table (printed to stdout)
 * a **monthly returns** markdown table (printed to stdout)
 
-Every number printed is computed from the run, so docs can quote it verbatim.
-The backtest is deterministic (see quantcortex/timing/hmm_regime), so the figures
-reproduce given the same price-data window. Honest by construction - no tuning
-toward the design targets. Requires matplotlib; the default reads the bundled
-snapshot, so network + yfinance are only needed for --live (or a missing snapshot).
+Every number is computed from the supplied data. The output records the source
+kind, date window, and a SHA-256 digest for local files. The repository does not
+bundle market data or generated performance results.
 
-    python scripts/generate_report.py
-    python scripts/generate_report.py --start 2015 --end 2024
+    python scripts/generate_report.py --prices-csv local_data/rotation_prices.csv
+    python scripts/generate_report.py --live-yfinance --start 2015 --end 2024
 """
 
 from __future__ import annotations
@@ -27,6 +25,7 @@ import logging
 import os
 import sys
 import warnings
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -40,37 +39,59 @@ logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 # existing override and matches the single-threaded determinism elsewhere).
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
-import quantcortex
 from quantcortex.backtest.costs.transaction_costs import TransactionCostModel
 from quantcortex.backtest.engines.vectorized import VectorizedBacktest
 from quantcortex.backtest.metrics.tearsheet import Tearsheet
 from quantcortex.backtest.validation.deflated_sharpe import compute_dsr
+from quantcortex.data.local_csv import load_price_matrix, sha256_file
 
 ROTATION_UNIVERSE = ["QQQ", "VGT", "GLD", "TLT", "SPY", "VIG"]
-# The snapshot is package data; resolve it via the package so the path stays
-# correct regardless of where this script lives or future directory moves.
-SNAPSHOT = Path(quantcortex.__file__).resolve().parent / "data" / "sample" / "rotation_prices.csv"
+YFINANCE_NOTICE = (
+    "Live Yahoo Finance data is fetched through yfinance. Review Yahoo's terms "
+    "and yfinance's legal disclaimer at https://ranaroussi.github.io/yfinance/."
+)
 
 
-def load_prices(start: str, end: str, live: bool) -> pd.DataFrame:
-    """Load prices for the report.
+def load_prices(
+    start: str,
+    end: str,
+    prices_csv: Path | None = None,
+    live_yfinance: bool = False,
+) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Load prices from exactly one explicit source and return source metadata."""
+    if (prices_csv is not None) == live_yfinance:
+        raise ValueError("choose exactly one of prices_csv or live_yfinance")
 
-    Default: the bundled fixed snapshot (``quantcortex/data/sample/rotation_prices.csv``) so
-    the committed charts/tables are exactly reproducible.  ``--live`` refetches
-    from yfinance instead - note that yfinance re-adjusts historical closes over
-    time, so a live fetch will differ slightly from the snapshot (the strategy
-    itself is deterministic given fixed data).
-    """
-    if not live and SNAPSHOT.exists():
-        px = pd.read_csv(SNAPSHOT, index_col="date", parse_dates=True)
-        return px.loc[start:end].dropna(how="all").ffill().dropna()
+    if prices_csv is not None:
+        resolved = prices_csv.expanduser().resolve()
+        prices = load_price_matrix(
+            resolved,
+            symbols=ROTATION_UNIVERSE,
+            start=start,
+            end=end,
+        )
+        return prices, {
+            "kind": "local CSV",
+            "path": str(resolved),
+            "sha256": sha256_file(resolved),
+        }
+
+    print(YFINANCE_NOTICE, file=sys.stderr)
     from quantcortex.data.providers.yfinance_provider import YFinanceProvider
 
-    px = YFinanceProvider().get_prices(ROTATION_UNIVERSE, start=start, end=end)
-    if px is None or px.empty:
-        raise RuntimeError("could not fetch prices (need network + yfinance), and "
-                           "no bundled snapshot is available")
-    return px.dropna(how="all").ffill().dropna()
+    provider_end = (pd.Timestamp(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    prices = YFinanceProvider().get_prices(
+        ROTATION_UNIVERSE, start=start, end=provider_end
+    )
+    if prices is None or prices.empty:
+        raise RuntimeError("yfinance returned no prices")
+    prices = prices.dropna(how="all").ffill().dropna()
+    if prices.empty:
+        raise RuntimeError("no complete rows remain in the yfinance response")
+    return prices, {
+        "kind": "live yfinance",
+        "fetched_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
 
 
 def _growth(returns: pd.Series) -> pd.Series:
@@ -82,25 +103,36 @@ def _ann_sharpe(r: pd.Series) -> float:
     return float(r.mean() / r.std() * np.sqrt(252)) if r.std() > 0 else float("nan")
 
 
-def compute(start: str, end: str, live: bool = False, n_trials: int = 10) -> dict:
+def compute(prices: pd.DataFrame, n_trials: int = 10) -> dict:
     from quantcortex.strategies.multi_asset_rotation import MultiAssetRotation
 
-    px = load_prices(start, end, live)
-    weekly = px.index[px.index.weekday == 0]
-    weights = MultiAssetRotation().generate_weights(px, weekly)
-    rets = VectorizedBacktest(TransactionCostModel(), capital=1.0).run(weights, px).returns.dropna()
+    weekly = prices.index[prices.index.weekday == 0]
+    weights = MultiAssetRotation().generate_weights(prices, weekly)
+    cost_model = TransactionCostModel()
+    result = VectorizedBacktest(cost_model, capital=1.0).run(weights, prices)
+    rets = result.returns.dropna()
 
     ts = Tearsheet(rets)
     m = ts.compute()
     m["dsr"] = compute_dsr(rets, n_trials=n_trials)
     m["dsr_n_trials"] = n_trials
-    spy = px["SPY"].pct_change().reindex(rets.index)
-    ew = px.pct_change().mean(axis=1).reindex(rets.index)
+    m["annualized_turnover"] = float(result.turnover.mean() * 252)
+    m["summed_cost_fraction"] = float(result.costs.sum())
+    spy = prices["SPY"].pct_change().reindex(rets.index)
+    equal_weight_curve = prices.div(prices.iloc[0]).mean(axis=1)
+    ew = equal_weight_curve.pct_change().reindex(rets.index)
     return {
-        "px": px, "rets": rets, "ts": ts, "m": m,
-        "strat_g": _growth(rets), "spy_g": _growth(spy), "ew_g": _growth(ew),
-        "spy_sharpe": _ann_sharpe(spy), "ew_sharpe": _ann_sharpe(ew),
+        "px": prices,
+        "rets": rets,
+        "ts": ts,
+        "m": m,
+        "strat_g": _growth(rets),
+        "spy_g": _growth(spy),
+        "ew_g": _growth(ew),
+        "spy_sharpe": _ann_sharpe(spy),
+        "ew_sharpe": _ann_sharpe(ew),
         "monthly": ts.monthly_returns_table(),
+        "cost_model": cost_model,
     }
 
 
@@ -118,8 +150,8 @@ def save_charts(d: dict, imgdir: Path) -> None:
     fig, ax = plt.subplots(figsize=(11, 4.2))
     ax.plot(d["strat_g"].index, d["strat_g"].to_numpy(), label="Multi-Asset Rotation", color="C0", lw=1.7)
     ax.plot(d["spy_g"].index, d["spy_g"].to_numpy(), label="SPY (buy & hold)", color="C7", lw=1.1, alpha=0.85)
-    ax.plot(d["ew_g"].index, d["ew_g"].to_numpy(), label="Equal-weight 6-ETF", color="C2", lw=1.1, alpha=0.85)
-    ax.set_title("Growth of $1 - Multi-Asset Rotation vs benchmarks (net of costs)")
+    ax.plot(d["ew_g"].index, d["ew_g"].to_numpy(), label="Equal-weight 6-ETF buy & hold", color="C2", lw=1.1, alpha=0.85)
+    ax.set_title("Growth of $1 - strategy net of costs; benchmarks gross")
     ax.set_ylabel("Growth of $1")
     ax.legend(loc="upper left", framealpha=0.9)
     fig.tight_layout()
@@ -155,11 +187,13 @@ def markdown_metrics(d: dict) -> str:
         ("Sortino", f"{m['sortino']:+.2f}"),
         ("Calmar", f"{m['calmar']:+.2f}"),
         ("Max drawdown", f"{m['max_drawdown']:+.2%}"),
+        ("Annualized one-way turnover", f"{m['annualized_turnover']:.2f}x"),
+        ("Sum of modeled cost fractions", f"{m['summed_cost_fraction']:.2%}"),
         ("VaR 95% (daily)", f"{m['var_95']:.2%}"),
         ("CVaR 95% (daily)", f"{m['cvar_95']:.2%}"),
         (f"Deflated Sharpe ({m['dsr_n_trials']} trials)", f"{m['dsr']:.3f}"),
-        ("SPY buy & hold Sharpe", f"{d['spy_sharpe']:+.2f}"),
-        ("Equal-weight 6-ETF Sharpe", f"{d['ew_sharpe']:+.2f}"),
+        ("SPY buy & hold Sharpe (gross)", f"{d['spy_sharpe']:+.2f}"),
+        ("Equal-weight 6-ETF buy & hold Sharpe (gross)", f"{d['ew_sharpe']:+.2f}"),
     ]
     out = ["| Metric | Value |", "|--------|-------|"]
     out += [f"| {k} | {v} |" for k, v in rows]
@@ -181,6 +215,39 @@ def markdown_monthly(d: dict) -> str:
     return "\n".join(lines)
 
 
+def markdown_source(source: dict[str, str], prices: pd.DataFrame) -> str:
+    rows = [
+        ("Source kind", source["kind"]),
+        ("Price window", f"{prices.index[0].date()} to {prices.index[-1].date()}"),
+    ]
+    if "path" in source:
+        rows.extend([("Local path", source["path"]), ("SHA-256", source["sha256"])])
+    if "fetched_at_utc" in source:
+        rows.append(("Fetched at", source["fetched_at_utc"]))
+    out = ["| Field | Value |", "|-------|-------|"]
+    out.extend(
+        f"| {field} | {str(value).replace('|', '&#124;')} |"
+        for field, value in rows
+    )
+    return "\n".join(out)
+
+
+def markdown_settings(d: dict) -> str:
+    cost_model = d["cost_model"]
+    rows = [
+        ("Strategy", "multi_asset_rotation"),
+        ("Rebalance", "weekly (available Mondays)"),
+        ("Commission", f"{cost_model.commission * 10_000:.1f} bps per trade"),
+        ("Slippage", f"{cost_model.slippage * 10_000:.1f} bps per trade"),
+        ("Transfer tax", f"{cost_model.tax * 10_000:.1f} bps on sells"),
+        ("ADV cap", "not applied; this report supplies no volume input"),
+        ("DSR trial count", str(d["m"]["dsr_n_trials"])),
+    ]
+    out = ["| Setting | Value |", "|---------|-------|"]
+    out.extend(f"| {setting} | {value} |" for setting, value in rows)
+    return "\n".join(out)
+
+
 def positive_int(value: str) -> int:
     """argparse type: a strictly-positive integer (the DSR needs n_trials >= 1)."""
     ivalue = int(value)
@@ -193,25 +260,42 @@ def main(argv) -> int:
     ap = argparse.ArgumentParser(description="generate separate tearsheet charts + tables")
     ap.add_argument("--start", default="2018")
     ap.add_argument("--end", default="2025")
-    ap.add_argument("--imgdir", default="docs/img")
-    ap.add_argument("--live", action="store_true",
-                    help="refetch from yfinance instead of the bundled snapshot")
+    ap.add_argument("--imgdir", type=Path, default=Path("reports/img"))
+    source = ap.add_mutually_exclusive_group(required=True)
+    source.add_argument(
+        "--prices-csv",
+        type=Path,
+        help="owner-supplied wide adjusted-close CSV with a date column",
+    )
+    source.add_argument(
+        "--live-yfinance",
+        action="store_true",
+        help="explicitly fetch live data through yfinance",
+    )
     ap.add_argument("--n-trials", type=positive_int, default=10,
-                    help="trials assumed for the Deflated Sharpe Ratio (default 10; the "
-                         "committed README report uses this default)")
+                    help="trials assumed for the Deflated Sharpe Ratio (default 10)")
     args = ap.parse_args(argv[1:])
 
     try:
-        d = compute(f"{args.start}-01-01", f"{args.end}-12-31", live=args.live,
-                    n_trials=args.n_trials)
+        prices, source_metadata = load_prices(
+            f"{args.start}-01-01",
+            f"{args.end}-12-31",
+            prices_csv=args.prices_csv,
+            live_yfinance=args.live_yfinance,
+        )
+        d = compute(prices, n_trials=args.n_trials)
     except Exception as exc:
-        print(f"report generation failed: {exc}")
+        print(f"report generation failed: {exc}", file=sys.stderr)
         return 1
 
-    save_charts(d, Path(args.imgdir))
+    save_charts(d, args.imgdir)
     window = f"{d['rets'].index[0].date()} to {d['rets'].index[-1].date()}"
     print(f"# Charts written to {args.imgdir}/ for window {window}\n")
-    print("## Performance metrics (markdown)\n")
+    print("## Data source\n")
+    print(markdown_source(source_metadata, prices))
+    print("\n## Evaluation settings\n")
+    print(markdown_settings(d))
+    print("\n## Performance metrics (markdown)\n")
     print(markdown_metrics(d))
     print("\n## Monthly returns %, (markdown)\n")
     print(markdown_monthly(d))

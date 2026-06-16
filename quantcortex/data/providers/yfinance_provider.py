@@ -1,6 +1,9 @@
 """Yahoo Finance data provider (``yfinance``).
 
 Serves OHLCV bars and a best-effort tidy view of quarterly fundamentals.
+Yahoo and yfinance document usage restrictions, including personal-use terms;
+callers are responsible for confirming that their use and redistribution are
+permitted. See https://ranaroussi.github.io/yfinance/.
 ``yfinance`` does not expose exact SEC filing dates, so the point-in-time
 ``announcement_date`` is approximated as ``period_end + 45 calendar days`` - a
 conservative reporting-lag proxy (the SEC 10-Q deadline for large accelerated

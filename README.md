@@ -1,17 +1,19 @@
 # quantcortex
 
-> **State-of-the-art modular quant trading platform**
+> **Modular quantitative research and paper-execution platform**
 > Data -> Alpha -> Portfolio -> Timing -> Risk -> Backtest -> Execution
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Private](https://img.shields.io/badge/visibility-private-red.svg)]()
 
 ---
 
 ## Overview
 
-**quantcortex** is a research-grade, production-consistent quant trading platform built around a strict **weight-centric interface contract** (inspired by FinRL-X). Every layer - from alpha signal to live broker - speaks the same language: a normalized weight vector `w_t in R^n`.
+**quantcortex** is a modular quantitative research platform built around a
+strict **weight-centric interface contract** (inspired by FinRL-X). Every layer
+- from alpha signal to broker adapter - speaks the same language: a normalized
+weight vector `w_t in R^n`.
 
 This eliminates the most common gap in quant stacks: strategies that backtest cleanly but behave differently in paper and live trading because the architecture changes between environments.
 
@@ -21,34 +23,21 @@ w_t = R_t( T_t( A_t( S_t( X<=t ) ) ) )
      Risk   Timing  Alloc  Selection
 ```
 
-**Design targets vs. measured results.** The Sharpe figures below are
-aspirational design goals, *not* claims about the reference implementation. On
-real 2018-2025 prices the baselines do **not** meet them (see
-[PERFORMANCE.md](PERFORMANCE.md), reproducible via
-`python scripts/validate_performance.py`):
-
-| Strategy | Target | Measured (2018-2025) |
-|----------|--------|----------------------|
-| Multi-asset rotation | Sharpe > 1.10 | Sharpe +0.17 (defensive; trails buy-and-hold in a bull window) |
-| Momentum ML | Sharpe > 0.9 | Sharpe ~0.63 (survivorship-biased single-name read) |
-
-The targets are reported honestly rather than tuned toward; clearing them on a
-single backtest is precisely the overfitting the platform's Deflated Sharpe
-Ratio and BHY multiple-testing tooling exist to catch. The rotation figures are
-**reproducible** from a bundled price snapshot (`quantcortex/data/sample/rotation_prices.csv`);
-see the [Results](#results) section below and [PERFORMANCE.md](PERFORMANCE.md).
+**Design targets are not performance claims.** The reference strategies retain
+aspirational Sharpe targets of 1.10 (multi-asset rotation) and 0.9 (momentum
+ML), but this repository publishes no fixed backtest result. Evaluate them on
+data you are permitted to use, record the true number of trials, and compare
+against appropriate benchmarks. See [PERFORMANCE.md](PERFORMANCE.md).
 
 ---
 
 ## Getting Started
 
-quantcortex runs **fully offline out of the box**. The scientific core is all
-that's required; every heavy/optional dependency (boosting libraries, PyTorch,
-FinBERT, Stable-Baselines3, broker SDKs, Redis, TimescaleDB) is imported lazily
-with a graceful fallback, so the tests and all five notebooks run with **no API
-keys required**. The notebooks use live `yfinance` data when a network is
-available and fall back to deterministic synthetic data when it is not, so
-their numeric outputs are reproducible only in the offline (synthetic) path.
+The scientific core, test suite, broker mocks, and labeled paper-trading dry run
+work offline. Research notebooks and performance reports require an explicit
+real-data source; the repository does not bundle market data or silently replace
+failed downloads with generated prices. Optional providers, ML libraries,
+broker SDKs, and storage clients remain lazy imports.
 
 ### Install
 
@@ -57,7 +46,7 @@ git clone https://github.com/magnaquant/quantcortex.git
 cd quantcortex
 python3.11 -m venv .venv && source .venv/bin/activate
 
-# Core (required) - enough to run the full test suite and every notebook
+# Core (required) - enough to run the full test suite
 pip install numpy pandas scipy scikit-learn matplotlib pyarrow pytest
 
 # Optional accelerators / integrations (Poetry extras):
@@ -84,42 +73,52 @@ pytest tests/ -v   # weight contract, transaction costs, look-ahead, risk overla
 ### Run the research notebooks
 
 ```bash
-jupyter lab research/   # 01 data quality -> 02 factors -> 03 portfolios -> 04 backtest -> 05 live bridge
+# Owner-supplied real data; see local_data/README.md for schemas.
+export QUANTCORTEX_PRICES_CSV="$PWD/local_data/prices.csv"
+export QUANTCORTEX_OHLCV_CSV="$PWD/local_data/aapl_ohlcv.csv"  # notebook 02
+jupyter lab research/
+
+# Or explicitly opt into live yfinance instead of local CSVs.
+unset QUANTCORTEX_PRICES_CSV QUANTCORTEX_OHLCV_CSV
+export QUANTCORTEX_LIVE_YFINANCE=1
+jupyter lab research/
 ```
 
-Each notebook is self-contained and falls back to deterministic synthetic data
-when offline, so they always execute cell-by-cell.
+Set exactly one price source. Live yfinance use is subject to the provider's
+[terms and legal disclaimer](https://ranaroussi.github.io/yfinance/); confirm
+that your use is permitted. Notebook outputs are intentionally not committed.
 
 ### Validation & operations scripts
 
 ```bash
-python scripts/validate_performance.py        # measured backtest vs design targets (real data)
-python scripts/validate_performance.py --pit  # momentum_ml on point-in-time S&P 500 membership
-python scripts/generate_report.py             # publication-quality tearsheet -> PNG + HTML
-python scripts/survivorship_demo.py           # quantify S&P 500 survivorship bias (PIT membership)
+python scripts/validate_performance.py --live-yfinance
+python scripts/validate_performance.py --live-yfinance --pit
+python scripts/generate_report.py --prices-csv local_data/rotation_prices.csv
+python scripts/generate_report.py --live-yfinance
+python scripts/survivorship_demo.py --live-yfinance # quantify survivorship bias
 python scripts/verify_brokers.py              # broker adapters vs faithful SDK mocks (no account)
-python scripts/paper_trade_cycle.py           # one rebalance cycle: offline dry-run, or Alpaca paper
+python scripts/paper_trade_cycle.py --offline # labeled synthetic dry-run; no broker calls
 ```
 
-`validate_performance.py` reports honest measured Sharpe/CAGR/DSR vs buy-and-hold
-(see [PERFORMANCE.md](PERFORMANCE.md)); `--pit` defines the single-name universe
-from historical index membership. `generate_report.py` renders the tearsheet
-above (equity vs benchmarks, drawdown, rolling Sharpe, monthly heatmap, metrics)
-to a PNG and a self-contained HTML page. `survivorship_demo.py` shows how many past
-index members a survivor-only feed drops. `verify_brokers.py` exercises the
+`validate_performance.py` explicitly fetches live yfinance data; `--pit` uses a
+fixed start-date cohort from historical index membership. `generate_report.py`
+accepts either an owner-supplied wide CSV or explicit live yfinance, writes three
+charts under ignored `reports/img/`, and prints source metadata plus markdown
+tables. `survivorship_demo.py` requires the same explicit live-data opt-in and
+shows the current pricing gap for past index members. `verify_brokers.py` exercises the
 Alpaca/IB/CCXT adapters end-to-end against SDK-shaped mocks (request build +
-response parsing) - the live API surface is separately confirmed against the
-real SDKs. `paper_trade_cycle.py` runs the full execution path (add `--submit`
-with `ALPACA_*` set to place paper orders).
+response parsing); it does not verify a live SDK/authenticated connection.
+`paper_trade_cycle.py` runs the full execution path (use
+`--live-yfinance --submit` with `ALPACA_*` set to place paper orders).
 
-> **On UI:** quantcortex is a library + notebooks + exported reports, like its
+> **On UI:** quantcortex is a library + notebooks + exported charts, like its
 > peers (qlib, zipline, vectorbt). There is no bundled web app by design - a
 > heavy SPA would be maintenance overhead for a research platform. Results are
-> surfaced through the notebooks and the tearsheet/HTML reports above; an
+> surfaced through notebooks and locally generated reports; an
 > optional Streamlit dashboard could be layered on if interactive exploration is
 > wanted, but it is intentionally out of the core.
 
-### Go live (Phase 4)
+### Paper trading (Phase 4)
 
 Copy `.env.example` to `.env`, add your Alpaca / Interactive Brokers credentials,
 then drive one rebalance cycle through `research/05_live_trading_bridge.ipynb`
@@ -128,57 +127,25 @@ TimescaleDB) with `docker compose up`.
 
 ---
 
-## Results
+## Performance Reporting
 
-Multi-asset rotation, 2018-01-02 to 2025-12-30, weekly rebalance, net of 3 bps
-commission + 10 bps slippage. These figures are **reproducible**: they are
-computed from a bundled fixed price snapshot (`quantcortex/data/sample/rotation_prices.csv`)
-by `python scripts/generate_report.py`, and the backtest is deterministic. Run
-with `--live` to refetch from yfinance (note: yfinance re-adjusts historical
-closes over time, so a live fetch drifts slightly from the snapshot).
+No market-data snapshot, executed notebook output, generated chart, or fixed
+performance number is published in this repository. This avoids redistributing
+provider data and prevents a changing data vintage from looking immutable.
 
-**Growth of $1 vs benchmarks** - the rotation (blue) is defensive and trails
-buy-and-hold in this bull-dominated window; the charts showcase the reporting,
-not a winning strategy.
+For a licensed local dataset, run:
 
-![Growth of $1 vs benchmarks](docs/img/equity_vs_benchmarks.png)
+```bash
+PYTHONPATH=. python scripts/generate_report.py \
+  --prices-csv local_data/rotation_prices.csv \
+  --n-trials 10  # replace 10 with the actual configurations tested
+```
 
-**Drawdown**
-
-![Underwater drawdown](docs/img/drawdown.png)
-
-**Rolling Sharpe (126-day)**
-
-![Rolling Sharpe](docs/img/rolling_sharpe.png)
-
-**Performance metrics**
-
-| Metric | Value |
-|--------|-------|
-| CAGR | +1.08% |
-| Annualized volatility | 8.44% |
-| Sharpe | +0.17 |
-| Sortino | +0.23 |
-| Calmar | +0.07 |
-| Max drawdown | -14.64% |
-| VaR 95% (daily) | 0.78% |
-| CVaR 95% (daily) | 1.41% |
-| Deflated Sharpe (10 trials) | 0.136 |
-| SPY buy & hold Sharpe | +0.78 |
-| Equal-weight 6-ETF Sharpe | +1.00 |
-
-**Monthly returns (%)**
-
-| Year | Jan | Feb | Mar | Apr | May | Jun | Jul | Aug | Sep | Oct | Nov | Dec | YTD |
-|------|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|
-| 2018 | +3.0 | -3.5 | -2.1 | +1.1 | +0.6 | -4.3 | +1.0 | +0.0 | +0.7 | -4.9 | +1.1 | -0.7 | -7.9 |
-| 2019 | +0.6 | +2.5 | +0.2 | -1.2 | +1.2 | +10.8 | -1.3 | -4.0 | -0.8 | +0.6 | -1.8 | +1.2 | +7.6 |
-| 2020 | +4.0 | -6.3 | +0.0 | +2.2 | +0.8 | +1.0 | +2.1 | +1.9 | +0.2 | -0.4 | +3.2 | +0.8 | +9.5 |
-| 2021 | -1.6 | -0.3 | +0.0 | +0.2 | +0.0 | -0.0 | -1.0 | +1.1 | -1.5 | +2.6 | +1.1 | +0.6 | +1.2 |
-| 2022 | +3.7 | +0.0 | +0.0 | -1.0 | -0.7 | -2.6 | +1.3 | -2.9 | -4.4 | +2.9 | +0.0 | +0.0 | -3.8 |
-| 2023 | +2.7 | +0.2 | +2.1 | -0.6 | -0.9 | +0.0 | -0.8 | -1.8 | -2.7 | +0.9 | +0.0 | +0.0 | -1.0 |
-| 2024 | +1.8 | +0.6 | +2.5 | -5.1 | +5.2 | +2.4 | -2.3 | -0.1 | -2.2 | -1.9 | -0.3 | -1.4 | -1.2 |
-| 2025 | +1.4 | -1.1 | -2.9 | +0.0 | +0.0 | -0.5 | -0.9 | +1.7 | +4.7 | +3.6 | -1.2 | +0.9 | +5.5 |
+The report records the file path, SHA-256 digest, observed date window, cost
+assumptions, DSR trial count, and whether liquidity constraints are active.
+Generated charts remain under ignored `reports/`. See
+[PERFORMANCE.md](PERFORMANCE.md) for interpretation requirements and known
+limitations.
 
 ---
 
@@ -233,7 +200,7 @@ quantcortex/                     # repo root
 │   │   ├── processors/         # calendar.py, adjustments.py, pit_enforcer.py, lookahead_detector.py
 │   │   ├── storage/            # parquet_store.py, timescale_store.py, redis_cache.py
 │   │   ├── universe/           # base ABC, sp500/nasdaq100 + sp500_wikipedia.py (PIT)
-│   │   └── sample/             # bundled price snapshot for reproducible results
+│   │   └── local_csv.py        # validated owner-supplied CSV loaders
 │   │
 │   ├── alpha/
 │   │   ├── factors/
@@ -312,8 +279,8 @@ quantcortex/                     # repo root
 │   └── 05_live_trading_bridge.ipynb
 │
 ├── scripts/
-│   ├── validate_performance.py  # measured backtest vs targets (--pit: PIT universe)
-│   ├── generate_report.py       # publication-quality tearsheet -> PNG + HTML
+│   ├── validate_performance.py  # explicit live-data validation (--pit: PIT universe)
+│   ├── generate_report.py       # charts + markdown from an explicit data source
 │   ├── paper_trade_cycle.py     # one rebalance cycle (offline / Alpaca paper)
 │   ├── survivorship_demo.py     # quantify S&P 500 survivorship bias (PIT)
 │   └── verify_brokers.py        # broker adapters vs faithful SDK mocks
@@ -327,13 +294,16 @@ quantcortex/                     # repo root
 │   ├── test_order_manager.py
 │   └── test_regression_guards.py  # core-dep regression guards (audit fixes)
 │
-├── docs/img/                    # committed showcase charts (equity/drawdown/rolling-Sharpe)
+├── local_data/README.md         # ignored local-data schemas and provenance rules
+├── reports/                     # ignored generated charts and report output
+├── docs/history-rewrite-plan.md # optional purge procedure; not executed
 ├── docker-compose.yml
 ├── Dockerfile
 ├── pyproject.toml
 ├── .env.example
+├── .dockerignore               # excludes secrets, local data, and reports
 ├── .gitignore
-├── PERFORMANCE.md              # measured 2018-2025 results (honest, reproducible)
+├── PERFORMANCE.md              # evaluation method and reporting requirements
 └── LICENSE
 ```
 
@@ -342,13 +312,18 @@ quantcortex/                     # repo root
 ## Key Design Principles
 
 ### 1. Point-in-Time (PIT) Discipline
-Financial report data uses **announcement dates**, not period-end dates. `pit_enforcer.py` raises at ingestion time if any feature would introduce forward-looking information.
+Financial report data should use **announcement dates**, not period-end dates.
+`pit_enforcer.py` rejects records that violate that contract when the enforcer
+is applied.
 
 ### 2. Walk-Forward Validation with Embargo
-All strategy evaluation uses expanding or rolling walk-forward optimization. An embargo gap between train and test windows purges samples whose label windows overlap, preventing subtle leakage.
+The walk-forward engine supports expanding or rolling windows plus a purge and
+embargo gap. Research code must select and use it when models are refit or
+configurations are evaluated over time.
 
 ### 3. Deflated Sharpe Ratio (DSR)
-All strategy results are reported with DSR (Bailey & López de Prado, 2014) to account for multiple testing and non-normal return distributions:
+The report generator includes DSR (Bailey & López de Prado, 2014) to account
+for multiple testing and non-normal return distributions:
 
 ```
 DSR = Phi[ (SR* - SR0)*sqrt(T-1) / sqrt(1 - gamma3*SR* + (gamma4-1)/4*SR*^2) ]
@@ -356,20 +331,20 @@ DSR = Phi[ (SR* - SR0)*sqrt(T-1) / sqrt(1 - gamma3*SR* + (gamma4-1)/4*SR*^2) ]
 
 Where `SR*` = observed max Sharpe, `SR0` = expected max under the null, `gamma3` = skewness, `gamma4` = excess kurtosis.
 
-### 4. Seven Backtesting Pitfall Categories (enforced programmatically)
-1. **Look-ahead bias** - `lookahead_audit.py` detects future data leakage
-2. **Overfitting** - DSR + BHY multiple-testing correction
-3. **Survivorship bias** - universes are queried *as of* a date via point-in-time membership (`quantcortex/data/universe/`); `SP500Universe.from_wikipedia()` reconstructs real historical constituents (verified: of the 501 names in the index on 2018-06-01, 122 are gone today and 55 are no longer priceable - the rows a survivor-only backtest silently omits, quantified by `scripts/survivorship_demo.py`). `survivorship_check.py` validates that a backtest only used PIT-valid members.
-4. **Data adjustment errors** - split/dividend-adjusted price validation
-5. **Multiple testing bias** - BHY correction on all factor IC tests
-6. **Transaction cost neglect** - costs mandatory in all backtest engines
-7. **Liquidity assumptions** - volume limit: <= 10% of 20-day ADV per symbol
+### 4. Backtesting Pitfall Controls
+1. **Look-ahead bias** - `lookahead_audit.py` and PIT checks detect leakage when invoked.
+2. **Overfitting** - DSR and BHY multiple-testing utilities quantify trial risk.
+3. **Survivorship bias** - point-in-time universe utilities reconstruct historical membership; delisted-security prices still require an appropriate feed.
+4. **Data adjustment errors** - processors validate split/dividend-adjusted inputs.
+5. **Multiple testing bias** - BHY correction is available for factor and strategy tests.
+6. **Transaction cost neglect** - every backtest engine requires a cost model.
+7. **Liquidity assumptions** - a 10% ADV cap applies only when ADV data is supplied.
 
 ### 5. Transaction Cost Model
 ```python
 commission  = 0.0003   # 3 bps
 slippage    = 0.0010   # 10 bps
-volume_cap  = 0.10     # max 10% of 20-day ADV
+volume_cap  = 0.10     # max 10% of ADV when an ADV series is supplied
 ```
 
 ---
@@ -394,15 +369,12 @@ volume_cap  = 0.10     # max 10% of 20-day ADV
 - **Selection:** Information Ratio relative to QQQ
 - **Allocation:** Residual momentum within selected asset groups
 - **Risk gate:** HMM regime + VIX scaling
-- **Design target:** Sharpe > 1.10 (2018-2025). **Measured: +0.17** (reproducible
-  from the bundled snapshot; defensive rotation trails buy-and-hold in a bull
-  window). See the [Results](#results) section and [PERFORMANCE.md](PERFORMANCE.md).
+- **Design target:** Sharpe > 1.10; this is aspirational, not a published result.
 
 ### Momentum ML (`quantcortex/strategies/momentum_ml.py`)
 - GBDT cross-sectional momentum with alpha158 features
 - Walk-forward refit every quarter
-- **Design target:** Sharpe > 0.9. **Measured: ~0.63** (survivorship-biased
-  single-name read; live-fetch, vintage-dependent). See [PERFORMANCE.md](PERFORMANCE.md).
+- **Design target:** Sharpe > 0.9; this is aspirational, not a published result.
 
 ### DRL Portfolio (`quantcortex/strategies/drl_portfolio.py`)
 - PPO agent trained on rolling 3-year windows
@@ -418,7 +390,7 @@ volume_cap  = 0.10     # max 10% of 20-day ADV
 | **Phase 1** | Data layer + PIT enforcement + universe construction | Complete |
 | **Phase 2** | Alpha factor library + walk-forward validation harness | Complete |
 | **Phase 3** | Portfolio construction + backtest engines + DSR reporting | Complete |
-| **Phase 4** | Live execution layer (Alpaca paper -> IB live) | Adapters verified twice: API-conformant vs the real SDKs (alpaca-trade-api, ib_insync, ccxt) and behaviorally against SDK mocks (`scripts/verify_brokers.py`, 15/15); `scripts/paper_trade_cycle.py` runs the full cycle. Only the live TCP/auth round-trip remains, pending your paper credentials. |
+| **Phase 4** | Live execution layer (Alpaca paper -> IB live) | Adapters are behaviorally covered by SDK-shaped mocks (`scripts/verify_brokers.py`, 15/15), and `scripts/paper_trade_cycle.py` runs the full local cycle. Live SDK compatibility and the account-authenticated paper handshake remain unverified. |
 | **Phase 5** | DRL allocator + FinBERT sentiment overlay | Complete |
 
 ---
@@ -437,10 +409,10 @@ volume_cap  = 0.10     # max 10% of 20-day ADV
 ## References
 
 - Bailey, D. & López de Prado, M. (2014). *The Deflated Sharpe Ratio.* Journal of Portfolio Management.
-- Liu, X. et al. (2024). *FinRL-X: A Unified Framework for Financial Reinforcement Learning.* arXiv:2603.21330.
+- Yang, H. et al. (2026). *FinRL-X: An AI-Native Modular Infrastructure for Quantitative Trading.* [arXiv:2603.21330](https://arxiv.org/abs/2603.21330).
 - López de Prado, M. (2018). *Advances in Financial Machine Learning.* Wiley.
 - Qian, E. (2005). *Risk Parity Portfolios.* PanAgora Asset Management.
 
 ---
 
-*Private repository - magnaquant*
+*MIT licensed.*

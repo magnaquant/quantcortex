@@ -52,18 +52,17 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      # Tests run from the repo root with pythonpath=["."], which would not catch
-      # a packaging-data problem (e.g. the bundled snapshot not shipping in the
-      # wheel). Build the artifacts, install the wheel into a clean venv, and
-      # prove the package imports and the sample CSV is present at the path the
-      # report generator resolves through quantcortex.__file__.
+      # Tests run from the repo root with pythonpath=["."], so also build and
+      # install the wheel in a clean environment. The smoke check proves the
+      # public import surface works and guards against accidentally packaging
+      # the removed market-data snapshot.
       - name: Build sdist + wheel
         run: |
           python -m pip install --upgrade pip build
           python -m build
 
-      - name: Install wheel into a clean venv and verify packaged data
+      - name: Install wheel into a clean venv and verify package contents
         run: |
           python -m venv /tmp/wheeltest
           /tmp/wheeltest/bin/pip install dist/*.whl
-          cd /tmp && /tmp/wheeltest/bin/python -c "from pathlib import Path; import quantcortex, quantcortex.portfolio.base, quantcortex.backtest.engines.vectorized, quantcortex.strategies.base_strategy; csv = Path(quantcortex.__file__).resolve().parent / 'data' / 'sample' / 'rotation_prices.csv'; assert csv.is_file(), f'sample CSV missing from installed package: {csv}'; print('packaged import OK; sample CSV present at', csv)"
+          cd /tmp && /tmp/wheeltest/bin/python -c "from pathlib import Path; import quantcortex, quantcortex.portfolio.base, quantcortex.backtest.engines.vectorized, quantcortex.strategies.base_strategy; csv = Path(quantcortex.__file__).resolve().parent / 'data' / 'sample' / 'rotation_prices.csv'; assert not csv.exists(), f'restricted market-data snapshot packaged: {csv}'; print('packaged import OK; market-data snapshot absent')"

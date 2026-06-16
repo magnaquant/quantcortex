@@ -2,22 +2,22 @@
 
 This is the operational counterpart to ``research/05_live_trading_bridge.ipynb``:
 it wires data -> strategy -> pre-trade risk -> order translation -> broker, and
-is safe to run repeatedly.
+supports a deterministic local dry run and paper-only submission.
 
-Modes (chosen automatically by what is available):
+Choose the price source explicitly:
 
-* **offline dry-run** (no ``ALPACA_*`` env vars): synthesises/fetches prices,
+* **offline dry-run** (``--offline``): generates deterministic test prices,
   computes the target book, runs the pre-trade risk gate, translates to orders
   against a notional account, and walks them through the local order-lifecycle
   state machine (NEW -> SUBMITTED -> FILLED). Nothing leaves the process.
-* **paper preview** (``ALPACA_*`` set, no ``--submit``): connects to the Alpaca
-  *paper* account, reads real equity/positions, computes the orders that *would*
+* **paper preview** (``--live-yfinance`` and ``ALPACA_*`` set): connects to the
+  Alpaca *paper* account, reads equity/positions, computes the orders that would
   be sent, and prints them without submitting.
-* **paper submit** (``ALPACA_*`` set, ``--submit``): actually places the orders
-  on the **paper** account.
+* **paper submit** (add ``--submit``): places the orders on the paper account.
 
-    python scripts/paper_trade_cycle.py            # offline or paper preview
-    python scripts/paper_trade_cycle.py --submit   # place paper orders (paper only)
+    python scripts/paper_trade_cycle.py --offline
+    python scripts/paper_trade_cycle.py --live-yfinance
+    python scripts/paper_trade_cycle.py --live-yfinance --submit
 
 It never touches a live (real-money) endpoint: it forces a paper broker and
 refuses to submit unless the configured base URL is a paper endpoint.
@@ -36,8 +36,7 @@ import pandas as pd
 
 warnings.filterwarnings("ignore")
 logging.getLogger("hmmlearn").setLevel(logging.ERROR)
-# yfinance logs network failures (DNS/HTTP) at error level; the offline fallback
-# is expected, so quiet its logger to keep the dry-run output clean.
+# The CLI reports live-fetch failures itself; suppress duplicate provider logs.
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 # joblib/loky can print a physical-core detection traceback on hosts where CPU
 # topology is unreadable; pin it so the --offline dry-run stays clean (respects
@@ -52,27 +51,33 @@ from quantcortex.strategies.multi_asset_rotation import MultiAssetRotation
 
 UNIVERSE = ["QQQ", "VGT", "GLD", "TLT", "SPY", "VIG"]
 DEFAULT_CAPITAL = 100_000.0
+YFINANCE_NOTICE = (
+    "Live Yahoo Finance data is fetched through yfinance. Review Yahoo's terms "
+    "and yfinance's legal disclaimer at https://ranaroussi.github.io/yfinance/."
+)
 
 
 def load_prices(offline: bool = False) -> pd.DataFrame:
-    """Recent daily prices for the universe; synthetic fallback if offline.
+    """Load synthetic dry-run prices or explicitly requested live prices.
 
     With ``offline=True`` the network is never touched: the synthetic series is
     used directly, so the dry-run is deterministic and emits no provider noise.
     """
-    if not offline:
-        try:
-            from quantcortex.data.providers.yfinance_provider import YFinanceProvider
+    if offline:
+        rng = np.random.default_rng(0)
+        dates = pd.bdate_range("2022-01-01", periods=600)
+        values = 100 * np.exp(
+            np.cumsum(rng.normal(0.0003, 0.011, (600, len(UNIVERSE))), axis=0)
+        )
+        return pd.DataFrame(values, index=dates, columns=UNIVERSE)
 
-            px = YFinanceProvider().get_prices(UNIVERSE, start="2022-01-01")
-            if px is not None and not px.empty and px.shape[0] > 200:
-                return px.dropna(how="all").ffill().dropna()
-        except Exception as exc:
-            print(f"[offline] yfinance unavailable ({type(exc).__name__}); synthetic prices.")
-    rng = np.random.default_rng(0)
-    dates = pd.bdate_range("2022-01-01", periods=600)
-    px = 100 * np.exp(np.cumsum(rng.normal(0.0003, 0.011, (600, len(UNIVERSE))), axis=0))
-    return pd.DataFrame(px, index=dates, columns=UNIVERSE)
+    print(YFINANCE_NOTICE, file=sys.stderr)
+    from quantcortex.data.providers.yfinance_provider import YFinanceProvider
+
+    prices = YFinanceProvider().get_prices(UNIVERSE, start="2022-01-01")
+    if prices is None or prices.empty or prices.shape[0] <= 200:
+        raise RuntimeError("yfinance returned insufficient price history")
+    return prices.dropna(how="all").ffill().dropna()
 
 
 def latest_target(prices: pd.DataFrame) -> pd.Series:
@@ -126,8 +131,10 @@ def run_offline(prices, target, forced: bool = False) -> int:
     if states:
         assert all(s == "FILLED" for s in states.values())
         print(f"\nsimulated lifecycle: {len(states)} orders NEW -> SUBMITTED -> FILLED")
-    print("\nSet ALPACA_API_KEY / ALPACA_SECRET_KEY (paper) in .env to run against "
-          "a real paper account; add --submit to actually place orders.")
+    print(
+        "\nSet ALPACA_API_KEY / ALPACA_SECRET_KEY (paper), rerun with "
+        "--live-yfinance, and add --submit to place paper orders."
+    )
     return 0
 
 
@@ -184,12 +191,35 @@ def run_paper(prices, target, submit: bool) -> int:
 def main(argv) -> int:
     ap = argparse.ArgumentParser(description="quantcortex paper rebalance cycle")
     ap.add_argument("--submit", action="store_true", help="actually place paper orders")
-    ap.add_argument("--offline", action="store_true",
-                    help="force the synthetic-price dry-run; never touch the network "
-                         "(deterministic, no provider noise) even if ALPACA_* is set")
+    source = ap.add_mutually_exclusive_group(required=True)
+    source.add_argument(
+        "--offline",
+        action="store_true",
+        help="use the labeled synthetic dry-run; never touch network or broker",
+    )
+    source.add_argument(
+        "--live-yfinance",
+        action="store_true",
+        help="explicitly fetch live prices through yfinance",
+    )
     args = ap.parse_args(argv[1:])
+    if args.offline and args.submit:
+        ap.error("--submit requires --live-yfinance")
+    has_creds = bool(
+        os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY")
+    )
+    if args.submit and not has_creds:
+        print(
+            "paper submission requires ALPACA_API_KEY and ALPACA_SECRET_KEY",
+            file=sys.stderr,
+        )
+        return 2
 
-    prices = load_prices(offline=args.offline)
+    try:
+        prices = load_prices(offline=args.offline)
+    except Exception as exc:
+        print(f"price loading failed: {exc}", file=sys.stderr)
+        return 1
     target = latest_target(prices)
     print(f"universe: {UNIVERSE}")
     print(f"target weights:\n{target.round(3).to_string() if not target.empty else '  (flat / no signal)'}\n")
@@ -199,7 +229,6 @@ def main(argv) -> int:
 
     if args.offline:
         return run_offline(prices, target, forced=True)
-    has_creds = bool(os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY"))
     return run_paper(prices, target, args.submit) if has_creds else run_offline(prices, target)
 
 

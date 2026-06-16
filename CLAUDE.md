@@ -15,8 +15,11 @@ and lint. Run everything from the repo root.
 - Operational scripts import `quantcortex.*`, so run them with the root on the
   path: `PYTHONPATH=. .venv/bin/python scripts/<name>.py`
   (validate_performance, generate_report, survivorship_demo, verify_brokers,
-  paper_trade_cycle). `generate_report.py` and `validate_performance.py --pit`
-  print results; `--live` refetches data instead of using the bundled snapshot.
+  paper_trade_cycle). Performance commands require an explicit source:
+  `generate_report.py --prices-csv local_data/rotation_prices.csv` or
+  `generate_report.py --live-yfinance`; `validate_performance.py` requires
+  `--live-yfinance`; `survivorship_demo.py` requires `--live-yfinance`;
+  `paper_trade_cycle.py` requires either `--offline` or `--live-yfinance`.
 - CI (`.github/workflows/ci.yml`) runs ruff + pytest on Python 3.11/3.12 with
   core deps only; optional extras are deliberately not installed there.
 
@@ -91,10 +94,12 @@ or vol-scaled book is NOT required to sum to 1. Violations raise
   (threadpoolctl) around the HMM fit so backtests are bit-for-bit reproducible; a
   non-converged EM near a regime boundary otherwise flips under multithreaded
   float ordering. Keep model fits seeded and deterministic.
-- **Reproducible results.** `generate_report.py` and the README "Results" read
-  the fixed snapshot `quantcortex/data/sample/rotation_prices.csv`, because live
-  yfinance re-adjusts historical closes on every fetch. Quote numbers from the
-  generator verbatim rather than hand-typing them.
+- **Explicit research data.** Do not commit market-data snapshots, generated
+  performance charts, or executed notebook outputs. Reports and notebooks must
+  use either an owner-supplied permitted CSV or an explicit live-provider opt-in;
+  they must never silently substitute generated prices after a fetch failure.
+  Synthetic fixtures remain appropriate for tests and the clearly labeled
+  `paper_trade_cycle.py --offline` dry run.
 
 ## Layer ABCs to subclass
 
@@ -114,13 +119,16 @@ All importable code lives under one top-level package, `quantcortex` (e.g.
 `scripts/`, `research/`, and `docs/` sit at the repo root, outside the package.
 Keep new modules inside `quantcortex/` and import them absolutely as
 `quantcortex.<subpkg>...`; there are no relative imports and no top-level
-package squatting.
+package squatting. Docker commands follow the same namespace rule. Keep `.env`,
+`local_data/`, and `reports/` excluded from the Docker build context via
+`.dockerignore`.
 
 ## Honesty norms
 
 The strategies' Sharpe targets (1.10 / 0.9 in the README) are aspirational
-design goals; the measured baselines (rotation ~0.17, momentum_ml ~0.63) are
-reported honestly and are NOT to be tuned toward a single backtest (that is the
-overfitting the Deflated Sharpe Ratio and BHY tooling exist to catch). See
-PERFORMANCE.md. Source and docs are ASCII-only (no em-dashes, en-dashes, or
-arrows); the README directory-tree block is the one exception (box-drawing).
+design goals, not measured claims. Do not tune toward a single backtest; record
+the true trial count for DSR/BHY analysis and report unfavorable results as-is.
+Every published run needs source, permission, date-window, adjustment, and input
+digest metadata. See PERFORMANCE.md. Source and docs are ASCII-only (no
+em-dashes, en-dashes, or arrows); the README directory-tree block is the one
+exception (box-drawing).

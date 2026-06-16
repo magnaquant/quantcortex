@@ -28,9 +28,10 @@ htmlcov/
 data_cache/
 *.pkl
 *.pt
+local_data/*
+!local_data/README.md
 
-# Generated reports (regenerable via scripts/generate_report.py).
-# The committed showcase image under docs/img/ is intentionally NOT ignored.
+# Generated reports (regenerable via scripts/generate_report.py)
 reports/
 
 # OS

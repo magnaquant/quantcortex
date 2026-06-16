@@ -2,13 +2,12 @@
 
 ## Project Structure & Module Organization
 
-All importable code lives under one top-level `quantcortex` package; import it
-absolutely (e.g. `from quantcortex.portfolio.base import enforce_weight_contract`).
-It is organized by pipeline layer - `data`, `alpha`, `portfolio`, `timing`,
-`risk`, `backtest`, `execution`, `strategies` - with the bundled price snapshot
-under `quantcortex/data/sample/`; see `CLAUDE.md` for what each layer holds.
-Outside the package at the repo root: `tests/` (pytest), `research/` (notebooks),
-`scripts/` (utilities), and `docs/img/` (charts).
+All importable code lives under `quantcortex`; use absolute imports such as
+`from quantcortex.portfolio.base import enforce_weight_contract`. Pipeline
+layers are `data`, `alpha`, `portfolio`, `timing`, `risk`, `backtest`,
+`execution`, and `strategies`. Root directories include `tests/`, `research/`,
+`scripts/`, ignored `local_data/`, and ignored `reports/`. See `CLAUDE.md` for
+layer details.
 
 ## Build, Test, and Development Commands
 
@@ -18,7 +17,8 @@ Run from the repo root:
 .venv/bin/python -m pytest tests/ -q
 .venv/bin/ruff check .
 PYTHONPATH=. .venv/bin/python scripts/verify_brokers.py
-PYTHONPATH=. .venv/bin/python scripts/generate_report.py
+PYTHONPATH=. .venv/bin/python scripts/generate_report.py \
+  --prices-csv local_data/rotation_prices.csv
 ```
 
 `pytest` runs the offline core suite; `ruff check .` matches CI lint. Scripts need `PYTHONPATH=.` unless installed editable. If matplotlib cannot write its cache (sandbox/CI), set `MPLCONFIGDIR` to a writable dir.
@@ -45,4 +45,8 @@ Use conventional commit prefixes (`feat:`, `fix:`, `docs:`, `ci:`); keep message
 
 ## Security & Configuration Tips
 
-Never commit `.env`, credentials, broker account data, local state, caches, or large generated artifacts. Use `.env.example` as the template. Preserve pre-trade risk checks, paper-mode defaults, and point-in-time data discipline.
+Never commit `.env`, credentials, broker account data, local state, market-data
+snapshots, executed notebook outputs, or generated reports. Use `.env.example`
+as the template. Synthetic data is limited to tests and clearly labeled dry
+runs. Preserve pre-trade risk checks, paper-mode defaults, and point-in-time
+data discipline.
