@@ -11,14 +11,16 @@ this file reproduces the numbers bit for bit. Without a fixed snapshot the
 results would drift: `yfinance` re-adjusts historical closes over time as
 dividends accrue, so every live fetch returns slightly different data.
 
-**Provenance / licensing.** Derived from Yahoo Finance via `yfinance` for
-reproducible examples and tests only. Whether committing this Yahoo-derived
-snapshot is acceptable for a given use (private repo, redistribution, etc.) is a
-repo-owner / legal decision this file cannot settle; if in doubt, the safest
-alternatives are a deterministic synthetic fixture, or keeping real data
-local-only by passing `--live` to `scripts/generate_report.py` (which fetches
-fresh and writes nothing). It is not an authoritative or survivorship-safe
-source. Regenerate or extend the committed snapshot with:
+**Provenance / licensing.** This is *real* market data (not synthetic), derived
+from Yahoo Finance via `yfinance` for reproducible examples and tests. Note that
+`yfinance` documents Yahoo Finance data as intended for **personal use**;
+whether committing this Yahoo-derived snapshot to a given repo (public,
+redistributed, or commercial) is acceptable is a repo-owner / legal decision
+this file cannot settle, so observe Yahoo's terms for your use. To avoid relying
+on the committed copy, regenerate it locally (below) or pass `--live` to
+`scripts/generate_report.py`, which fetches fresh and writes nothing. It is not
+an authoritative or survivorship-safe source. Regenerate or extend the committed
+snapshot with:
 
 ```bash
 python -c "from quantcortex.data.providers.yfinance_provider import YFinanceProvider; \
