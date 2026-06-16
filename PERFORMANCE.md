@@ -21,8 +21,8 @@ strategy holds cash.
 | Net nominal CAGR | +1.40% |
 | Gross nominal CAGR before modeled costs | +3.17% |
 | Annualized volatility | 5.86% |
-| Net cash-excess Sharpe | -0.15 |
-| Gross cash-excess Sharpe before modeled costs | +0.14 |
+| Net conventional sample cash-excess Sharpe | -0.15 |
+| Gross conventional sample cash-excess Sharpe before modeled costs | +0.14 |
 | Maximum drawdown | -9.83% |
 | Annualized one-way turnover | 10.30x |
 | Annualized gross traded notional | 13.25x |
@@ -30,7 +30,8 @@ strategy holds cash.
 | Mean active gross exposure | 30.14% |
 | Fully-cash session fraction | 47.94% |
 | Cash proxy CAGR | +2.50% |
-| Exposure-matched equal-initial-weight basket cash-excess Sharpe, gross | +0.80 |
+| Realized-exposure attribution-control cash-excess Sharpe, gross | +0.80 |
+| Target-exposure comparator cash-excess Sharpe, after costs | +0.62 |
 
 Strategy returns are net of the platform default: 3 bps commission plus 10 bps
 flat slippage per dollar traded. The paper experiment encodes the same 13 bps
@@ -42,8 +43,9 @@ NAV. The 13.75% aggregate is instead the arithmetic sum of daily return drag
 against prior-close NAV, so the two quantities differ slightly on rebalance
 days with nonzero returns. Cash-aware accounting changes the interpretation: the strategy has
 positive nominal growth but negative return in excess of SHV after modeled
-costs, and it trails a passive benchmark matched to the same daily risky
-exposure. The DSR of 0.022 uses an assumed 10 trials and a single-series
+costs. It trails both an ex-post control matched to realized daily exposure and
+a causal comparator that follows target exposure and pays the same cost rate.
+The DSR of 0.022 uses an assumed 10 trials and a single-series
 variance estimate. Because the true historical trial count is unknown, it is
 not a validated multiple-testing correction. Exact source and artifact hashes
 are in `docs/img/performance_manifest.json`.
@@ -70,6 +72,24 @@ The constant-exposure series is an ex-post diagnostic, not a tradable
 benchmark, and the intervals are unstudentized percentile intervals
 conditional on this historical path. `paper/results/return_decomposition.csv`
 contains 5-, 21-, and 63-session results.
+
+### Costed comparator and Sharpe uncertainty
+
+The realized-exposure control above is exact for attribution but is gross of
+its own costs and is not tradable. The separate target-exposure comparator
+executes the strategy's declared gross exposure on the next bar, assigns the
+remainder to SHV, and pays the same 13 bps proportional cost. Its net CAGR is
+5.72% and its conventional sample cash-excess Sharpe is 0.62.
+
+The strategy's annualized arithmetic return relative to that costed comparator
+is -4.14%, with a primary 21-session circular-block interval of
+[-6.70%, -1.63%]. Its conventional active Sharpe is -0.92 with a directly
+resampled interval of [-1.47, -0.37]. The strategy's own conventional
+cash-excess Sharpe interval is [-0.80, +0.56]. These intervals describe this
+historical path under the declared block-bootstrap assumptions; they are not
+iid normal confidence intervals or evidence of future performance. See
+`paper/results/comparator_diagnostics.csv` and
+`paper/results/sharpe_uncertainty.csv`.
 
 ### Protocol diagnostics
 
@@ -172,9 +192,11 @@ quality only from authenticated order and execution records.
   `--sr-variance`. Without it, the scripts disclose that they use the metric's
   simplifying single-series variance estimate.
 - Compare against relevant buy-and-hold, equal-weight, cash, and
-  exposure-matched benchmarks.
+  exposure-matched controls. Distinguish ex-post attribution identities from
+  causal, costed comparators.
 - Label whether benchmarks are gross or cost-adjusted and state the risk-free
-  or cash-return series used for Sharpe. The reference benchmarks are gross.
+  or cash-return series used for Sharpe. The reference attribution control is
+  gross; the target-exposure comparator is cost-adjusted.
 - Report costs, turnover, and maximum drawdown. Report the Deflated Sharpe
   Ratio only when its trial-count and Sharpe-variance assumptions are
   defensible; otherwise omit it or label it exploratory with those assumptions.

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -16,17 +18,25 @@ from scripts.run_paper_experiments import (
     STRATEGY_PARAMETERS,
     _benchmark_returns,
     _cagr,
+    _costed_target_exposure_comparator,
+    _git_metadata,
     _max_drawdown,
     _save_figures,
     _tex_number,
     circular_block_bootstrap,
     circular_block_bootstrap_frame,
+    circular_block_bootstrap_sharpe,
+    circular_block_bootstrap_sharpe_frame,
+    evaluation_contract,
     invalid_same_close_diagnostic,
     iso_timestamp,
     nonempty_text,
     return_decomposition,
     run_experiments,
     source_tree_manifest,
+)
+from scripts.run_paper_experiments import (
+    main as paper_main,
 )
 
 
@@ -110,6 +120,100 @@ def test_joint_bootstrap_uses_complete_finite_rows():
         )
 
 
+def test_sharpe_block_bootstrap_is_deterministic_and_reports_sample_statistic():
+    returns = pd.Series(
+        np.random.default_rng(3).normal(0.001, 0.01, size=150),
+        name="excess",
+    )
+    first = circular_block_bootstrap_sharpe(
+        returns,
+        block_length=5,
+        replications=250,
+        seed=17,
+    )
+    second = circular_block_bootstrap_sharpe(
+        returns,
+        block_length=5,
+        replications=250,
+        seed=17,
+    )
+
+    assert first == second
+    assert first["sample_sharpe"] == pytest.approx(
+        returns.mean() / returns.std(ddof=1) * np.sqrt(252.0)
+    )
+    assert first["ci_95_lower"] < first["ci_95_upper"]
+
+    with pytest.raises(ValueError, match="undefined"):
+        circular_block_bootstrap_sharpe(
+            pd.Series([0.01] * 10),
+            block_length=2,
+            replications=20,
+        )
+
+
+def test_joint_sharpe_bootstrap_rejects_incomplete_rows():
+    frame = pd.DataFrame(
+        {
+            "first": [0.01, 0.02, -0.01],
+            "second": [0.00, np.nan, 0.01],
+        }
+    )
+    with pytest.raises(ValueError, match="complete"):
+        circular_block_bootstrap_sharpe_frame(
+            frame,
+            block_length=2,
+            replications=20,
+        )
+
+
+def test_costed_target_exposure_comparator_is_causal_and_charges_rebalances():
+    index = pd.bdate_range("2024-01-01", periods=6)
+    prices = pd.DataFrame(
+        {
+            "A": [100.0, 100.0, 110.0, 110.0, 121.0, 121.0],
+            "B": [100.0, 100.0, 110.0, 110.0, 121.0, 121.0],
+        },
+        index=index,
+    )
+    weights = pd.DataFrame(
+        {"A": [0.5, 1.0], "B": [0.0, 0.0]},
+        index=pd.DatetimeIndex([index[0], index[2]]),
+    )
+    cash = pd.Series(0.0, index=index)
+    evaluation_index = index[2:]
+
+    no_cost = _costed_target_exposure_comparator(
+        weights,
+        prices,
+        cash,
+        evaluation_index,
+        cost_bps=0.0,
+    )
+    costed = _costed_target_exposure_comparator(
+        weights,
+        prices,
+        cash,
+        evaluation_index,
+        cost_bps=13.0,
+    )
+
+    expected = pd.Series([0.05, 0.0, 0.10, 0.0], index=evaluation_index)
+    pd.testing.assert_series_equal(
+        no_cost.returns.reindex(evaluation_index),
+        expected,
+    )
+    assert costed.costs.loc[index[2]] == 0.0
+    assert costed.costs.loc[index[3]] > 0.0
+    assert _growth_for_test(costed.returns.reindex(evaluation_index)) < (
+        _growth_for_test(no_cost.returns.reindex(evaluation_index))
+    )
+
+
+def _growth_for_test(returns: pd.Series) -> float:
+    return float((1.0 + returns).prod())
+
+
 def test_return_decomposition_is_an_exact_daily_identity():
     index = pd.bdate_range("2024-01-01", periods=4)
     cash = pd.Series([0.001, 0.001, 0.001, 0.001], index=index)
@@ -164,7 +268,7 @@ def test_drawdown_uses_running_peak():
 
 def test_paper_number_formatting_normalizes_rounded_zero():
     assert _tex_number(-0.000021, digits=2) == "0.00"
-    assert _tex_number(-0.1547, digits=4) == "-0.1547"
+    assert _tex_number(-0.1547, digits=4) == r"\mbox{-0.1547}"
 
 
 def test_paper_provenance_text_rejects_empty_values():
@@ -251,6 +355,163 @@ def test_source_tree_fingerprint_is_deterministic():
     assert complete["file_count"] == len(expected_paths)
 
 
+def test_git_metadata_captures_cleanliness_before_writes(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / "tracked.txt").write_text("source\n", encoding="ascii")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "test: source"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    clean = _git_metadata(tmp_path)
+    assert len(clean["source_commit"]) == 40
+    assert clean["worktree_clean_at_start"] is True
+
+    (tmp_path / "generated.txt").write_text("artifact\n", encoding="ascii")
+    dirty = _git_metadata(tmp_path)
+    assert dirty["source_commit"] == clean["source_commit"]
+    assert dirty["worktree_clean_at_start"] is False
+
+
+def test_paper_cli_requires_clean_source_before_reading_input(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "scripts.run_paper_experiments._git_metadata",
+        lambda _repo_root: {
+            "source_commit": "0" * 40,
+            "worktree_clean_at_start": False,
+        },
+    )
+    with pytest.raises(RuntimeError, match="clean source worktree"):
+        paper_main(
+            [
+                "run_paper_experiments.py",
+                "--prices-csv",
+                str(tmp_path / "missing.csv"),
+                "--data-provider",
+                "test provider",
+                "--permission-basis",
+                "test permission",
+                "--retrieved-at",
+                "2026-06-16",
+                "--adjustment-method",
+                "test adjustment",
+                "--require-clean-source",
+            ]
+        )
+
+
+def test_paper_cli_writes_a_complete_test_only_artifact_set(monkeypatch, tmp_path):
+    warmup = pd.bdate_range(end="2017-12-29", periods=300)
+    first_period = pd.bdate_range("2018-01-02", periods=40)
+    second_period = pd.bdate_range("2022-01-03", periods=40)
+    index = warmup.append(first_period).append(second_period)
+    rng = np.random.default_rng(7)
+    common = rng.normal(0.0002, 0.006, size=len(index))
+    prices = {}
+    for offset, symbol in enumerate(["QQQ", "VGT", "GLD", "TLT", "SPY", "VIG"]):
+        idiosyncratic = rng.normal(0.0, 0.002 + offset * 0.0001, size=len(index))
+        prices[symbol] = 100.0 * np.exp(np.cumsum(common + idiosyncratic))
+    prices["SHV"] = 100.0 * np.exp(np.cumsum(np.full(len(index), 0.00005)))
+    source = tmp_path / "test_only_prices.csv"
+    pd.DataFrame(prices, index=index).rename_axis("date").reset_index().to_csv(
+        source,
+        index=False,
+    )
+    output_dir = tmp_path / "paper"
+    monkeypatch.setenv("MPLCONFIGDIR", str(tmp_path / "matplotlib"))
+    monkeypatch.setattr(
+        "scripts.run_paper_experiments._git_metadata",
+        lambda _repo_root: {
+            "source_commit": "1" * 40,
+            "worktree_clean_at_start": True,
+        },
+    )
+    monkeypatch.setattr(
+        "scripts.run_paper_experiments._threadpool_environment",
+        lambda: [{"user_api": "test", "num_threads": 1}],
+    )
+
+    assert (
+        paper_main(
+            [
+                "run_paper_experiments.py",
+                "--prices-csv",
+                str(source),
+                "--start",
+                "2018-01-02",
+                "--end",
+                "2022-02-25",
+                "--output-dir",
+                str(output_dir),
+                "--data-provider",
+                "deterministic synthetic test fixture",
+                "--permission-basis",
+                "test-only generated data",
+                "--retrieved-at",
+                "2026-06-16",
+                "--adjustment-method",
+                "test-only generated positive price paths",
+                "--generated-at",
+                "2026-06-16T00:00:00Z",
+                "--bootstrap-replications",
+                "10",
+                "--require-clean-source",
+            ]
+        )
+        == 0
+    )
+
+    manifest = json.loads(
+        (output_dir / "results" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["schema_version"] == 4
+    assert manifest["generated_at"] == "2026-06-16T00:00:00Z"
+    assert manifest["generator"]["git"] == {
+        "source_commit": "1" * 40,
+        "worktree_clean_at_start": True,
+    }
+    assert manifest["source"]["raw_input_committed"] is False
+    assert manifest["source"]["provider"] == "deterministic synthetic test fixture"
+    assert "results/evaluation_contract.json" in manifest["artifacts"]
+    assert "results/sharpe_uncertainty.csv" in manifest["artifacts"]
+    assert "figures/accounting_summary.pdf" in manifest["artifacts"]
+    for relative_path in manifest["artifacts"]:
+        assert (output_dir / relative_path).is_file(), relative_path
+
+
+def test_evaluation_contract_separates_attribution_and_tradable_comparator():
+    contract = evaluation_contract("SHV")
+
+    assert contract["schema_version"] == 1
+    assert contract["cash"]["return_proxy"] == "SHV"
+    assert contract["overlays"]["may_reduce_risky_exposure"] is True
+    assert contract["overlays"]["may_increase_declared_gross_limit"] is False
+    assert "block automatic retry" in contract["order_state"][
+        "uncertain_submission"
+    ]
+    comparators = contract["comparators"]
+    assert comparators["realized_exposure_attribution_control"] == {
+        "purpose": "exact ex-post arithmetic attribution",
+        "implementable": False,
+        "costed": False,
+        "exposure_basis": "strategy realized daily risky exposure",
+    }
+    assert comparators["target_exposure_costed_comparator"]["implementable"] is True
+    assert comparators["target_exposure_costed_comparator"]["costed"] is True
+
+
 def test_paper_figure_files_are_byte_deterministic(tmp_path):
     index = pd.bdate_range("2024-01-01", periods=6)
     baseline = {
@@ -260,6 +521,10 @@ def test_paper_figure_files_are_byte_deterministic(tmp_path):
         "exposure": pd.Series([0.0, 0.5, 1.0, 0.3, 0.0, 0.8], index=index),
     }
     matched = pd.Series([0.0, 0.006, -0.002, 0.003, 0.002, 0.004], index=index)
+    costed_comparator = pd.Series(
+        [0.0, 0.005, -0.0025, 0.0025, 0.0015, 0.0035],
+        index=index,
+    )
     costs = pd.DataFrame(
         {
             "all_in_cost_bps": [0.0, 13.0],
@@ -338,6 +603,7 @@ def test_paper_figure_files_are_byte_deterministic(tmp_path):
         first,
         baseline,
         matched,
+        costed_comparator,
         costs,
         ablation,
         ablation_uncertainty,
@@ -350,6 +616,7 @@ def test_paper_figure_files_are_byte_deterministic(tmp_path):
         second,
         baseline,
         matched,
+        costed_comparator,
         costs,
         ablation,
         ablation_uncertainty,

@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/magnaquant/quantcortex/schemas/evaluation_contract.schema.json",
+  "title": "QuantCortex Evaluation Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "contract_id",
+    "target_tape",
+    "overlays",
+    "information_set",
+    "execution",
+    "cash",
+    "costs",
+    "order_state",
+    "comparators",
+    "evidence_classes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "contract_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_tape": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "schema_path",
+        "columns",
+        "timestamp_semantics",
+        "constraints"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "schema_path": {
+          "const": "schemas/canonical_target_tape.schema.json"
+        },
+        "columns": {
+          "type": "array",
+          "prefixItems": [
+            {"const": "decision_timestamp"},
+            {"const": "symbol"},
+            {"const": "target_weight"}
+          ],
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "timestamp_semantics": {"type": "string", "minLength": 1},
+        "constraints": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "long_only",
+            "maximum_gross_exposure",
+            "complete_symbol_set_per_decision"
+          ],
+          "properties": {
+            "long_only": {"const": true},
+            "maximum_gross_exposure": {
+              "type": "number",
+              "exclusiveMinimum": 0.0
+            },
+            "complete_symbol_set_per_decision": {"const": true}
+          }
+        }
+      }
+    },
+    "overlays": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input_contract",
+        "output_contract",
+        "may_reduce_risky_exposure",
+        "may_increase_declared_gross_limit"
+      ],
+      "properties": {
+        "input_contract": {"type": "string", "minLength": 1},
+        "output_contract": {"type": "string", "minLength": 1},
+        "may_reduce_risky_exposure": {"const": true},
+        "may_increase_declared_gross_limit": {"const": false}
+      }
+    },
+    "information_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["price_basis", "point_in_time_rule", "missing_data_rule"],
+      "properties": {
+        "price_basis": {"type": "string", "minLength": 1},
+        "point_in_time_rule": {"type": "string", "minLength": 1},
+        "missing_data_rule": {"type": "string", "minLength": 1}
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timing", "accounting", "target_sizing"],
+      "properties": {
+        "timing": {"type": "string", "minLength": 1},
+        "accounting": {"type": "string", "minLength": 1},
+        "target_sizing": {"type": "string", "minLength": 1}
+      }
+    },
+    "cash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["residual_weight_rule", "return_proxy"],
+      "properties": {
+        "residual_weight_rule": {"type": "string", "minLength": 1},
+        "return_proxy": {"type": "string", "minLength": 1}
+      }
+    },
+    "costs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "baseline_bps_per_dollar_traded",
+        "market_impact"
+      ],
+      "properties": {
+        "model": {"type": "string", "minLength": 1},
+        "baseline_bps_per_dollar_traded": {
+          "type": "number",
+          "minimum": 0.0
+        },
+        "market_impact": {"type": "string", "minLength": 1}
+      }
+    },
+    "order_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "intent_persistence",
+        "uncertain_submission",
+        "state_revision"
+      ],
+      "properties": {
+        "intent_persistence": {"type": "string", "minLength": 1},
+        "uncertain_submission": {"type": "string", "minLength": 1},
+        "state_revision": {"type": "string", "minLength": 1}
+      }
+    },
+    "comparators": {
+      "type": "object",
+      "required": [
+        "realized_exposure_attribution_control",
+        "target_exposure_costed_comparator"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "realized_exposure_attribution_control": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "purpose",
+            "implementable",
+            "costed",
+            "exposure_basis"
+          ],
+          "properties": {
+            "purpose": {"type": "string", "minLength": 1},
+            "implementable": {"const": false},
+            "costed": {"const": false},
+            "exposure_basis": {"type": "string", "minLength": 1}
+          }
+        },
+        "target_exposure_costed_comparator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "purpose",
+            "implementable",
+            "costed",
+            "exposure_basis",
+            "risky_asset"
+          ],
+          "properties": {
+            "purpose": {"type": "string", "minLength": 1},
+            "implementable": {"const": true},
+            "costed": {"const": true},
+            "exposure_basis": {"type": "string", "minLength": 1},
+            "risky_asset": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "evidence_classes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exact_identity",
+        "property_test",
+        "economic_counterfactual",
+        "fault_injection",
+        "sdk_conformance",
+        "untested_live"
+      ],
+      "properties": {
+        "exact_identity": {"type": "string", "minLength": 1},
+        "property_test": {"type": "string", "minLength": 1},
+        "economic_counterfactual": {"type": "string", "minLength": 1},
+        "fault_injection": {"type": "string", "minLength": 1},
+        "sdk_conformance": {"type": "string", "minLength": 1},
+        "untested_live": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

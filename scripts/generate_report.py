@@ -1161,6 +1161,7 @@ def _installed_version(distribution: str) -> str | None:
 
 
 def _git_metadata(repo_root: Path) -> dict[str, str | bool]:
+    """Capture the source revision and cleanliness before artifact writes."""
     try:
         commit = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -1170,15 +1171,21 @@ def _git_metadata(repo_root: Path) -> dict[str, str | bool]:
             text=True,
         ).stdout.strip()
         status = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "--untracked-files=all"],
             cwd=repo_root,
             check=True,
             capture_output=True,
             text=True,
         ).stdout
     except (OSError, subprocess.CalledProcessError):
-        return {"base_commit": "unavailable", "worktree_clean": False}
-    return {"base_commit": commit, "worktree_clean": not status.strip()}
+        return {
+            "source_commit": "unavailable",
+            "worktree_clean_at_start": False,
+        }
+    return {
+        "source_commit": commit,
+        "worktree_clean_at_start": not status.strip(),
+    }
 
 
 def source_tree_manifest(
@@ -1228,6 +1235,10 @@ def write_performance_manifest(
     prices: pd.DataFrame,
     manifest_path: Path,
     image_paths: list[Path],
+    *,
+    git_metadata: dict[str, str | bool],
+    source_tree: dict[str, object],
+    generated_at: str,
 ) -> Path:
     """Write an auditable JSON record for a generated performance report."""
     manifest_path = manifest_path.expanduser().resolve()
@@ -1236,17 +1247,16 @@ def write_performance_manifest(
         path.name: hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(image_paths, key=lambda item: item.name)
     }
-    repo_root = Path(__file__).resolve().parent.parent
     metrics = d["m"]
     benchmarks = d["benchmark_metrics"]
     payload = {
-        "schema_version": 3,
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "schema_version": 4,
+        "generated_at": generated_at,
         "generator": {
             "path": "scripts/generate_report.py",
             "script_sha256": sha256_file(Path(__file__).resolve()),
-            "git": _git_metadata(repo_root),
-            "source_tree": source_tree_manifest(repo_root),
+            "git": git_metadata,
+            "source_tree": source_tree,
             "python": platform.python_version(),
             "platform": platform.platform(),
             "packages": {
@@ -1490,6 +1500,17 @@ def main(argv) -> int:
         help="optional JSON provenance and artifact manifest path",
     )
     ap.add_argument(
+        "--generated-at",
+        type=iso_date_or_datetime,
+        default=None,
+        help="explicit artifact timestamp for reproducible publication metadata",
+    )
+    ap.add_argument(
+        "--require-clean-source",
+        action="store_true",
+        help="fail unless the source Git worktree is clean before generation",
+    )
+    ap.add_argument(
         "--data-provider",
         type=nonempty_text,
         default=None,
@@ -1546,6 +1567,16 @@ def main(argv) -> int:
         help="cross-trial variance of per-observation Sharpe estimates for DSR",
     )
     args = ap.parse_args(argv[1:])
+    repo_root = Path(__file__).resolve().parent.parent
+    git_metadata = _git_metadata(repo_root)
+    if args.require_clean_source and not git_metadata["worktree_clean_at_start"]:
+        raise RuntimeError(
+            "performance artifact generation requires a clean source worktree"
+        )
+    source_tree = source_tree_manifest(repo_root)
+    generated_at = args.generated_at or datetime.now(timezone.utc).isoformat(
+        timespec="seconds"
+    )
 
     try:
         evaluation_start = args.start
@@ -1641,6 +1672,9 @@ def main(argv) -> int:
                 loaded_prices,
                 args.manifest_out,
                 image_paths,
+                git_metadata=git_metadata,
+                source_tree=source_tree,
+                generated_at=generated_at,
             )
     except Exception as exc:
         print(f"report rendering failed: {exc}", file=sys.stderr)

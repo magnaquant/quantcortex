@@ -27,9 +27,13 @@ the development lock with `pip install -r requirements/dev.lock`, then run
   `generate_report.py --live-yfinance`; `validate_performance.py` requires
   `--live-yfinance`; `survivorship_demo.py` requires `--live-yfinance`;
   `paper_trade_cycle.py` requires either `--offline` or `--live-yfinance`.
-- Paper: run `run_paper_experiments.py` with an authorized seven-symbol CSV,
-  then `scripts/build_paper.sh`. Generated tables and figures must match
-  `paper/results/manifest.json`; visually review every PDF page before commit.
+- Paper release: commit source changes, then run
+  `scripts/release_paper_artifacts.sh local_data/published_rotation_prices.csv`.
+  The wrapper regenerates `docs/img/` and the paper from a detached clean
+  worktree, then builds with pinned Tectonic. Generated tables and figures must match
+  `paper/results/manifest.json`; visually review every public and anonymous PDF
+  page before commit. Use `scripts/build_paper.sh` only to rebuild from already
+  generated aggregate artifacts.
 - CI (`.github/workflows/ci.yml`) runs ruff + pytest with a 60% coverage floor
   on Python 3.11-3.14 from exported locks. Separate jobs execute notebooks on
   deterministic test-only fixtures, check real broker SDK request classes,

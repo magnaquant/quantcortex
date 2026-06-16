@@ -43,7 +43,11 @@ PYTHONPATH=. .venv/bin/python scripts/verify_brokers.py
 ```
 
 For report or paper changes, regenerate artifacts only from a permitted local
-input, run the focused artifact tests, rebuild the PDF, and inspect every page.
+input. Commit source changes first, then use
+`scripts/release_paper_artifacts.sh` so the manifest records a detached clean
+source revision. The wrapper also refreshes the reviewed `docs/img/` performance
+gallery. Run the focused artifact tests and inspect every page of both the
+public and anonymous PDFs.
 Do not hand-edit generated tables, figures, manifests, or checksums.
 Use `quantcortex.backtest.metrics.plotting` for repository figures. Do not rely
 on color alone: pair important series with distinct line styles, markers, or

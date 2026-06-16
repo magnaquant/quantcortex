@@ -47,7 +47,7 @@ def test_published_performance_charts_match_manifest_and_readme():
     image_dir = REPO_ROOT / "docs" / "img"
     manifest_path = image_dir / "performance_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == 3
+    assert manifest["schema_version"] == 4
 
     source = manifest["source"]
     assert source["permission_basis"]
@@ -75,6 +75,12 @@ def test_published_performance_charts_match_manifest_and_readme():
         aggregate_digest.update(b"\0")
         aggregate_digest.update(bytes.fromhex(expected_digest))
     assert aggregate_digest.hexdigest() == source_tree["sha256"]
+
+    git_metadata = manifest["generator"]["git"]
+    source_commit = git_metadata["source_commit"]
+    assert len(source_commit) == 40
+    int(source_commit, 16)
+    assert git_metadata["worktree_clean_at_start"] is True
 
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     assert input_digest in readme

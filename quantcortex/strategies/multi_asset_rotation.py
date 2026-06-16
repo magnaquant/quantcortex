@@ -1,8 +1,9 @@
 """Flagship multi-asset rotation strategy.
 
-:class:`MultiAssetRotation` rotates between asset-class *groups* (growth, real
-assets, defensive) using a two-stage cross-sectional signal and gates the book
-with a macro regime overlay and a VIX (volatility) exposure scaler.
+:class:`MultiAssetRotation` rotates between three fixed proxy groups (growth
+equities, gold and nominal duration, and broad and dividend equities) using a
+two-stage cross-sectional signal and gates the book with a macro regime overlay
+and a VIX (volatility) exposure scaler.
 
 Signal construction
 --------------------
@@ -110,6 +111,12 @@ class MultiAssetRotation(Strategy):
         "growth": ["QQQ", "VGT"],
         "real_assets": ["GLD", "TLT"],
         "defensive": ["SPY", "VIG"],
+    }
+    #: Human-readable descriptions. Internal keys remain stable for compatibility.
+    GROUP_DISPLAY_NAMES: ClassVar[Dict[str, str]] = {
+        "growth": "growth equities",
+        "real_assets": "gold and nominal duration",
+        "defensive": "broad and dividend equities",
     }
     #: Benchmark used for active-return / CAPM calculations.
     BENCHMARK: str = "QQQ"

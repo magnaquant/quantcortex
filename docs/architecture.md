@@ -52,11 +52,21 @@ returns, turnover, and costs use one capital clock. A nonzero cash return must
 be supplied explicitly; missing cash-proxy observations fail the run.
 
 The event-driven engine is the reference accounting path: it holds drifting
-shares, sizes targets against post-cost NAV, and applies fill semantics. With
-adjusted closes those shares are total-return accounting units, not nominal
-broker shares. The vectorized engine re-pegs target weights between explicit
+adjusted-close pseudo-shares, sizes targets against post-cost NAV, and applies
+fill semantics. Those pseudo-shares are total-return accounting units, not
+nominal broker shares. The vectorized engine re-pegs target weights between explicit
 rebalances and is intended for approximations and sweeps. Agreement in one
 experiment is a diagnostic, not proof that the engines are interchangeable.
+
+`quantcortex.backtest.conformance` defines the canonical long-form target tape
+used to compare engines without coupling them to a strategy implementation.
+The tape validates complete timestamp-symbol decisions, finite long-only
+weights, and gross exposure. See `docs/evaluation-contracts.md`.
+
+The paper keeps two comparison roles separate. Its realized-exposure control is
+an exact ex-post arithmetic attribution and is gross of comparator costs. Its
+target-exposure comparator is causal, follows the original decision timestamps,
+and pays the same modeled cost rate as the strategy.
 
 ## Point-in-Time Data
 

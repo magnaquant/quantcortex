@@ -321,13 +321,16 @@ def test_report_generates_complete_local_diagnostic_gallery(tmp_path):
         assert f"img/{filename}" in report
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == 3
+    assert manifest["schema_version"] == 4
     assert manifest["source"]["input_sha256"]
     assert manifest["evaluation"]["dsr_trials_assumed"] == 3
     assert manifest["evaluation"]["engine"] == "event_driven"
     assert manifest["evaluation"]["sharpe_basis"].startswith("per-period return")
     generator = manifest["generator"]
-    assert set(generator["git"]) == {"base_commit", "worktree_clean"}
+    assert set(generator["git"]) == {
+        "source_commit",
+        "worktree_clean_at_start",
+    }
     source_tree = generator["source_tree"]
     assert source_tree["file_count"] == len(source_tree["files"])
     assert len(source_tree["sha256"]) == 64

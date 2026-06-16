@@ -25,7 +25,8 @@ the controls below before any real-money deployment.
 
 ## Research and Data
 
-- Use data with an explicit license or permission basis and retained provenance.
+- Use data that passes `docs/data-source-due-diligence.md`, with an explicit
+  license or permission basis and retained provenance.
 - Obtain exact filing timestamps, point-in-time membership, and delisted-security
   prices for production single-name research.
 - Validate corporate actions, calendars, stale-price policy, and symbol mapping
@@ -53,7 +54,8 @@ the controls below before any real-money deployment.
 
 ## Release Evidence
 
-Archive the exact code revision, environment, data digest, configuration,
+Generate publication artifacts from a detached clean worktree and archive the
+exact source revision, environment, dependency lock, data digest, configuration,
 research trial count, validation report, paper-account certification evidence,
 and sign-off for each release. Treat unresolved checklist items as release
 blockers, not documentation caveats.

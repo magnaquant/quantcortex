@@ -58,7 +58,8 @@ drift between rebalances and targets are sized against post-cost NAV.
 | Annualized gross traded notional | 13.25x |
 | Mean risky exposure | 30.14% |
 | Fully-cash sessions | 47.94% |
-| Exposure-matched passive-basket Sharpe, gross | +0.80 |
+| Realized-exposure attribution-control Sharpe, gross | +0.80 |
+| Target-exposure comparator Sharpe, after costs | +0.62 |
 | Annualized arithmetic net excess over SHV | -0.90% |
 | Active risky-allocation contribution | -3.38% |
 | Dynamic exposure-timing contribution | +0.30% |
@@ -66,9 +67,12 @@ drift between rebalances and targets are sized against post-cost NAV.
 | Modeled implementation-cost contribution | -1.72% |
 
 The positive nominal return is not evidence of positive active return. Before
-costs, annualized arithmetic return relative to the exposure-matched basket is
--3.38%; the primary 21-session paired block-bootstrap interval is [-5.85%,
--0.90%]. The interval remains below zero with 5- and 63-session blocks.
+costs, annualized arithmetic return relative to the realized-exposure
+attribution control is -3.38%; the primary 21-session paired block-bootstrap
+interval is [-5.85%, -0.90%]. Against a causal target-exposure comparator after
+both sides pay modeled costs, the strategy shortfall is -4.14%
+[-6.70%, -1.63%]. The corresponding conventional active Sharpe is -0.92 with a
+block-bootstrap interval of [-1.47, -0.37].
 
 ![Exact return attribution and protocol diagnostics](paper/figures/return_attribution_and_protocol_switches.png)
 
@@ -126,10 +130,12 @@ provider's terms permit publication.
 
 ## Research Paper
 
-The [NeurIPS 2026-format preprint](paper/quantcortex_audit_neurips2026.pdf)
+The [NeurIPS 2026-format public preprint](paper/quantcortex_audit_neurips2026.pdf)
 formalizes the executable contracts, exact attribution, controlled protocol
 diagnostics, fixed negative result, uncertainty, limitations, and provenance.
 It is not represented as accepted by or submitted to NeurIPS.
+An [anonymized preprint build](paper/quantcortex_audit_anonymous.pdf) is generated
+from the same source and omits author and repository identifiers.
 
 ![Cost sensitivity and uncertainty-aware overlay ablations](paper/figures/sensitivity_and_ablation.png)
 
@@ -180,16 +186,9 @@ PYTHONPATH=. python scripts/generate_report.py \
   --prices-csv local_data/published_rotation_prices.csv \
   --cash-proxy-symbol SHV
 
-# Run the fixed paper experiment and regenerate aggregate artifacts.
-PYTHONPATH=. python scripts/run_paper_experiments.py \
-  --prices-csv local_data/published_rotation_prices.csv \
-  --cash-proxy-symbol SHV \
-  --output-dir paper --bootstrap-replications 5000 \
-  --data-provider 'Yahoo Finance via yfinance 1.4.1' \
-  --permission-basis \
-    'Repository owner authorizes publication of derived aggregate results; provider terms not independently verified' \
-  --retrieved-at 2026-06-16 \
-  --adjustment-method 'yfinance adjusted close with auto_adjust=False'
+# Regenerate reviewed README charts and paper artifacts from a clean commit.
+scripts/release_paper_artifacts.sh \
+  local_data/published_rotation_prices.csv
 
 # Explicit live-data diagnostics; review the provider's terms first.
 python scripts/validate_performance.py --live-yfinance
@@ -251,8 +250,11 @@ before using production capital. Security reporting is documented in
 
 - [PERFORMANCE.md](PERFORMANCE.md): metric definitions, reporting rules, and limitations
 - [docs/architecture.md](docs/architecture.md): package and contract design
+- [docs/evaluation-contracts.md](docs/evaluation-contracts.md): target-tape schema and evidence classes
+- [docs/data-source-due-diligence.md](docs/data-source-due-diligence.md): publication-data acceptance rules
 - [docs/production-readiness.md](docs/production-readiness.md): external release gates
 - [paper/README.md](paper/README.md): paper reproduction and submission constraints
+- [paper/preregistration.md](paper/preregistration.md): prospective expansion protocol, not yet registered
 - [local_data/README.md](local_data/README.md): accepted local-data schemas and provenance
 - [CONTRIBUTING.md](CONTRIBUTING.md): contribution workflow
 - [AGENTS.md](AGENTS.md): concise repository guidance for coding agents

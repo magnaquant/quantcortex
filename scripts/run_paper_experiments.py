@@ -78,6 +78,10 @@ BOOTSTRAP_BLOCK_LENGTHS = (5, 21, 63)
 PRIMARY_BOOTSTRAP_BLOCK_LENGTH = 21
 BOOTSTRAP_SEED = 42
 PAPER_MAX_FORWARD_FILL = 0
+PROVENANCE_SCHEMA_VERSION = 4
+EVALUATION_CONTRACT_SCHEMA_VERSION = 1
+TARGET_TAPE_SCHEMA_VERSION = 1
+TARGET_EXPOSURE_COMPARATOR_SYMBOL = "equal_initial_weight_basket"
 DECOMPOSITION_LABELS = {
     "active_risky_allocation": "Active risky allocation",
     "dynamic_exposure_timing": "Dynamic exposure timing",
@@ -87,6 +91,8 @@ DECOMPOSITION_LABELS = {
 }
 SOURCE_TREE_FIXED_FILES = (
     "scripts/run_paper_experiments.py",
+    "schemas/canonical_target_tape.schema.json",
+    "schemas/evaluation_contract.schema.json",
     "pyproject.toml",
     "poetry.lock",
 )
@@ -119,6 +125,7 @@ def iso_timestamp(value: str) -> str:
 
 
 def _git_metadata(repo_root: Path) -> dict[str, str | bool]:
+    """Capture source revision and cleanliness before artifact writes."""
     try:
         commit = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -128,15 +135,21 @@ def _git_metadata(repo_root: Path) -> dict[str, str | bool]:
             text=True,
         ).stdout.strip()
         status = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "--untracked-files=all"],
             cwd=repo_root,
             check=True,
             capture_output=True,
             text=True,
         ).stdout
     except (OSError, subprocess.CalledProcessError):
-        return {"base_commit": "unavailable", "worktree_clean": False}
-    return {"base_commit": commit, "worktree_clean": not status.strip()}
+        return {
+            "source_commit": "unavailable",
+            "worktree_clean_at_start": False,
+        }
+    return {
+        "source_commit": commit,
+        "worktree_clean_at_start": not status.strip(),
+    }
 
 
 def _sha256(path: Path) -> str:
@@ -145,6 +158,37 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _json_sha256(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _threadpool_environment() -> list[dict[str, object]]:
+    """Return stable BLAS/OpenMP metadata without machine-specific paths."""
+    try:
+        from threadpoolctl import threadpool_info
+    except ImportError:  # pragma: no cover - a locked core dependency
+        return []
+    keys = (
+        "user_api",
+        "internal_api",
+        "prefix",
+        "version",
+        "threading_layer",
+        "architecture",
+        "num_threads",
+    )
+    return [
+        {key: entry[key] for key in keys if key in entry}
+        for entry in threadpool_info()
+    ]
 
 
 def source_tree_manifest(
@@ -202,6 +246,8 @@ def _cagr(returns: pd.Series, periods_per_year: float = 252.0) -> float:
 
 def _sharpe(returns: pd.Series, risk_free: pd.Series | float = 0.0) -> float:
     excess = (returns - risk_free).dropna()
+    if excess.empty or float(np.ptp(excess.to_numpy(dtype=float))) == 0.0:
+        return float("nan")
     standard_deviation = float(excess.std(ddof=1))
     if not np.isfinite(standard_deviation) or standard_deviation <= 0.0:
         return float("nan")
@@ -237,6 +283,79 @@ def _benchmark_returns(
         spy.iloc[0] = 0.0
         equal_initial_weight.iloc[0] = 0.0
     return spy.fillna(0.0), equal_initial_weight.fillna(0.0)
+
+
+def _costed_target_exposure_comparator(
+    strategy_weights: pd.DataFrame,
+    prices: pd.DataFrame,
+    cash_returns: pd.Series,
+    evaluation_index: pd.DatetimeIndex,
+    *,
+    cost_bps: float,
+) -> BacktestResult:
+    """Run a causal, costed equal-weight basket at strategy target exposure.
+
+    The synthetic basket is initialized at equal dollar weights at the close
+    immediately before evaluation. A seed decision establishes the previously
+    active target exposure on that pre-evaluation close, so its initial cost is
+    outside the reported window. Later exposure targets retain the strategy's
+    original decision timestamps and therefore execute on the next bar.
+    """
+    if not isinstance(strategy_weights, pd.DataFrame):
+        raise TypeError("strategy_weights must be a pandas DataFrame")
+    if not isinstance(strategy_weights.index, pd.DatetimeIndex):
+        raise TypeError("strategy_weights must use a DatetimeIndex")
+    if strategy_weights.index.has_duplicates:
+        raise ValueError("strategy_weights must not contain duplicate decisions")
+    if evaluation_index.empty:
+        raise ValueError("evaluation_index must not be empty")
+
+    first = prices.index.get_loc(evaluation_index[0])
+    last = prices.index.get_loc(evaluation_index[-1])
+    if first == 0:
+        raise ValueError(
+            "costed comparator requires one pre-evaluation price observation"
+        )
+    base = first - 1
+    comparator_source = prices.iloc[base : last + 1]
+    comparator_curve = comparator_source.div(comparator_source.iloc[0]).mean(axis=1)
+    comparator_prices = comparator_curve.rename(
+        TARGET_EXPOSURE_COMPARATOR_SYMBOL
+    ).to_frame()
+
+    target_exposure = strategy_weights.abs().sum(axis=1).sort_index()
+    if not np.all(np.isfinite(target_exposure.to_numpy(dtype=float))):
+        raise ValueError("strategy target exposure must be finite")
+    if ((target_exposure < -1e-12) | (target_exposure > 1.0 + 1e-12)).any():
+        raise ValueError("strategy target exposure must remain in [0, 1]")
+
+    base_timestamp = comparator_prices.index[0]
+    prior_targets = target_exposure.loc[target_exposure.index < base_timestamp]
+    initial_target = float(prior_targets.iloc[-1]) if not prior_targets.empty else 0.0
+    seed_timestamp = base_timestamp - pd.Timedelta(microseconds=1)
+    comparator_targets = pd.concat(
+        [
+            pd.Series([initial_target], index=pd.DatetimeIndex([seed_timestamp])),
+            target_exposure.loc[target_exposure.index >= base_timestamp],
+        ]
+    )
+    comparator_targets = comparator_targets[
+        ~comparator_targets.index.duplicated(keep="last")
+    ]
+    comparator_weights = comparator_targets.rename(
+        TARGET_EXPOSURE_COMPARATOR_SYMBOL
+    ).to_frame()
+    comparator_cash = cash_returns.reindex(comparator_prices.index)
+    if comparator_cash.isna().any():
+        raise ValueError("cash returns do not cover the comparator window")
+
+    return _engine_result(
+        comparator_weights,
+        comparator_prices,
+        comparator_cash,
+        cost_bps=cost_bps,
+        engine=PRIMARY_ENGINE,
+    )
 
 
 def _engine_result(
@@ -387,6 +506,106 @@ def circular_block_bootstrap(
     name = str(returns.name) if returns.name is not None else "series"
     row = circular_block_bootstrap_frame(
         returns.rename(name).to_frame(),
+        block_length=block_length,
+        replications=replications,
+        seed=seed,
+    ).iloc[0]
+    return {
+        key: value.item() if hasattr(value, "item") else value
+        for key, value in row.drop(labels="series").items()
+    }
+
+
+def circular_block_bootstrap_sharpe_frame(
+    excess_returns: pd.DataFrame,
+    *,
+    block_length: int = PRIMARY_BOOTSTRAP_BLOCK_LENGTH,
+    replications: int = 5_000,
+    seed: int = 42,
+) -> pd.DataFrame:
+    """Joint circular-block intervals for conventional annualized Sharpe.
+
+    The statistic remains the conventional ``sqrt(252)`` sample Sharpe. Block
+    resampling supplies dependence-sensitive uncertainty without treating the
+    daily observations as independent.
+    """
+    if not isinstance(excess_returns, pd.DataFrame):
+        raise TypeError("excess_returns must be a pandas DataFrame")
+    if excess_returns.shape[1] == 0 or excess_returns.columns.has_duplicates:
+        raise ValueError("excess_returns must have unique, non-empty columns")
+    if len(excess_returns) < 2:
+        raise ValueError("bootstrap requires at least two observations")
+    if excess_returns.isna().any(axis=None):
+        raise ValueError("bootstrap excess returns must be complete")
+    values = excess_returns.to_numpy(dtype=float)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("bootstrap excess returns must be finite")
+    if block_length <= 0 or block_length > len(values):
+        raise ValueError("block_length must be in [1, number of observations]")
+    if replications <= 0:
+        raise ValueError("replications must be positive")
+
+    rng = np.random.default_rng(seed)
+    blocks = int(np.ceil(len(values) / block_length))
+    offsets = np.arange(block_length)
+    estimates = np.full((replications, values.shape[1]), np.nan, dtype=float)
+    for replication in range(replications):
+        starts = rng.integers(0, len(values), size=blocks)
+        indices = (starts[:, None] + offsets[None, :]) % len(values)
+        sample = values[indices.ravel()[: len(values)]]
+        standard_deviation = sample.std(axis=0, ddof=1)
+        valid = (
+            np.isfinite(standard_deviation)
+            & (standard_deviation > 0.0)
+            & (np.ptp(sample, axis=0) > 0.0)
+        )
+        estimates[replication, valid] = (
+            sample[:, valid].mean(axis=0)
+            / standard_deviation[valid]
+            * np.sqrt(252.0)
+        )
+
+    rows = []
+    for column_index, column in enumerate(excess_returns.columns):
+        column_estimates = estimates[:, column_index]
+        finite = column_estimates[np.isfinite(column_estimates)]
+        if finite.size == 0:
+            raise ValueError(f"bootstrap Sharpe is undefined for {column!r}")
+        lower, upper = np.quantile(finite, [0.025, 0.975])
+        rows.append(
+            {
+                "series": str(column),
+                "observations": int(len(values)),
+                "block_length": int(block_length),
+                "replications": int(replications),
+                "finite_replications": int(finite.size),
+                "seed": int(seed),
+                "sample_sharpe": _sharpe(excess_returns[column]),
+                "ci_95_lower": float(lower),
+                "ci_95_upper": float(upper),
+                "positive_draw_fraction": float((finite > 0.0).mean()),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def circular_block_bootstrap_sharpe(
+    excess_returns: pd.Series,
+    *,
+    block_length: int = PRIMARY_BOOTSTRAP_BLOCK_LENGTH,
+    replications: int = 5_000,
+    seed: int = 42,
+) -> dict[str, float | int]:
+    """Circular-block interval for one conventional annualized Sharpe."""
+    if not isinstance(excess_returns, pd.Series):
+        raise TypeError("excess_returns must be a pandas Series")
+    name = (
+        str(excess_returns.name)
+        if excess_returns.name is not None
+        else "series"
+    )
+    row = circular_block_bootstrap_sharpe_frame(
+        excess_returns.rename(name).to_frame(),
         block_length=block_length,
         replications=replications,
         seed=seed,
@@ -551,7 +770,8 @@ def _subperiod_rows(
 def _save_figures(
     output_dir: Path,
     baseline_series: dict[str, pd.Series],
-    matched_equal_weight: pd.Series,
+    realized_exposure_attribution: pd.Series,
+    target_exposure_costed_comparator: pd.Series,
     cost_results: pd.DataFrame,
     ablation_results: pd.DataFrame,
     ablation_uncertainty: pd.DataFrame,
@@ -601,7 +821,7 @@ def _save_figures(
     ax.axis("off")
     stages = (
         ("Point-in-time\ninputs", "Known at\ndecision"),
-        ("Causal\nweights", "Budgeted;\nbounded"),
+        ("Contract-valid\ntargets", "Budgeted;\nbounded"),
         ("Next-bar\nexecution", "No same-close\nreturn"),
         ("Cash and\ncosts", "Explicit\nresidual cash"),
         ("Matched\nevaluation", "Exposure matched;\nuncertainty;\nprovenance"),
@@ -705,11 +925,18 @@ def _save_figures(
         lw=1.35,
     )
     axes[0].plot(
-        _growth(matched_equal_weight),
-        label="Matched basket",
+        _growth(realized_exposure_attribution),
+        label="Realized-exposure control, gross",
         color=COUNTERFACTUAL_AMBER,
-        lw=1.1,
+        lw=0.9,
         ls="-.",
+    )
+    axes[0].plot(
+        _growth(target_exposure_costed_comparator),
+        label="Target-exposure comparator, net",
+        color=POSITIVE_GREEN,
+        lw=1.1,
+        ls=(0, (3, 1.5)),
     )
     axes[0].plot(
         _growth(baseline_series["cash"]),
@@ -722,7 +949,7 @@ def _save_figures(
     axes[0].set_ylabel("Growth of $1")
     style_axis(axes[0], grid="y")
     format_year_axis(axes[0])
-    axes[0].legend(loc="upper left", ncol=1)
+    axes[0].legend(loc="upper left", ncol=1, fontsize=5.3)
     add_panel_label(axes[0], "a")
 
     exposure = baseline_series["exposure"]
@@ -758,9 +985,15 @@ def _save_figures(
     axes[1].yaxis.set_major_formatter(PercentFormatter(1.0))
     style_axis(axes[1], grid="y")
     format_year_axis(axes[1])
-    axes[1].legend(loc="upper left")
+    axes[1].legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.18),
+        ncol=2,
+        frameon=False,
+        fontsize=5.4,
+    )
     add_panel_label(axes[1], "b")
-    fig.tight_layout()
+    fig.tight_layout(rect=(0.0, 0.08, 1.0, 1.0))
     save(fig, "accounting_summary")
 
     fig, axes = plt.subplots(1, 2, figsize=(5.5, 2.55))
@@ -1002,8 +1235,8 @@ def _save_figures(
                 label=label if block_position == 0 else None,
             )
     ax.axvline(0.0, color=INK, lw=0.8)
-    ax.set_title("Matched active-return robustness", pad=22)
-    ax.set_xlabel("Annualized arithmetic return vs. matched basket")
+    ax.set_title("Realized-exposure active-return robustness", pad=22)
+    ax.set_xlabel("Annualized return vs. realized-exposure control")
     ax.set_ylabel("Bootstrap block (sessions)")
     ax.set_yticks(block_positions, [str(value) for value in BOOTSTRAP_BLOCK_LENGTHS])
     ax.invert_yaxis()
@@ -1030,7 +1263,7 @@ def _save_figures(
             "color": COUNTERFACTUAL_AMBER,
             "linestyle": "--",
             "linewidth": 1.0,
-            "label": "Event driven",
+            "label": "Event-driven",
         },
     }
     for name, returns in engine_series.items():
@@ -1045,7 +1278,7 @@ def _save_figures(
     axes[1].plot(cumulative_difference, color=BRIGHT_COLORS[5], lw=1.15)
     axes[1].axhline(0.0, color=INK, lw=0.8)
     axes[1].set_title("Cumulative arithmetic return difference")
-    axes[1].set_ylabel("Vectorized - event driven")
+    axes[1].set_ylabel("Vectorized - event-driven")
     axes[1].yaxis.set_major_formatter(PercentFormatter(1.0))
     axes[1].text(
         0.01,
@@ -1067,6 +1300,97 @@ def _save_figures(
     return paths
 
 
+def evaluation_contract(cash_proxy_symbol: str) -> dict[str, object]:
+    """Return the machine-readable contract governing the paper experiment."""
+    return {
+        "schema_version": EVALUATION_CONTRACT_SCHEMA_VERSION,
+        "contract_id": "quantcortex.daily_target_weight_audit.v1",
+        "target_tape": {
+            "schema_version": TARGET_TAPE_SCHEMA_VERSION,
+            "schema_path": "schemas/canonical_target_tape.schema.json",
+            "columns": [
+                "decision_timestamp",
+                "symbol",
+                "target_weight",
+            ],
+            "timestamp_semantics": "close-of-bar decision time",
+            "constraints": {
+                "long_only": True,
+                "maximum_gross_exposure": 1.0,
+                "complete_symbol_set_per_decision": True,
+            },
+        },
+        "overlays": {
+            "input_contract": "finite contract-valid target weights",
+            "output_contract": (
+                "finite long-only weights within the declared gross limit"
+            ),
+            "may_reduce_risky_exposure": True,
+            "may_increase_declared_gross_limit": False,
+        },
+        "information_set": {
+            "price_basis": "adjusted close",
+            "point_in_time_rule": (
+                "every feature value must be available by its decision timestamp"
+            ),
+            "missing_data_rule": "reject incomplete required observations",
+        },
+        "execution": {
+            "timing": "first observed bar strictly after the decision timestamp",
+            "accounting": "adjusted-close pseudo-shares held between rebalances",
+            "target_sizing": "post-cost NAV",
+        },
+        "cash": {
+            "residual_weight_rule": "one minus risky asset weights",
+            "return_proxy": cash_proxy_symbol,
+        },
+        "costs": {
+            "model": "proportional charge on executed buy and sell notional",
+            "baseline_bps_per_dollar_traded": BASELINE_COST_BPS,
+            "market_impact": "not modeled",
+        },
+        "order_state": {
+            "intent_persistence": "persist intent before broker submission",
+            "uncertain_submission": (
+                "block automatic retry until broker reconciliation"
+            ),
+            "state_revision": "reject stale writes without the current revision",
+        },
+        "comparators": {
+            "realized_exposure_attribution_control": {
+                "purpose": "exact ex-post arithmetic attribution",
+                "implementable": False,
+                "costed": False,
+                "exposure_basis": "strategy realized daily risky exposure",
+            },
+            "target_exposure_costed_comparator": {
+                "purpose": "causal implementable comparison",
+                "implementable": True,
+                "costed": True,
+                "exposure_basis": "strategy close-of-bar target gross exposure",
+                "risky_asset": "equal-initial-weight buy-and-hold basket",
+            },
+        },
+        "evidence_classes": {
+            "exact_identity": "algebraic equality checked on every daily row",
+            "property_test": "deterministic invariant over generated inputs",
+            "economic_counterfactual": "one declared economic assumption changed",
+            "fault_injection": "failure path exercised with malformed or stale state",
+            "sdk_conformance": "request and response contract checked offline",
+            "untested_live": "requires authenticated external infrastructure",
+        },
+    }
+
+
+def _write_json(value: object, path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def _write_csv(frame: pd.DataFrame, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(path, index=False, float_format="%.10g", lineterminator="\n")
@@ -1074,14 +1398,16 @@ def _write_csv(frame: pd.DataFrame, path: Path) -> Path:
 
 
 def _tex_percent(value: float, digits: int = 2) -> str:
-    return f"{value * 100:.{digits}f}\\%"
+    formatted = f"{value * 100:.{digits}f}\\%"
+    return f"\\mbox{{{formatted}}}" if formatted.startswith("-") else formatted
 
 
 def _tex_number(value: float, digits: int = 2) -> str:
     rounded = round(float(value), digits)
     if rounded == 0.0:
         rounded = 0.0
-    return f"{rounded:.{digits}f}"
+    formatted = f"{rounded:.{digits}f}"
+    return f"\\mbox{{{formatted}}}" if formatted.startswith("-") else formatted
 
 
 def _write_tex_values(
@@ -1096,6 +1422,9 @@ def _write_tex_values(
     ablation = experiment["ablation"].set_index("variant")
     ablation_uncertainty = experiment["ablation_uncertainty"].set_index("variant")
     costs = experiment["cost_sensitivity"].set_index("all_in_cost_bps")
+    comparator_diagnostics = experiment["comparator_diagnostics"].set_index(
+        "comparator"
+    )
     engines = experiment["engine_comparison"].set_index("engine")
     subperiods = experiment["subperiods"].set_index(["period", "series"])
     decomposition = experiment["return_decomposition"]
@@ -1104,6 +1433,9 @@ def _write_tex_values(
     ].set_index("component")
     protocol_switches = experiment["protocol_switches"].set_index("protocol")
     uncertainty = experiment["uncertainty"]
+    sharpe_uncertainty = experiment["sharpe_uncertainty"].set_index(
+        ["block_length", "series"]
+    )
     full = ablation.loc["full"]
 
     net_active = uncertainty["strategy_minus_exposure_matched_equal_weight"]
@@ -1112,6 +1444,30 @@ def _write_tex_values(
     ]
     net_cash = uncertainty["strategy_minus_cash"]
     gross_cash = uncertainty["strategy_gross_minus_cash"]
+    costed_active = uncertainty[
+        "strategy_minus_target_exposure_matched_equal_weight_net"
+    ]
+    costed_comparator_cash = uncertainty[
+        "target_exposure_matched_equal_weight_net_minus_cash"
+    ]
+    primary_net_sharpe = sharpe_uncertainty.loc[
+        (PRIMARY_BOOTSTRAP_BLOCK_LENGTH, "strategy_net_minus_cash")
+    ]
+    primary_costed_active_sharpe = sharpe_uncertainty.loc[
+        (
+            PRIMARY_BOOTSTRAP_BLOCK_LENGTH,
+            "strategy_net_minus_target_exposure_costed_comparator",
+        )
+    ]
+    primary_costed_comparator_sharpe = sharpe_uncertainty.loc[
+        (
+            PRIMARY_BOOTSTRAP_BLOCK_LENGTH,
+            "target_exposure_costed_comparator_minus_cash",
+        )
+    ]
+    costed_comparator = comparator_diagnostics.loc[
+        "target_exposure_matched_equal_weight_net"
+    ]
 
     commands = {
         "PaperObservationCount": f"{len(experiment['evaluation_index']):,}",
@@ -1132,6 +1488,11 @@ def _write_tex_values(
         "PaperMatchedCAGR": _tex_percent(
             accounting.loc["exposure_matched_equal_weight", "nominal_cagr"]
         ),
+        "PaperCostedComparatorCAGR": _tex_percent(
+            accounting.loc[
+                "target_exposure_matched_equal_weight_net", "nominal_cagr"
+            ]
+        ),
         "PaperZeroCashCAGR": _tex_percent(
             accounting.loc["strategy_net_zero_cash", "nominal_cagr"]
         ),
@@ -1144,6 +1505,12 @@ def _write_tex_values(
         "PaperMatchedSharpe": _tex_number(
             accounting.loc[
                 "exposure_matched_equal_weight", "cash_excess_sharpe"
+            ]
+        ),
+        "PaperCostedComparatorSharpe": _tex_number(
+            accounting.loc[
+                "target_exposure_matched_equal_weight_net",
+                "cash_excess_sharpe",
             ]
         ),
         "PaperZeroCashSharpe": _tex_number(
@@ -1160,6 +1527,17 @@ def _write_tex_values(
         ),
         "PaperMatchedMaxDrawdown": _tex_percent(
             accounting.loc["exposure_matched_equal_weight", "max_drawdown"]
+        ),
+        "PaperCostedComparatorMaxDrawdown": _tex_percent(
+            accounting.loc[
+                "target_exposure_matched_equal_weight_net", "max_drawdown"
+            ]
+        ),
+        "PaperCostedComparatorTurnover": (
+            f"{costed_comparator['annualized_one_way_turnover']:.2f}"
+        ),
+        "PaperCostedComparatorGrossTradedNotional": (
+            f"{costed_comparator['annualized_gross_traded_notional']:.2f}"
         ),
         "PaperZeroCashMaxDrawdown": _tex_percent(
             accounting.loc["strategy_net_zero_cash", "max_drawdown"]
@@ -1187,6 +1565,35 @@ def _write_tex_values(
         ),
         "PaperNetMatchedPositive": _tex_percent(
             net_active["positive_draw_fraction"]
+        ),
+        "PaperCostedActiveMean": _tex_percent(costed_active["annualized_mean"]),
+        "PaperCostedActiveLower": _tex_percent(costed_active["ci_95_lower"]),
+        "PaperCostedActiveUpper": _tex_percent(costed_active["ci_95_upper"]),
+        "PaperCostedActivePositive": _tex_percent(
+            costed_active["positive_draw_fraction"]
+        ),
+        "PaperCostedComparatorCashMean": _tex_percent(
+            costed_comparator_cash["annualized_mean"]
+        ),
+        "PaperNetSharpeLower": _tex_number(primary_net_sharpe["ci_95_lower"]),
+        "PaperNetSharpeUpper": _tex_number(primary_net_sharpe["ci_95_upper"]),
+        "PaperNetSharpePositive": _tex_percent(
+            primary_net_sharpe["positive_draw_fraction"]
+        ),
+        "PaperCostedActiveSharpe": _tex_number(
+            primary_costed_active_sharpe["sample_sharpe"]
+        ),
+        "PaperCostedActiveSharpeLower": _tex_number(
+            primary_costed_active_sharpe["ci_95_lower"]
+        ),
+        "PaperCostedActiveSharpeUpper": _tex_number(
+            primary_costed_active_sharpe["ci_95_upper"]
+        ),
+        "PaperCostedComparatorSharpeLower": _tex_number(
+            primary_costed_comparator_sharpe["ci_95_lower"]
+        ),
+        "PaperCostedComparatorSharpeUpper": _tex_number(
+            primary_costed_comparator_sharpe["ci_95_upper"]
         ),
         "PaperAllocationMean": _tex_percent(
             primary_decomposition.loc[
@@ -1285,6 +1692,9 @@ def _write_tex_values(
     for period, suffix in period_suffixes.items():
         strategy = subperiods.loc[(period, "strategy_net")]
         matched = subperiods.loc[(period, "exposure_matched_equal_weight")]
+        costed = subperiods.loc[
+            (period, "target_exposure_matched_equal_weight_net")
+        ]
         commands[f"PaperStrategyCAGR{suffix}"] = _tex_percent(strategy["cagr"])
         commands[f"PaperStrategySharpe{suffix}"] = _tex_number(
             strategy["cash_excess_sharpe"]
@@ -1292,6 +1702,12 @@ def _write_tex_values(
         commands[f"PaperMatchedCAGR{suffix}"] = _tex_percent(matched["cagr"])
         commands[f"PaperMatchedSharpe{suffix}"] = _tex_number(
             matched["cash_excess_sharpe"]
+        )
+        commands[f"PaperCostedComparatorCAGR{suffix}"] = _tex_percent(
+            costed["cagr"]
+        )
+        commands[f"PaperCostedComparatorSharpe{suffix}"] = _tex_number(
+            costed["cash_excess_sharpe"]
         )
 
     lines = [
@@ -1415,6 +1831,18 @@ def run_experiments(
     matched_equal_weight = (
         exposure * equal_initial_weight + (1.0 - exposure) * cash
     )
+    costed_comparator_result = _costed_target_exposure_comparator(
+        strategy_weights["full"],
+        prices,
+        cash_returns,
+        evaluation_index,
+        cost_bps=BASELINE_COST_BPS,
+    )
+    costed_comparator_metrics, costed_comparator_series = _summarize(
+        costed_comparator_result,
+        cash_returns,
+        evaluation_index,
+    )
     decomposition_series, constant_exposure_passive = return_decomposition(
         net=baseline_series["net"],
         gross=baseline_series["gross"],
@@ -1445,6 +1873,7 @@ def run_experiments(
         "cash_proxy": cash,
         "exposure_matched_spy": matched_spy,
         "exposure_matched_equal_weight": matched_equal_weight,
+        "target_exposure_matched_equal_weight_net": costed_comparator_series["net"],
         "constant_exposure_passive_diagnostic": constant_exposure_passive,
     }
     zero_cash_result = _engine_result(
@@ -1579,12 +2008,18 @@ def run_experiments(
             "strategy_net": baseline_series["net"],
             "cash_proxy": cash,
             "exposure_matched_equal_weight": matched_equal_weight,
+            "target_exposure_matched_equal_weight_net": costed_comparator_series[
+                "net"
+            ],
         }
     )
     subperiods = _subperiod_rows(
         {
             "strategy_net": baseline_series["net"],
             "exposure_matched_equal_weight": matched_equal_weight,
+            "target_exposure_matched_equal_weight_net": costed_comparator_series[
+                "net"
+            ],
         },
         (
             ("2018-2021", "2018-01-01", "2021-12-31"),
@@ -1601,6 +2036,12 @@ def run_experiments(
         "strategy_gross_minus_exposure_matched_equal_weight": (
             baseline_series["gross"] - matched_equal_weight
         ),
+        "strategy_minus_target_exposure_matched_equal_weight_net": (
+            baseline_series["net"] - costed_comparator_series["net"]
+        ),
+        "target_exposure_matched_equal_weight_net_minus_cash": (
+            costed_comparator_series["net"] - cash
+        ),
     }
     uncertainty: dict[str, dict[str, float | int]] = {}
     bootstrap_rows: list[dict[str, float | int | str]] = []
@@ -1615,6 +2056,34 @@ def run_experiments(
             bootstrap_rows.append({"comparison": comparison, **statistics})
             if block_length == PRIMARY_BOOTSTRAP_BLOCK_LENGTH:
                 uncertainty[comparison] = statistics
+    sharpe_returns = pd.DataFrame(
+        {
+            "strategy_net_minus_cash": baseline_series["net"] - cash,
+            "strategy_gross_minus_cash": baseline_series["gross"] - cash,
+            "strategy_net_minus_realized_exposure_attribution": (
+                baseline_series["net"] - matched_equal_weight
+            ),
+            "strategy_gross_minus_realized_exposure_attribution": (
+                baseline_series["gross"] - matched_equal_weight
+            ),
+            "strategy_net_minus_target_exposure_costed_comparator": (
+                baseline_series["net"] - costed_comparator_series["net"]
+            ),
+            "target_exposure_costed_comparator_minus_cash": (
+                costed_comparator_series["net"] - cash
+            ),
+        }
+    )
+    sharpe_rows = []
+    for block_length in BOOTSTRAP_BLOCK_LENGTHS:
+        sharpe_rows.append(
+            circular_block_bootstrap_sharpe_frame(
+                sharpe_returns,
+                block_length=block_length,
+                replications=bootstrap_replications,
+                seed=BOOTSTRAP_SEED,
+            )
+        )
     return {
         "evaluation_index": evaluation_index,
         "warmup_sessions": available_warmup_sessions,
@@ -1623,15 +2092,26 @@ def run_experiments(
         "ablation": ablation,
         "ablation_uncertainty": ablation_uncertainty,
         "cost_sensitivity": pd.DataFrame(cost_rows),
+        "comparator_diagnostics": pd.DataFrame(
+            [
+                {
+                    "comparator": "target_exposure_matched_equal_weight_net",
+                    **costed_comparator_metrics,
+                }
+            ]
+        ),
         "engine_comparison": pd.DataFrame(engine_rows),
         "yearly_returns": yearly,
         "subperiods": subperiods,
         "uncertainty": uncertainty,
         "bootstrap_sensitivity": pd.DataFrame(bootstrap_rows),
+        "sharpe_uncertainty": pd.concat(sharpe_rows, ignore_index=True),
         "return_decomposition": decomposition_results,
         "protocol_switches": protocol_switches,
         "baseline_series": baseline_series,
         "matched_equal_weight": matched_equal_weight,
+        "costed_comparator_metrics": costed_comparator_metrics,
+        "costed_comparator_series": costed_comparator_series,
         "engine_series": engine_series,
     }
 
@@ -1648,13 +2128,39 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--retrieved-at", type=iso_timestamp, required=True)
     parser.add_argument("--adjustment-method", type=nonempty_text, required=True)
     parser.add_argument(
+        "--generated-at",
+        type=iso_timestamp,
+        help=(
+            "explicit artifact timestamp; supply this for a byte-reproducible "
+            "release manifest"
+        ),
+    )
+    parser.add_argument(
+        "--require-clean-source",
+        action="store_true",
+        help="fail unless the source Git worktree is clean before generation",
+    )
+    parser.add_argument(
         "--bootstrap-replications",
         type=positive_int,
         default=5_000,
     )
     args = parser.parse_args(argv[1:])
 
+    script_path = Path(__file__).resolve()
+    repo_root = script_path.parent.parent
+    git_metadata = _git_metadata(repo_root)
+    if args.require_clean_source and not git_metadata["worktree_clean_at_start"]:
+        raise RuntimeError(
+            "paper artifact generation requires a clean source worktree"
+        )
+    source_tree = source_tree_manifest(repo_root)
+    dependency_lock_path = repo_root / "poetry.lock"
+    if not dependency_lock_path.is_file():
+        raise ValueError(f"dependency lock is missing: {dependency_lock_path}")
+
     source = args.prices_csv.expanduser().resolve()
+    input_digest = sha256_file(source)
     symbols = UNIVERSE + [args.cash_proxy_symbol]
     prices_with_cash = load_price_matrix(
         source,
@@ -1679,10 +2185,7 @@ def main(argv: list[str]) -> int:
     output_dir = args.output_dir.expanduser().resolve()
     results_dir = output_dir / "results"
     figures_dir = output_dir / "figures"
-    script_path = Path(__file__).resolve()
-    repo_root = script_path.parent.parent
-    input_digest = sha256_file(source)
-    source_tree = source_tree_manifest(repo_root)
+    contract = evaluation_contract(args.cash_proxy_symbol)
     artifacts = [
         _write_csv(experiment["accounting"], results_dir / "accounting.csv"),
         _write_csv(experiment["ablation"], results_dir / "ablation.csv"),
@@ -1693,6 +2196,10 @@ def main(argv: list[str]) -> int:
         _write_csv(
             experiment["cost_sensitivity"],
             results_dir / "cost_sensitivity.csv",
+        ),
+        _write_csv(
+            experiment["comparator_diagnostics"],
+            results_dir / "comparator_diagnostics.csv",
         ),
         _write_csv(
             experiment["engine_comparison"],
@@ -1708,6 +2215,10 @@ def main(argv: list[str]) -> int:
             results_dir / "bootstrap_sensitivity.csv",
         ),
         _write_csv(
+            experiment["sharpe_uncertainty"],
+            results_dir / "sharpe_uncertainty.csv",
+        ),
+        _write_csv(
             experiment["return_decomposition"],
             results_dir / "return_decomposition.csv",
         ),
@@ -1721,18 +2232,16 @@ def main(argv: list[str]) -> int:
             source_tree_digest=source_tree["sha256"],
             path=results_dir / "generated_values.tex",
         ),
+        _write_json(contract, results_dir / "evaluation_contract.json"),
     ]
     uncertainty_path = results_dir / "uncertainty.json"
-    uncertainty_path.write_text(
-        json.dumps(experiment["uncertainty"], indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    artifacts.append(uncertainty_path)
+    artifacts.append(_write_json(experiment["uncertainty"], uncertainty_path))
     artifacts.extend(
         _save_figures(
             figures_dir,
             experiment["baseline_series"],
             experiment["matched_equal_weight"],
+            experiment["costed_comparator_series"]["net"],
             experiment["cost_sensitivity"],
             experiment["ablation"],
             experiment["ablation_uncertainty"],
@@ -1744,15 +2253,24 @@ def main(argv: list[str]) -> int:
     )
 
     manifest = {
-        "schema_version": 3,
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "schema_version": PROVENANCE_SCHEMA_VERSION,
+        "generated_at": (
+            args.generated_at
+            if args.generated_at is not None
+            else datetime.now(timezone.utc).isoformat(timespec="seconds")
+        ),
         "generator": {
             "path": "scripts/run_paper_experiments.py",
             "script_sha256": _sha256(script_path),
             "source_tree": source_tree,
-            "git": _git_metadata(repo_root),
+            "git": git_metadata,
+            "dependency_lock": {
+                "path": "poetry.lock",
+                "sha256": _sha256(dependency_lock_path),
+            },
             "python": platform.python_version(),
             "platform": platform.platform(),
+            "threadpools": _threadpool_environment(),
             "packages": {
                 name: importlib.metadata.version(name)
                 for name in (
@@ -1792,6 +2310,7 @@ def main(argv: list[str]) -> int:
             "universe": {
                 "symbols": UNIVERSE,
                 "groups": MultiAssetRotation.GROUPS,
+                "group_display_names": MultiAssetRotation.GROUP_DISPLAY_NAMES,
                 "benchmark": MultiAssetRotation.BENCHMARK,
             },
             "strategy_parameters": STRATEGY_PARAMETERS,
@@ -1808,10 +2327,18 @@ def main(argv: list[str]) -> int:
             "cash_account": (
                 f"residual weight earns {args.cash_proxy_symbol} adjusted-close return"
             ),
-            "comparator": (
-                "equal-initial-weight buy-and-hold basket scaled by the strategy's "
-                "daily risky exposure; residual weight earns the cash proxy"
-            ),
+            "comparators": {
+                "realized_exposure_attribution_control": (
+                    "equal-initial-weight buy-and-hold basket scaled by the "
+                    "strategy's realized daily risky exposure; residual weight "
+                    "earns the cash proxy; ex-post and gross of comparator costs"
+                ),
+                "target_exposure_costed_comparator": (
+                    "event-driven equal-initial-weight buy-and-hold basket using "
+                    "the strategy's close-of-bar target gross exposure, next-bar "
+                    "execution, residual cash, and the baseline cost model"
+                ),
+            },
             "return_decomposition": {
                 "method": "exact daily arithmetic identity",
                 "components": {
@@ -1870,6 +2397,10 @@ def main(argv: list[str]) -> int:
                 "ablation_intervals": (
                     "joint across all named variants at the primary block length"
                 ),
+                "sharpe_intervals": (
+                    "joint circular-block intervals for the conventional sqrt(252) "
+                    "sample Sharpe statistic"
+                ),
                 "replications": args.bootstrap_replications,
                 "seed": BOOTSTRAP_SEED,
             },
@@ -1878,11 +2409,17 @@ def main(argv: list[str]) -> int:
                 "select a winner; earlier research trial history is unknown"
             ),
         },
+        "evaluation_contract": {
+            "path": "results/evaluation_contract.json",
+            "schema_version": EVALUATION_CONTRACT_SCHEMA_VERSION,
+            "canonical_sha256": _json_sha256(contract),
+        },
         "artifacts": {
             str(path.relative_to(output_dir)): _sha256(path)
             for path in sorted(artifacts)
         },
     }
+    manifest["configuration_sha256"] = _json_sha256(manifest["design"])
     manifest_path = results_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",

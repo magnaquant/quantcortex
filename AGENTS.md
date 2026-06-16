@@ -68,6 +68,8 @@ update regression tests.
 Never commit `.env`, credentials, broker account data, local state, market-data
 snapshots, or executed notebook outputs. Published performance and paper
 artifacts require owner approval, adjacent provenance, an input digest, and
-artifact hashes; ordinary reports remain ignored. Use `.env.example`.
+artifact hashes; release them from a clean commit with
+`scripts/release_paper_artifacts.sh`. Ordinary reports remain ignored. Use
+`.env.example`.
 Synthetic data is limited to tests and clearly labeled dry runs. Preserve
 pre-trade risk checks, paper-mode defaults, and point-in-time data discipline.

@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from scripts.run_paper_experiments import source_tree_manifest
+from scripts.run_paper_experiments import _json_sha256, source_tree_manifest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PAPER_ROOT = REPO_ROOT / "paper"
@@ -22,7 +22,7 @@ def test_paper_artifacts_match_manifest_and_generator():
     manifest = json.loads(
         (PAPER_ROOT / "results" / "manifest.json").read_text(encoding="utf-8")
     )
-    assert manifest["schema_version"] == 3
+    assert manifest["schema_version"] == 4
 
     source = manifest["source"]
     assert source["raw_input_committed"] is False
@@ -34,9 +34,35 @@ def test_paper_artifacts_match_manifest_and_generator():
     script = REPO_ROOT / generator["path"]
     assert script.is_file()
     assert _sha256(script) == generator["script_sha256"]
-    assert len(generator["git"]["base_commit"]) == 40
-    int(generator["git"]["base_commit"], 16)
-    assert isinstance(generator["git"]["worktree_clean"], bool)
+    source_commit = generator["git"]["source_commit"]
+    assert len(source_commit) == 40
+    int(source_commit, 16)
+    assert generator["git"]["worktree_clean_at_start"] is True
+    subprocess.run(
+        ["git", "merge-base", "--is-ancestor", source_commit, "HEAD"],
+        cwd=REPO_ROOT,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "diff",
+            "--quiet",
+            source_commit,
+            "--",
+            "quantcortex",
+            "scripts/run_paper_experiments.py",
+            "schemas",
+            "pyproject.toml",
+            "poetry.lock",
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+    )
+    dependency_lock = generator["dependency_lock"]
+    assert dependency_lock["path"] == "poetry.lock"
+    assert dependency_lock["sha256"] == _sha256(REPO_ROOT / "poetry.lock")
+    assert generator["threadpools"]
     source_tree = generator["source_tree"]
     assert source_tree == source_tree_manifest(
         REPO_ROOT,
@@ -83,6 +109,34 @@ def test_paper_artifacts_match_manifest_and_generator():
     )
     assert design["primary_engine"] == "event_driven"
     assert "pseudo-shares" in design["primary_engine_semantics"]
+    assert manifest["configuration_sha256"] == _json_sha256(design)
+    assert design["universe"]["group_display_names"] == {
+        "growth": "growth equities",
+        "real_assets": "gold and nominal duration",
+        "defensive": "broad and dividend equities",
+    }
+    assert design["comparators"]["realized_exposure_attribution_control"].endswith(
+        "ex-post and gross of comparator costs"
+    )
+    assert "next-bar execution" in design["comparators"][
+        "target_exposure_costed_comparator"
+    ]
+
+    contract_metadata = manifest["evaluation_contract"]
+    contract_path = PAPER_ROOT / contract_metadata["path"]
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    assert contract_metadata["schema_version"] == 1
+    assert contract_metadata["canonical_sha256"] == _json_sha256(contract)
+    assert contract["comparators"]["realized_exposure_attribution_control"][
+        "implementable"
+    ] is False
+    assert contract["comparators"]["target_exposure_costed_comparator"][
+        "costed"
+    ] is True
+    assert contract["overlays"]["may_reduce_risky_exposure"] is True
+    assert "block automatic retry" in contract["order_state"][
+        "uncertain_submission"
+    ]
 
     generated_values = (
         PAPER_ROOT / "results" / "generated_values.tex"
@@ -94,12 +148,17 @@ def test_paper_artifacts_match_manifest_and_generator():
     assert "\\newcommand{\\PaperBootstrapReplications}{5,000}" in generated_values
     assert "\\newcommand{\\PaperGrossActiveFullLower}" in generated_values
     assert "\\newcommand{\\PaperGrossTradedNotional}" in generated_values
+    assert "\\newcommand{\\PaperCostedComparatorCAGR}" in generated_values
+    assert "\\newcommand{\\PaperCostedActiveSharpeLower}" in generated_values
     assert "\\newcommand{\\PaperDecompositionRows}" in generated_values
 
     artifacts = manifest["artifacts"]
     assert artifacts
     assert "results/ablation_uncertainty.csv" in artifacts
+    assert "results/comparator_diagnostics.csv" in artifacts
+    assert "results/evaluation_contract.json" in artifacts
     assert "results/return_decomposition.csv" in artifacts
+    assert "results/sharpe_uncertainty.csv" in artifacts
     assert "results/protocol_switches.csv" in artifacts
     assert "figures/bootstrap_robustness.pdf" in artifacts
     assert "figures/return_attribution_and_protocol_switches.pdf" in artifacts
@@ -154,6 +213,21 @@ def test_paper_artifacts_match_manifest_and_generator():
     for field in ("annualized_mean", "ci_95_lower", "ci_95_upper"):
         assert full_interval[field] == gross_primary[field]
 
+    with (PAPER_ROOT / "results" / "sharpe_uncertainty.csv").open(
+        encoding="utf-8",
+        newline="",
+    ) as handle:
+        sharpe_rows = list(csv.DictReader(handle))
+    primary_costed = next(
+        row
+        for row in sharpe_rows
+        if row["series"]
+        == "strategy_net_minus_target_exposure_costed_comparator"
+        and row["block_length"] == "21"
+    )
+    assert float(primary_costed["sample_sharpe"]) < 0.0
+    assert float(primary_costed["ci_95_upper"]) < 0.0
+
 
 def test_paper_source_and_reviewed_pdf_are_published():
     main = (PAPER_ROOT / "main.tex").read_text(encoding="utf-8")
@@ -161,22 +235,68 @@ def test_paper_source_and_reviewed_pdf_are_published():
     assert "\\usepackage[preprint]{neurips_2026}" in main
     assert "\\usepackage{orcidlink}" in main
     assert "\\input{results/generated_values}" in main
+    assert "Executable Evaluation Contracts" in main
     assert "Kevin Lee\\,\\orcidlink{0009-0004-0388-9260}" in main
     assert "University of California, Los Angeles" in main
     assert "\\url{https://orcid.org/0009-0004-0388-9260}" not in main
     assert "\\input{checklist}" in main
     assert "\\PaperInputDigest" in main
     assert "{bootstrap_robustness.pdf}" in main
+    assert "target-exposure comparator" in main
 
-    pdf = PAPER_ROOT / "quantcortex_audit_neurips2026.pdf"
-    assert pdf.is_file()
-    assert pdf.stat().st_size > 100_000
-    assert pdf.read_bytes().startswith(b"%PDF-")
-    digest, file_name = (
-        PAPER_ROOT / "quantcortex_audit_neurips2026.sha256"
-    ).read_text(encoding="ascii").split()
-    assert file_name == pdf.name
-    assert digest == _sha256(pdf)
+    anonymous_source = (PAPER_ROOT / "anonymous.tex").read_text(encoding="ascii")
+    assert "\\def\\quantcortexanonymous{1}" in anonymous_source
+
+    for stem in ("quantcortex_audit_neurips2026", "quantcortex_audit_anonymous"):
+        pdf = PAPER_ROOT / f"{stem}.pdf"
+        assert pdf.is_file()
+        assert pdf.stat().st_size > 100_000
+        assert pdf.read_bytes().startswith(b"%PDF-")
+        digest, file_name = (PAPER_ROOT / f"{stem}.sha256").read_text(
+            encoding="ascii"
+        ).split()
+        assert file_name == pdf.name
+        assert digest == _sha256(pdf)
+
+    pdftotext = shutil.which("pdftotext")
+    if pdftotext is not None:
+        anonymous_text = subprocess.run(
+            [
+                pdftotext,
+                str(PAPER_ROOT / "quantcortex_audit_anonymous.pdf"),
+                "-",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        for identifying_text in (
+            "Kevin Lee",
+            "kevinlee69720",
+            "University of California",
+            "micro1",
+            "github.com/magnaquant",
+            "Submitted to",
+        ):
+            assert identifying_text not in anonymous_text
+
+    build_manifest = json.loads(
+        (PAPER_ROOT / "build_manifest.json").read_text(encoding="ascii")
+    )
+    assert build_manifest["tectonic_version"] == "0.16.9"
+    assert build_manifest["tectonic_bundle"] == {
+        "name": "default_bundle_v33.tar",
+        "sha256": "6ffe055852f8faf66c0acbe1a7fb27f87b869a90bad1204f3bf4d9683f597c7c",
+    }
+    assert build_manifest["source_commit"] == json.loads(
+        (PAPER_ROOT / "results" / "manifest.json").read_text(encoding="utf-8")
+    )["generator"]["git"]["source_commit"]
+    assert build_manifest["pdf"]["sha256"] == _sha256(
+        PAPER_ROOT / build_manifest["pdf"]["path"]
+    )
+    assert build_manifest["anonymous_pdf"]["sha256"] == _sha256(
+        PAPER_ROOT / build_manifest["anonymous_pdf"]["path"]
+    )
 
     source_manifest = (
         PAPER_ROOT / "quantcortex_audit_neurips2026.sources.sha256"
@@ -187,6 +307,7 @@ def test_paper_source_and_reviewed_pdf_are_published():
         source_entries[relative_path] = expected_digest
     assert {
         "main.tex",
+        "anonymous.tex",
         "checklist.tex",
         "references.bib",
         "neurips_2026.sty",
@@ -203,6 +324,7 @@ def test_paper_source_and_reviewed_pdf_are_published():
 
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     assert "paper/quantcortex_audit_neurips2026.pdf" in readme
+    assert "paper/quantcortex_audit_anonymous.pdf" in readme
     assert "paper/figures/return_attribution_and_protocol_switches.png" in readme
     assert "paper/figures/sensitivity_and_ablation.png" in readme
     assert "docs/architecture.md" in readme
@@ -215,29 +337,44 @@ def test_paper_body_respects_neurips_nine_page_limit():
 
         pytest.skip("pdftotext is required to inspect PDF page boundaries")
 
-    pdf = PAPER_ROOT / "quantcortex_audit_neurips2026.pdf"
-
-    def page_text(first: int, last: int) -> str:
+    def page_text(pdf: Path, first: int, last: int) -> str:
         return subprocess.run(
-            [pdftotext, "-f", str(first), "-l", str(last), "-layout", pdf, "-"],
+            [
+                pdftotext,
+                "-f",
+                str(first),
+                "-l",
+                str(last),
+                "-layout",
+                pdf,
+                "-",
+            ],
             check=True,
             capture_output=True,
             text=True,
         ).stdout
 
-    first_nine = page_text(1, 9)
-    page_ten = page_text(10, 10)
-    references_pattern = re.compile(r"^\s*References\s*$", re.MULTILINE)
-    if references_pattern.search(first_nine):
-        return
+    for pdf_name in (
+        "quantcortex_audit_neurips2026.pdf",
+        "quantcortex_audit_anonymous.pdf",
+    ):
+        pdf = PAPER_ROOT / pdf_name
+        first_nine = page_text(pdf, 1, 9)
+        page_ten = page_text(pdf, 10, 10)
+        references_pattern = re.compile(
+            r"^\s*(?:\d+\s+)?References\s*$",
+            re.MULTILINE,
+        )
+        if references_pattern.search(first_nine):
+            continue
 
-    substantive_lines = [
-        line.strip()
-        for line in page_ten.replace("\f", "").splitlines()
-        if line.strip() and not line.strip().isdigit()
-    ]
-    assert substantive_lines
-    assert substantive_lines[0] == "References"
+        substantive_lines = [
+            re.sub(r"^\d+\s+", "", line.strip())
+            for line in page_ten.replace("\f", "").splitlines()
+            if line.strip() and not line.strip().isdigit()
+        ]
+        assert substantive_lines, pdf_name
+        assert substantive_lines[0] == "References", pdf_name
 
 
 def test_paper_citations_are_defined_used_and_unique():

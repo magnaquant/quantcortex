@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/magnaquant/quantcortex/schemas/canonical_target_tape.schema.json",
+  "title": "QuantCortex Canonical Target Tape",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "symbols", "max_gross", "records"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "symbols": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": ".*\\S.*"
+      }
+    },
+    "max_gross": {
+      "type": "number",
+      "exclusiveMinimum": 0.0
+    },
+    "records": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision_timestamp",
+          "symbol",
+          "target_weight"
+        ],
+        "properties": {
+          "decision_timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "symbol": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target_weight": {
+            "type": "number",
+            "minimum": 0.0
+          }
+        }
+      }
+    }
+  }
+}

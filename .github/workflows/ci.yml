@@ -164,6 +164,49 @@ jobs:
           diff -u requirements/runtime.lock /tmp/runtime.lock
           diff -u requirements/build.lock /tmp/build.lock
 
+  paper-build:
+    name: deterministic paper build (Tectonic 0.16.9)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Poppler and pinned Tectonic binary
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends poppler-utils
+          curl --fail --location --retry 3 \
+            'https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%400.16.9/tectonic-0.16.9-x86_64-unknown-linux-gnu.tar.gz' \
+            --output /tmp/tectonic.tar.gz
+          echo 'f3c825128095dc3399ea11c08c18035b33050a216930c295c79e8eb11bd21de4  /tmp/tectonic.tar.gz' | sha256sum --check
+          mkdir -p /tmp/tectonic
+          tar -xzf /tmp/tectonic.tar.gz -C /tmp/tectonic
+          echo '/tmp/tectonic' >> "$GITHUB_PATH"
+
+      - name: Load reviewed build metadata
+        run: |
+          echo "SOURCE_DATE_EPOCH=$(python -c 'import json; print(json.load(open("paper/build_manifest.json"))["source_date_epoch"])')" >> "$GITHUB_ENV"
+          echo "PAPER_SOURCE_COMMIT=$(python -c 'import json; print(json.load(open("paper/build_manifest.json"))["source_commit"])')" >> "$GITHUB_ENV"
+
+      - name: Rebuild and verify byte-identical paper artifacts
+        env:
+          PYTHON_BIN: python
+          TECTONIC_EXPECTED_VERSION: 0.16.9
+          TECTONIC_BUNDLE_SHA256: 6ffe055852f8faf66c0acbe1a7fb27f87b869a90bad1204f3bf4d9683f597c7c
+        run: |
+          scripts/build_paper.sh
+          git diff --exit-code -- \
+            paper/build_manifest.json \
+            paper/quantcortex_audit_anonymous.pdf \
+            paper/quantcortex_audit_anonymous.sha256 \
+            paper/quantcortex_audit_neurips2026.pdf \
+            paper/quantcortex_audit_neurips2026.sha256 \
+            paper/quantcortex_audit_neurips2026.sources.sha256
+
   container:
     name: container build + offline smoke
     runs-on: ubuntu-latest
