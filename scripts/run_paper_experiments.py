@@ -99,6 +99,7 @@ def _benchmark_returns(
     prices: pd.DataFrame,
     evaluation_index: pd.DatetimeIndex,
 ) -> tuple[pd.Series, pd.Series]:
+    """Return SPY and an equal-initial-weight buy-and-hold basket."""
     first = prices.index.get_loc(evaluation_index[0])
     last = prices.index.get_loc(evaluation_index[-1])
     base = max(0, first - 1)
@@ -106,14 +107,18 @@ def _benchmark_returns(
     spy = benchmark_prices["SPY"].pct_change(fill_method=None).reindex(
         evaluation_index
     )
-    equal_weight_curve = benchmark_prices.div(benchmark_prices.iloc[0]).mean(axis=1)
-    equal_weight = equal_weight_curve.pct_change(fill_method=None).reindex(
+    equal_initial_weight_curve = benchmark_prices.div(
+        benchmark_prices.iloc[0]
+    ).mean(axis=1)
+    equal_initial_weight = equal_initial_weight_curve.pct_change(
+        fill_method=None
+    ).reindex(
         evaluation_index
     )
     if first == 0:
         spy.iloc[0] = 0.0
-        equal_weight.iloc[0] = 0.0
-    return spy.fillna(0.0), equal_weight.fillna(0.0)
+        equal_initial_weight.iloc[0] = 0.0
+    return spy.fillna(0.0), equal_initial_weight.fillna(0.0)
 
 
 def _engine_result(
@@ -305,7 +310,7 @@ def _save_figures(
     )
     axes[0].plot(
         _growth(matched_equal_weight),
-        label="Exposure-matched equal weight",
+        label="Exposure-matched equal-initial-weight basket",
         color="C1",
     )
     axes[0].plot(
@@ -328,7 +333,11 @@ def _save_figures(
     axes[1].set_ylabel("Return")
     axes[1].yaxis.set_major_formatter(PercentFormatter(1.0))
     axes[1].legend(
-        ["Strategy net", "SHV", "Exposure-matched equal weight"],
+        [
+            "Strategy net",
+            "SHV",
+            "Exposure-matched equal-initial-weight basket",
+        ],
         fontsize=8,
     )
     fig.tight_layout()
@@ -352,17 +361,17 @@ def _save_figures(
     width = 0.38
     axes[1].bar(
         locations - width / 2.0,
-        ablation_results["net_cash_excess_sharpe"],
+        ablation_results["gross_cash_excess_sharpe"],
         width=width,
         color="C0",
-        label="Strategy after costs",
+        label="Strategy before costs",
     )
     axes[1].bar(
         locations + width / 2.0,
         ablation_results["matched_equal_weight_cash_excess_sharpe"],
         width=width,
         color="C1",
-        label="Exposure-matched equal weight",
+        label="Exposure-matched passive basket",
     )
     axes[1].axhline(0.0, color="black", lw=0.8)
     axes[1].set_title("Every overlay variant trails matched passive exposure")
@@ -429,29 +438,40 @@ def run_experiments(
         ablation_rows.append({"variant": variant, **metrics})
 
     baseline_series = variant_series["full"]
-    spy, equal_weight = _benchmark_returns(prices, evaluation_index)
+    spy, equal_initial_weight = _benchmark_returns(prices, evaluation_index)
     ablation = pd.DataFrame(ablation_rows)
     for row_index, variant in enumerate(ablation["variant"]):
         variant_data = variant_series[variant]
         variant_exposure = variant_data["exposure"]
         variant_matched_equal_weight = (
-            variant_exposure * equal_weight
+            variant_exposure * equal_initial_weight
             + (1.0 - variant_exposure) * variant_data["cash"]
         )
-        active_returns = variant_data["net"] - variant_matched_equal_weight
+        net_active_returns = variant_data["net"] - variant_matched_equal_weight
+        gross_active_returns = variant_data["gross"] - variant_matched_equal_weight
         ablation.loc[row_index, "matched_equal_weight_cash_excess_sharpe"] = (
             _sharpe(variant_matched_equal_weight, variant_data["cash"])
         )
-        ablation.loc[row_index, "active_information_ratio"] = _sharpe(
-            active_returns
+        ablation.loc[row_index, "net_active_information_ratio"] = _sharpe(
+            net_active_returns
         )
-        ablation.loc[row_index, "annualized_arithmetic_active_return"] = float(
-            active_returns.mean() * 252.0
+        ablation.loc[row_index, "gross_active_information_ratio"] = _sharpe(
+            gross_active_returns
+        )
+        ablation.loc[
+            row_index, "annualized_arithmetic_net_active_return"
+        ] = float(net_active_returns.mean() * 252.0)
+        ablation.loc[
+            row_index, "annualized_arithmetic_gross_active_return"
+        ] = float(
+            gross_active_returns.mean() * 252.0
         )
     exposure = baseline_series["exposure"]
     cash = baseline_series["cash"]
     matched_spy = exposure * spy + (1.0 - exposure) * cash
-    matched_equal_weight = exposure * equal_weight + (1.0 - exposure) * cash
+    matched_equal_weight = (
+        exposure * equal_initial_weight + (1.0 - exposure) * cash
+    )
 
     accounting_rows = []
     accounting_series = {
@@ -539,9 +559,19 @@ def run_experiments(
             baseline_series["net"] - cash,
             replications=bootstrap_replications,
         ),
+        "strategy_gross_minus_cash": circular_block_bootstrap(
+            baseline_series["gross"] - cash,
+            replications=bootstrap_replications,
+        ),
         "strategy_minus_exposure_matched_equal_weight": circular_block_bootstrap(
             baseline_series["net"] - matched_equal_weight,
             replications=bootstrap_replications,
+        ),
+        "strategy_gross_minus_exposure_matched_equal_weight": (
+            circular_block_bootstrap(
+                baseline_series["gross"] - matched_equal_weight,
+                replications=bootstrap_replications,
+            )
         ),
     }
     return {
