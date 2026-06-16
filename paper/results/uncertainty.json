@@ -1,0 +1,42 @@
+{
+  "strategy_gross_minus_cash": {
+    "annualized_mean": 0.00946252369140437,
+    "block_length": 21,
+    "bootstrap_probability_positive": 0.6728,
+    "ci_95_lower": -0.033148392028151646,
+    "ci_95_upper": 0.053964695811936324,
+    "observations": 2011,
+    "replications": 5000,
+    "seed": 42
+  },
+  "strategy_gross_minus_exposure_matched_equal_weight": {
+    "annualized_mean": -0.030844352270335107,
+    "block_length": 21,
+    "bootstrap_probability_positive": 0.0064,
+    "ci_95_lower": -0.05582392062626057,
+    "ci_95_upper": -0.005617063516976732,
+    "observations": 2011,
+    "replications": 5000,
+    "seed": 42
+  },
+  "strategy_minus_cash": {
+    "annualized_mean": -0.00940507879646263,
+    "block_length": 21,
+    "bootstrap_probability_positive": 0.3442,
+    "ci_95_lower": -0.05265903509392716,
+    "ci_95_upper": 0.03550696234747789,
+    "observations": 2011,
+    "replications": 5000,
+    "seed": 42
+  },
+  "strategy_minus_exposure_matched_equal_weight": {
+    "annualized_mean": -0.04971195475820211,
+    "block_length": 21,
+    "bootstrap_probability_positive": 0.0,
+    "ci_95_lower": -0.07584680341909243,
+    "ci_95_upper": -0.023886577695063315,
+    "observations": 2011,
+    "replications": 5000,
+    "seed": 42
+  }
+}

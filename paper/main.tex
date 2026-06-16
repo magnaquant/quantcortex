@@ -1,0 +1,393 @@
+\documentclass{article}
+
+\usepackage[preprint]{neurips_2026}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{microtype}
+\usepackage{xcolor}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  citecolor=black,
+  urlcolor=blue
+}
+
+\graphicspath{{figures/}}
+\newcommand{\system}{\textsc{quantcortex}}
+
+\title{Cash Is Not Zero: Auditing a Weight-Centric Quantitative Trading Pipeline}
+
+\author{%
+  Kevin Lee \\
+  University of California at Los Angeles \\
+  micro1 \\
+  \texttt{kevinlee69720@g.ucla.edu} \\
+  \url{https://orcid.org/0009-0004-0388-9260}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Quantitative trading systems can produce internally consistent backtests while
+misstating investment performance through omitted cash returns, unmatched
+benchmarks, hidden transaction-cost assumptions, or research and execution
+paths that implement different semantics. We present an audit-first evaluation
+of \system, an open-source, weight-centric research and paper-trading pipeline,
+and use a fixed six-ETF rotation strategy as a deliberately untuned case study.
+The audit formalizes residual-cash accounting, next-bar execution, mandatory
+costs, point-in-time contracts, coherent execution state, and machine-readable
+provenance. On 2,011 U.S. trading sessions from 2018--2025, residual cash earns
+an SHV adjusted-close proxy and the strategy is compared with passive returns
+scaled to the same daily risky exposure. The audited strategy earns a 1.33\%
+net CAGR, a -0.14 cash-excess Sharpe ratio, and a -10.33\% maximum drawdown.
+Before costs, it trails an exposure-matched equal-initial-weight buy-and-hold
+basket by 3.08 percentage points per year in arithmetic return; a paired
+circular-block bootstrap gives a 95\% interval of [-5.58\%, -0.56\%]. All four
+predefined overlay variants trail their matched passive comparator, and the
+conclusion persists across cost levels, subperiods, and two backtest engines.
+The contribution is not a new alpha model; it is a reproducible negative result
+and a concrete protocol for distinguishing software correctness from economic
+evidence.
+\end{abstract}
+
+\section{Introduction}
+
+Modern quantitative platforms increasingly unify data processing, feature
+construction, portfolio allocation, simulation, and broker execution
+\citep{yang2020qlib,liu2020finrl,yang2026finrlx}. This integration reduces
+friction, but it also makes accounting and interface assumptions load-bearing.
+A strategy that is 40\% invested has a 60\% cash position whether or not a
+backtest models it. A benchmark with 100\% risky exposure does not answer
+whether security selection added value at 40\% exposure. Likewise, agreement
+between a chart and a README does not establish causality, cost realism, or
+execution safety.
+
+These issues are especially consequential in financial machine learning,
+where observations are dependent, effective sample sizes are small, and model
+or strategy selection creates substantial false-discovery risk
+\citep{white2000reality,harvey2016crosssection,bailey2014deflated,
+bailey2017pbo,arnott2019protocol}. Reproducible software is necessary but not
+sufficient: the reproduced quantity must itself be economically well-defined.
+
+This paper makes three contributions. First, it specifies an auditable return
+contract for weight-centric pipelines: causal target weights, explicit
+residual cash, mandatory costs, aligned comparators, and separable asset, cash,
+and cost contributions. Second, it describes engineering controls that bind
+reported results to code, inputs, dependencies, and execution state. Third, it
+reports a fixed negative-result study of a multi-asset rotation strategy. We
+report all predefined variants rather than selecting a winner, and separate
+gross signal quality from net implementability. The purpose is to show what
+changes when the accounting question is posed correctly, not to claim a
+profitable trading rule.
+
+\section{Related work}
+
+Portfolio construction originates from explicit trade-offs between return and
+risk \citep{markowitz1952portfolio}; momentum evidence motivates ranking assets
+by past returns across both securities and asset classes
+\citep{jegadeesh1993returns,moskowitz2012timeseries}. The case-study strategy
+uses these ideas only as a test vehicle. We do not claim that its particular
+grouping, residualization, or overlays improve on that literature.
+
+Open platforms such as Qlib and FinRL provide modular workflows for financial
+AI research \citep{yang2020qlib,liu2020finrl}; FinRL-X emphasizes a common
+weight interface across research and deployment \citep{yang2026finrlx}. Our
+focus is narrower and complementary: the accounting and state invariants that
+must hold when such an interface is evaluated or sent toward a broker.
+
+Sharpe-ratio inference is sensitive to distributional and serial-dependence
+assumptions \citep{lo2002statistics}. Data snooping and repeated trials further
+inflate apparent performance \citep{white2000reality,bailey2014deflated,
+bailey2017pbo}. We therefore avoid selecting among variants and use paired
+block resampling for uncertainty. More broadly, the manifest, locked
+environment, and executable protocol follow the reproducibility goals described
+by \citet{pineau2021reproducibility}.
+
+\section{Audit protocol}
+
+\subsection{Weight, timing, and cash contracts}
+
+Let $w_t\in\mathbb{R}^N$ be the risky-asset target decided after observing the
+close at date $t$. In the audited convention, the target executes on the first
+bar strictly after $t$ and begins earning returns only after that execution
+bar. Thus close-derived signals cannot earn the same close they observe. For
+the long-only case, $w_{i,t}\geq 0$ and $\sum_i w_{i,t}\leq 1$; the residual
+cash weight is
+\begin{equation}
+  w^c_t = 1-\sum_{i=1}^N w_{i,t}.
+\end{equation}
+For asset returns $r_{i,t}$ and cash-account return $r^c_t$, pre-cost portfolio
+return is
+\begin{equation}
+  r^{\mathrm{gross}}_t = \sum_{i=1}^N w_{i,t-1}r_{i,t}
+  + w^c_{t-1}r^c_t.
+  \label{eq:gross}
+\end{equation}
+Missing cash observations fail the run instead of silently becoming zero. The
+after-cost return is $r^{\mathrm{net}}_t=r^{\mathrm{gross}}_t-c_t$. The baseline
+uses a symmetric 13 basis-point charge per dollar traded with no commission or
+tax decomposition. This flat model is a first-order sensitivity assumption,
+not a market-impact model; large or urgent orders require size- and
+liquidity-aware execution models such as \citet{almgren2001execution}.
+
+We report nominal CAGR, maximum drawdown, annualized one-way turnover, and
+cash-excess Sharpe
+\begin{equation}
+  \mathrm{SR}_c = \sqrt{252}\,
+  \frac{\operatorname{mean}(r_t-r^c_t)}
+       {\operatorname{sd}(r_t-r^c_t)}.
+  \label{eq:sharpe}
+\end{equation}
+An SHV adjusted-close series is used as an investable short-duration cash
+proxy. It is not a frictionless risk-free asset.
+
+\subsection{System controls}
+
+The implementation separates data, alpha, portfolio, timing, risk, backtest,
+execution, and strategy layers under one Python package. Allocation contracts
+are strict at strategy output and relaxed only when an overlay intentionally
+reduces gross exposure. Point-in-time merge guards reject fundamentals that
+were not yet announced. Optional broker, machine-learning, and provider SDKs
+remain lazy imports so the offline scientific core is testable without
+credentials.
+
+Research outputs include the generator hash, Git revision, Python and package
+versions, input SHA-256 digest, full experiment design, and hashes of every
+table and figure. Paper-trading state is stored as one versioned snapshot of
+positions, intents, orders, and metadata; writes are atomic and use optimistic
+concurrency. An order intent is persisted before submission, and an uncertain
+submission is not retried automatically. Broker conformance tests instantiate
+the current Alpaca and Interactive Brokers SDK request types, but authenticated
+transport and venue behavior remain outside this study.
+
+\section{Case study and experimental design}
+
+\subsection{Fixed strategy}
+
+The universe contains QQQ, VGT, GLD, TLT, SPY, and VIG, grouped as growth,
+real assets, and defensive proxies. On the first session of each week, the
+strategy ranks groups by a 126-session information ratio relative to QQQ and
+keeps the top two. Within selected groups, it estimates a one-factor regression
+on a preceding 126-session window and sums residual returns over a separate
+126-session formation window, skipping the latest 21 sessions. Positive scores
+receive proportional long-only weights, capped at 60\% per asset.
+QQQ is also one of the two growth-group members, so that group's active-return
+spread contains one zero benchmark leg; this asymmetric product specification
+is held fixed.
+
+Two exposure overlays are evaluated. A seeded three-state Gaussian-mixture
+regime model maps QQQ return and realized-volatility features to zero, half, or
+full exposure. A volatility scaler targets 20 annualized volatility points; no
+VIX series is supplied, so the experiment uses the documented 21-session QQQ
+realized-volatility proxy. The full strategy uses both overlays. Three
+predefined variants remove the regime gate, remove the volatility scaler, or
+remove both. This audit did not tune parameters or select a variant based on
+the reported period. The unknown number of configurations explored before the
+audit prevents a defensible multiple-testing-adjusted discovery claim.
+
+\subsection{Data, comparators, and uncertainty}
+
+The owner-supplied matrix contains adjusted closes from 2016-01-04 through
+2025-12-31, retrieved on 2026-06-16 through yfinance 1.4.1 with
+\texttt{auto\_adjust=False}. The yfinance documentation describes the Yahoo
+Finance API as intended for personal use and directs users to Yahoo's terms of
+use.\footnote{\url{https://ranaroussi.github.io/yfinance/}} The repository owner
+attests permission to publish the derived aggregate results; the raw matrix is
+not distributed. Its SHA-256 is:
+\begin{center}
+  \small\texttt{efb384a62157e56a0cd8065abf45c1ed07d90ec26c681e5d54d74fe4cb9c55e1}
+\end{center}
+The first 503 sessions are signal history; evaluation covers 2,011 sessions
+from 2018-01-02 through 2025-12-31.
+
+Comparators share one capital clock. SPY and a six-ETF basket initialized at
+equal dollar weights are measured from the close immediately preceding the
+evaluation window. To isolate cross-sectional decisions from exposure timing,
+the basket return is multiplied by the strategy's realized risky exposure each
+day and the remainder earns SHV. This comparator is gross of its own trading
+costs. We therefore report both gross-to-gross signal comparisons and the more
+conservative net-strategy-to-gross-benchmark comparison.
+
+For dependent daily observations, we resample paired active-return series with
+the circular-block bootstrap of \citet{politis1992circular}. We use 5,000
+replications, 21-session blocks, and seed 42. Intervals quantify sampling
+variation conditional on this one historical path, strategy specification,
+cash proxy, and block length; they do not establish stationarity or future
+performance.
+
+\section{Results}
+
+\subsection{Cash accounting changes the reported level, not the verdict}
+
+Table~\ref{tab:accounting} and Figure~\ref{fig:accounting} separate cash and
+cost effects. Crediting residual cash raises net CAGR from -0.07\% under a
+zero-return cash assumption to 1.33\%. That correction is economically
+material because mean risky exposure is only 34.76\% and the strategy is fully
+in cash on 41.92\% of sessions. It does not create evidence of alpha: SHV alone
+compounds at 2.50\%, and the exposure-matched passive basket compounds at
+6.54\%.
+
+\begin{table}[t]
+  \caption{Audited accounting over 2018--2025. Sharpe ratios use SHV except
+  for the explicitly zero-cash row, which uses a zero reference rate.}
+  \label{tab:accounting}
+  \centering
+  \small
+  \begin{tabular}{lrrr}
+    \toprule
+    Series & CAGR & Cash-excess Sharpe & Max drawdown \\
+    \midrule
+    Strategy, after costs and SHV cash & 1.33\% & -0.14 & -10.33\% \\
+    Strategy, before costs and SHV cash & 3.26\% & 0.15 & -8.61\% \\
+    SHV cash proxy & 2.50\% & -- & -0.45\% \\
+    Exposure-matched passive basket & 6.54\% & 0.69 & -7.97\% \\
+    Strategy, after costs and zero cash & -0.07\% & 0.02 & -14.22\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{accounting_summary.pdf}
+  \caption{Left: growth of one dollar under audited cash and cost accounting.
+  Right: calendar-year nominal returns. The matched comparator uses the
+  strategy's daily risky exposure and assigns residual capital to SHV.}
+  \label{fig:accounting}
+\end{figure}
+
+\subsection{Costs and overlays do not rescue the strategy}
+
+The strategy turns over 10.84 times per year on a one-way basis. At zero cost,
+its cash-excess Sharpe is 0.15; it declines to 0.03 at 5 bps, -0.14 at the
+13-bps baseline, -0.41 at 25 bps, and -0.94 at 50 bps. The model is therefore
+not economically robust to modest execution friction.
+
+Figure~\ref{fig:sensitivity} compares each variant before costs with a passive
+basket at the same exposure. This avoids attributing the result solely to
+strategy turnover. The full model has gross cash-excess Sharpe 0.15 versus
+0.69 for its comparator. Removing the regime gate, the volatility scaler, or
+both increases strategy exposure and raw returns, but every gross strategy
+still trails its matched comparator. The corresponding annualized gross active
+returns are -3.08\%, -4.63\%, -3.21\%, and -4.28\%. No variant is selected as a
+replacement model.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{sensitivity_and_ablation.pdf}
+  \caption{Left: after-cost Sharpe sensitivity for the full strategy. Right:
+  gross-to-gross ablations, so transaction costs do not explain the passive
+  comparator's advantage. All variants were defined before this comparison.}
+  \label{fig:sensitivity}
+\end{figure}
+
+\subsection{Uncertainty, subperiods, and engine parity}
+
+The net strategy's annualized arithmetic excess return over SHV is -0.94\%,
+with a 95\% block-bootstrap interval of [-5.27\%, 3.55\%]. Before costs, the
+corresponding estimate is 0.95\% [-3.31\%, 5.40\%]. Neither supports a positive
+cash-relative claim. Relative to the exposure-matched basket, gross active
+return is -3.08\% [-5.58\%, -0.56\%], and only 0.64\% of bootstrap replications
+are positive. After costs it is -4.97\% [-7.58\%, -2.39\%], with no positive
+replication among 5,000 draws.
+
+The conclusion also holds in both prespecified halves. In 2018--2021, strategy
+CAGR is 0.08\% and cash-excess Sharpe is -0.18, versus 4.77\% and 0.78 for the
+matched basket. In 2022--2025, the values are 2.59\% and -0.12, versus 8.34\%
+and 0.66. Finally, the vectorized and share-based event-driven engines produce
+net CAGRs of 1.325\% and 1.328\%, respectively, and cash-excess Sharpes of
+-0.1442 and -0.1440. This close agreement is a diagnostic for this experiment,
+not a claim that their rebalancing semantics are generally equivalent.
+
+\section{Limitations and broader impact}
+
+This study evaluates one U.S.-listed ETF universe over one eight-year window.
+SHV has duration, expenses, and market-price variation, so it is only a cash
+proxy. Adjusted closes omit intraday spreads and fill uncertainty. The flat
+cost grid excludes order-size, volatility, venue, and market-impact dynamics.
+The exposure-matched basket is a diagnostic comparator, not a directly quoted
+security, and is reported gross of its own rebalancing cost. The bootstrap is
+conditional on a weak-dependence approximation and a chosen 21-session block.
+Historical research trial counts are unknown, so a Deflated Sharpe Ratio would
+require an assumed rather than observed number of trials. The data source can
+revise adjusted histories; the exact input is identified by digest but is not
+openly redistributed. No live broker authentication, exchange acknowledgment,
+or funded paper order was tested.
+
+The positive impact of an audit-first protocol is reduced false confidence:
+cash, costs, timing, and negative results become visible rather than optimized
+away. The principal risk is the opposite misuse: readers may treat an audited
+backtest as investment advice or deployment approval. The repository therefore
+defaults to paper mode, requires pre-trade risk checks, blocks uncertain order
+retries, and describes the strategy as a research baseline. Past simulated
+performance does not imply future returns.
+
+\section{Conclusion}
+
+Software correctness and investment efficacy are different hypotheses. In
+this case, explicit cash accounting materially improves the reported CAGR,
+while matched-exposure benchmarks, gross-to-gross ablations, and dependence-
+aware uncertainty show that the fixed strategy does not add value over simple
+passive exposure. The broader lesson is procedural: weight-centric trading
+research should make cash a first-class asset, separate gross signal from net
+implementation, compare like exposure with like exposure, preserve every
+predefined variant, and bind artifacts to code and inputs. A negative result
+under those controls is more useful than a stronger chart built on ambiguous
+accounting.
+
+\section*{Acknowledgments}
+
+No external funding was used for this work.
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\appendix
+
+\section{Reproducibility details}
+
+The complete generator is \texttt{scripts/run\_paper\_experiments.py}. From a
+locked development environment, the fixed command is:
+\begin{verbatim}
+PYTHONPATH=. .venv/bin/python scripts/run_paper_experiments.py \
+  --prices-csv local_data/published_rotation_prices.csv \
+  --output-dir paper --bootstrap-replications 5000
+\end{verbatim}
+The input must contain adjusted-close columns QQQ, VGT, GLD, TLT, SPY, VIG,
+and SHV and match the published digest for exact reproduction. Aggregate CSVs,
+figures, and their hashes are in \texttt{paper/results/manifest.json}. The run
+used Python 3.14.4 on an eight-core Apple M1 with 8 GiB RAM and completed in
+approximately 25 seconds on CPU; no GPU was used. Supported CI runs use Python
+3.11 through 3.14. The reported experiment consumed less than one CPU-minute;
+repository-wide testing, packaging, notebook execution, and broker conformance
+checks were additional engineering validation rather than model search.
+
+\section{Additional engine comparison}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.92\textwidth]{engine_comparison.pdf}
+  \caption{The vectorized engine re-pegs target weights between rebalances,
+  whereas the event-driven engine holds explicit drifting shares. Their small
+  difference here does not remove the semantic distinction.}
+\end{figure}
+
+\section{Use of language-model assistance}
+
+An LLM-based coding assistant supported repository inspection, implementation
+review, regression-test generation, and language editing. It was not a
+component of the strategy, data, statistical method, or experiment-selection
+rule. Numerical claims in the paper are generated from committed scripts and
+machine-readable artifacts; responsibility for the work remains with the
+author.
+
+\input{checklist}
+
+\end{document}

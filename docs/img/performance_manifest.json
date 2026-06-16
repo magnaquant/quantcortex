@@ -1,10 +1,10 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-06-16T07:46:28+00:00",
+  "generated_at": "2026-06-16T08:35:19+00:00",
   "generator": {
     "path": "scripts/generate_report.py",
-    "script_sha256": "650214eec147f831e6309837bfc6d1485c5bea221e3bb1131a0ed9416c65a1da",
-    "git_commit": "71f33d08d1141b026356cfa725cae62ac5558b90",
+    "script_sha256": "d100689fad8860420ae61b9f315837d3d0b0846a1ab0d5bb02a728a676734cd1",
+    "git_commit": "0a3a8b5b696419f0681f2f59c1f1198c50f157d2",
     "python": "3.14.4",
     "platform": "macOS-26.4-arm64-arm-64bit-Mach-O",
     "packages": {
@@ -19,7 +19,7 @@
   },
   "source": {
     "provider": "Yahoo Finance via yfinance 1.4.1",
-    "permission_basis": "Repository owner confirms permission to publish derived charts",
+    "permission_basis": "Repository owner confirms permission to publish these derived charts",
     "permission_independently_verified": false,
     "retrieved_at": "2026-06-16",
     "symbols": [
@@ -106,10 +106,10 @@
   "artifacts": {
     "allocation_and_exposure.png": "780bf3900b07e0b45c6208f0fefa1d1e1ef7cdf7327e74738046f81b5db5eb13",
     "drawdown.png": "ed11def5144bb223cd6b27b2564f822f3bc895dc5af5fe5fac1a22de381de4ff",
-    "equity_vs_benchmarks.png": "ba73e5abc6dcf5039eb853b1ff643063fb9d9f4267914921013f410e078a6352",
+    "equity_vs_benchmarks.png": "87eb03bcd7279d43a3d14f11d798efab4eac35bf7bb9a94e0111b4c0f059ec0d",
     "monthly_returns.png": "ebec6081a84ecb74a5b191d0a319021406c466f17b8591f3a26e61918cae379e",
-    "performance_attribution.png": "a79544e634e26b230da0586bd724f99be3e1abe2912b71d16f073875a50ee773",
-    "report_overview.png": "409a7d1bfee6701c675c16da18c078dc8c6a0ef617ed2842e5613b747a57d0ff",
+    "performance_attribution.png": "fe0eabe919201e1d0b2d5ef82dfc7dfd61c901cd7d75f69632e37d74e395c457",
+    "report_overview.png": "43d3509b2eff1e0d40831f616dae7164566f642559cd0d9095ff8bb629c86ea2",
     "return_distribution.png": "77d9d95267c131cefd4064810ef53cf13e98e7d8f0e4a626d9d2de7964b61d97",
     "rolling_risk.png": "882a73c5004448c6bcb4f06752643c1405aa76abebf2baf10d62476e5bc0d0d3",
     "rolling_sharpe.png": "a58b3bb3291debd81a4e09cdea491783a29972a33a9176bf537049a774175be6",

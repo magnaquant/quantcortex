@@ -1,0 +1,3 @@
+engine,net_cagr,gross_cagr,net_cash_excess_sharpe,gross_cash_excess_sharpe,annualized_volatility,max_drawdown,annualized_one_way_turnover,sum_cost_fractions,mean_gross_exposure,fully_cash_fraction
+vectorized,0.01325237205,0.03255872444,-0.1441502243,0.145300998,0.0654117108,-0.10330715,10.84416723,0.1505664627,0.347551825,0.4191944306
+event_driven,0.01327757433,0.0326039773,-0.144017962,0.1460690172,0.0653335227,-0.1035172213,10.86602539,0.1507179657,0.3476590123,0.4191944306

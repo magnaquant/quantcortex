@@ -18,15 +18,19 @@ and `pip install --no-deps -e .`. Run everything from the repo root.
 - Operational scripts import `quantcortex.*`, so run them with the root on the
   path: `PYTHONPATH=. .venv/bin/python scripts/<name>.py`
   (validate_performance, generate_report, survivorship_demo, verify_brokers,
-  paper_trade_cycle). Performance commands require an explicit source:
+  paper_trade_cycle, run_paper_experiments). Performance commands require an explicit source:
   `generate_report.py --prices-csv local_data/published_rotation_prices.csv --cash-proxy-symbol SHV` or
   `generate_report.py --live-yfinance`; `validate_performance.py` requires
   `--live-yfinance`; `survivorship_demo.py` requires `--live-yfinance`;
   `paper_trade_cycle.py` requires either `--offline` or `--live-yfinance`.
+- Paper: run `run_paper_experiments.py` with an authorized seven-symbol CSV,
+  then `scripts/build_paper.sh`. Generated tables and figures must match
+  `paper/results/manifest.json`; visually review every PDF page before commit.
 - CI (`.github/workflows/ci.yml`) runs ruff + pytest with a 60% coverage floor
   on Python 3.11-3.14 from exported locks. Separate jobs execute notebooks on
   deterministic test-only fixtures, check real broker SDK request classes,
-  build/smoke-install the wheel, and reject dependency-lock drift.
+  build/smoke-install the wheel, reject dependency-lock drift, and build plus
+  smoke-test the read-only container.
 
 ## Working norms
 
@@ -112,8 +116,10 @@ or vol-scaled book is NOT required to sum to 1. Violations raise
   permitted CSV or an explicit live-provider opt-in; they must never silently
   substitute generated prices after a fetch failure. Derived performance charts
   may be published only with explicit owner approval, adjacent provenance, an
-  input digest, and artifact hashes. Synthetic fixtures remain appropriate for
-  tests and the clearly labeled `paper_trade_cycle.py --offline` dry run.
+  input digest, and artifact hashes. The same rule applies to reviewed paper
+  aggregates and figures under `paper/`; raw provider matrices remain local.
+  Synthetic fixtures remain appropriate for tests and the clearly labeled
+  `paper_trade_cycle.py --offline` dry run.
 
 ## Layer ABCs to subclass
 
@@ -137,12 +143,12 @@ paper-account checks as release requirements.
 
 All importable code lives under one top-level package, `quantcortex` (e.g.
 `from quantcortex.portfolio.base import enforce_weight_contract`). `tests/`,
-`scripts/`, `research/`, and `docs/` sit at the repo root, outside the package.
+`scripts/`, `research/`, `paper/`, and `docs/` sit at the repo root, outside the package.
 Keep new modules inside `quantcortex/` and import them absolutely as
 `quantcortex.<subpkg>...`; there are no relative imports and no top-level
-package squatting. Docker commands follow the same namespace rule. Keep `.env`,
-`local_data/`, and `reports/` excluded from the Docker build context via
-`.dockerignore`.
+package squatting. Docker commands follow the same namespace rule. Keep
+secrets, local data, reports, research material, paper artifacts, tests, and
+local build output excluded from the runtime image via `.dockerignore`.
 
 ## Honesty norms
 

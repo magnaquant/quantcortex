@@ -27,7 +27,7 @@ not independently verified by the software.
 | Mean active gross exposure | 34.76% |
 | Fully-cash session fraction | 41.92% |
 | Cash proxy CAGR | +2.50% |
-| Exposure-matched equal-weight cash-excess Sharpe, gross | +0.69 |
+| Exposure-matched equal-initial-weight basket cash-excess Sharpe, gross | +0.69 |
 
 Strategy returns are net of 3 bps commission and 10 bps flat slippage per
 trade; benchmarks are gross and the ADV cap is inactive. Cash-aware accounting
@@ -85,9 +85,9 @@ The command writes `reports/report.md` plus these plots under `reports/img/`:
 - `report_overview.png`: equity, drawdown, allocation, turnover, and costs in a
   compact review image.
 - `equity_vs_benchmarks.png`: strategy net of modeled costs versus gross SPY
-  and equal-weight buy-and-hold benchmarks.
+  and an equal-initial-weight buy-and-hold basket.
 - `performance_attribution.png`: strategy before and after modeled costs,
-  exposure-matched equal weight, and the cash proxy on one capital clock.
+  the exposure-matched passive basket, and the cash proxy on one capital clock.
 - `drawdown.png`: the strategy underwater curve.
 - `rolling_sharpe.png`: trailing 126-session Sharpe.
 - `rolling_risk.png`: trailing 126-session annualized volatility and beta to
