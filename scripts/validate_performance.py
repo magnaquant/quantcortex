@@ -8,14 +8,16 @@ Sharpe Ratio, side by side with naive buy-and-hold benchmarks.
 It is deliberately *honest*: it reports whatever the data shows and makes no
 attempt to tune toward the README's aspirational Sharpe targets (doing so on a
 single historical window is exactly the overfitting the platform's DSR / BHY
-tooling exists to catch). Run it on your own licensed point-in-time history for
-a survivorship-safe read on the single-name strategies.
+tooling exists to catch). A survivorship-safe single-name study requires a
+licensed provider with delisted-security prices; this yfinance-only harness
+does not provide that dataset.
 
-    python scripts/validate_performance.py            # 2018-2025, real data
-    python scripts/validate_performance.py 2010 2020  # custom window
+    python scripts/validate_performance.py --live-yfinance
+    python scripts/validate_performance.py 2010 2020 --live-yfinance
 
-Requires network + ``yfinance``; without them it exits rather than report
-meaningless synthetic numbers.
+The explicit flag acknowledges a live yfinance download. Review the provider's
+terms before use. Without network + ``yfinance`` the script exits rather than
+report generated numbers.
 """
 
 from __future__ import annotations
@@ -42,24 +44,29 @@ from quantcortex.backtest.metrics.tearsheet import Tearsheet
 from quantcortex.backtest.validation.deflated_sharpe import compute_dsr
 
 ROTATION_UNIVERSE = ["QQQ", "VGT", "GLD", "TLT", "SPY", "VIG"]
-# Liquid large-caps that traded across 2018-2025. NOTE: using today's names is
-# survivorship-biased (it excludes delisted/merged firms); a survivorship-safe
-# run needs a point-in-time constituents source (see quantcortex/data/universe/).
+# Static current large-caps. Using today's names for historical research is
+# survivorship-biased; --pit replaces this list with a start-date index cohort.
 MOMENTUM_UNIVERSE = [
     "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "JPM", "JNJ", "V", "PG",
     "HD", "MA", "BAC", "DIS", "ADBE", "CRM", "NFLX", "XOM", "CVX", "KO",
     "PEP", "WMT", "MRK", "PFE", "CSCO", "INTC", "ORCL", "QCOM", "TXN", "COST",
 ]
 CAPITAL = 1_000_000.0
+YFINANCE_NOTICE = (
+    "Live Yahoo Finance data is fetched through yfinance. Review Yahoo's terms "
+    "and yfinance's legal disclaimer at https://ranaroussi.github.io/yfinance/."
+)
 
 
 def fetch_prices(symbols, start, end):
-    """Real adjusted prices via yfinance, or None if unavailable."""
+    """Return real adjusted prices via yfinance, or None if insufficient."""
     try:
         from quantcortex.data.providers.yfinance_provider import YFinanceProvider
-    except Exception:
-        return None
-    px = YFinanceProvider().get_prices(symbols, start=start, end=end)
+
+        provider_end = (pd.Timestamp(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        px = YFinanceProvider().get_prices(symbols, start=start, end=provider_end)
+    except Exception as exc:
+        raise RuntimeError(f"yfinance price fetch failed: {exc}") from exc
     if px is None or px.empty:
         return None
     px = px.dropna(how="all").ffill().dropna(how="all")
@@ -114,23 +121,20 @@ def momentum_universe(start: str, pit: bool):
     """Resolve the momentum_ml universe.
 
     With ``--pit`` the universe is the S&P 500 *as of the backtest start*
-    (reconstructed from Wikipedia), which removes look-ahead in the universe
-    definition.  Pricing is still survivor-only (yfinance lacks delisted-name
-    prices), so the read is survivorship-*aware*, not fully survivorship-*safe*;
-    the coverage gap is reported.  Without ``--pit`` a small static large-cap
-    list is used (fast, but survivorship-biased on both selection and pricing).
+    (reconstructed from Wikipedia), which removes current-membership look-ahead
+    at the start date. It is a fixed start-date cohort, not a dynamically
+    reconstituted universe. Pricing still lacks reliable delisted-name history,
+    so the read is survivorship-aware, not survivorship-safe. Without ``--pit``
+    a small static current-large-cap list is used.
     """
     if not pit:
         return MOMENTUM_UNIVERSE, "static large-caps (survivorship-biased)"
-    try:
-        from quantcortex.data.universe.sp500_universe import SP500Universe
+    from quantcortex.data.universe.sp500_universe import SP500Universe
 
-        members = SP500Universe.from_wikipedia().constituents(start)
-        return members, f"S&P 500 point-in-time members as of {start}"
-    except Exception as exc:
-        print(f"[pit] could not build PIT universe ({type(exc).__name__}); "
-              "falling back to static large-caps.")
-        return MOMENTUM_UNIVERSE, "static large-caps (PIT fetch failed)"
+    members = SP500Universe.from_wikipedia().constituents(start)
+    if not members:
+        raise RuntimeError(f"point-in-time S&P 500 universe is empty for {start}")
+    return members, f"S&P 500 point-in-time members as of {start}"
 
 
 def main(argv) -> int:
@@ -146,12 +150,19 @@ def main(argv) -> int:
     ap = argparse.ArgumentParser(description="quantcortex performance validation")
     ap.add_argument("start_year", nargs="?", default="2018")
     ap.add_argument("end_year", nargs="?", default="2025")
+    ap.add_argument(
+        "--live-yfinance",
+        action="store_true",
+        required=True,
+        help="explicitly permit this run to fetch live data through yfinance",
+    )
     ap.add_argument("--pit", action="store_true",
-                    help="define the momentum_ml universe from point-in-time S&P 500 membership")
+                    help="use the start-date S&P 500 cohort for momentum_ml")
     ap.add_argument("--n-trials", type=positive_int, default=10,
                     help="number of strategy trials assumed for the Deflated Sharpe Ratio; "
                          "set this to the true count of configurations you searched")
     args = ap.parse_args(argv[1:])
+    print(YFINANCE_NOTICE, file=sys.stderr)
     start = f"{args.start_year}-01-01"
     end = f"{args.end_year}-12-31"
     print(f"quantcortex performance validation | window {start} -> {end}"
@@ -159,17 +170,28 @@ def main(argv) -> int:
     print(f"Deflated Sharpe assumes n_trials = {args.n_trials}")
     print("=" * 78)
 
-    rot_px = fetch_prices(ROTATION_UNIVERSE, start, end)
+    try:
+        rot_px = fetch_prices(ROTATION_UNIVERSE, start, end)
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
     if rot_px is None:
         print("ERROR: could not fetch real prices (need network + yfinance).")
         print("Refusing to report synthetic numbers as a performance validation.")
+        return 1
+    missing_rotation = [s for s in ROTATION_UNIVERSE if s not in rot_px.columns]
+    if missing_rotation:
+        print(
+            f"ERROR: incomplete rotation universe from yfinance: {missing_rotation}",
+            file=sys.stderr,
+        )
         return 1
     print(f"rotation data: {rot_px.shape[0]} days x {rot_px.shape[1]} symbols "
           f"({rot_px.index[0].date()} .. {rot_px.index[-1].date()})\n")
 
     # --- benchmarks ---
     spy = rot_px["SPY"].pct_change() if "SPY" in rot_px else rot_px.pct_change().mean(axis=1)
-    ew = rot_px.pct_change().mean(axis=1)
+    ew = rot_px.div(rot_px.iloc[0]).mean(axis=1).pct_change()
     print("Benchmarks (buy & hold, no costs):")
     print(f"  {'SPY':<26} Sharpe {ann_sharpe(spy):+5.2f}")
     print(f"  {'Equal-weight universe':<26} Sharpe {ann_sharpe(ew):+5.2f}\n")
@@ -178,24 +200,33 @@ def main(argv) -> int:
     rot = metrics(run_rotation(rot_px), n_trials=args.n_trials)
     print(fmt_row("multi_asset_rotation", rot, "[target Sharpe > 1.10]"))
 
-    mom_syms, mom_label = momentum_universe(start, args.pit)
-    mom_px = fetch_prices(mom_syms, start, end)
-    if mom_px is not None and mom_px.shape[1] >= 10:
-        coverage = ""
-        if args.pit:
-            priceable = mom_px.shape[1]
-            coverage = (f"; {priceable}/{len(mom_syms)} PIT members priceable on "
-                        f"yfinance ({len(mom_syms) - priceable} delisted/unpriceable)")
-        print(f"\nmomentum_ml universe: {mom_label}{coverage}")
-        print(f"momentum_ml data: {mom_px.shape[0]} days x {mom_px.shape[1]} names")
-        mom = metrics(run_momentum_ml(mom_px), n_trials=args.n_trials)
-        print(fmt_row("momentum_ml", mom, "[target Sharpe > 0.9]"))
+    try:
+        mom_syms, mom_label = momentum_universe(start, args.pit)
+        mom_px = fetch_prices(mom_syms, start, end)
+    except Exception as exc:
+        print(f"ERROR: momentum validation failed: {exc}", file=sys.stderr)
+        return 1
+    if mom_px is None or mom_px.shape[1] < 10:
+        print("ERROR: insufficient complete momentum universe price history.", file=sys.stderr)
+        return 1
+
+    coverage = ""
+    if args.pit:
+        priceable = mom_px.shape[1]
+        coverage = (
+            f"; {priceable}/{len(mom_syms)} PIT members have complete yfinance "
+            f"history ({len(mom_syms) - priceable} missing/incomplete)"
+        )
+    print(f"\nmomentum_ml universe: {mom_label}{coverage}")
+    print(f"momentum_ml data: {mom_px.shape[0]} days x {mom_px.shape[1]} names")
+    mom = metrics(run_momentum_ml(mom_px), n_trials=args.n_trials)
+    print(fmt_row("momentum_ml", mom, "[target Sharpe > 0.9]"))
 
     print("\n" + "=" * 78)
     print("Note: targets are aspirational design goals, not claims about the")
-    print("reference implementation. A defensive rotation underperforms buy-and-")
-    print("hold in a bull-dominated window; the single-name read is survivorship-")
-    print("biased. Use a licensed point-in-time feed for a clean evaluation.")
+    print("reference implementation. Benchmarks are gross; strategy results use")
+    print("flat costs without ADV caps. The single-name read is not fully")
+    print("survivorship-safe. Use a licensed point-in-time feed for evaluation.")
     return 0
 
 

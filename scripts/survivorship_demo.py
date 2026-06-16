@@ -3,29 +3,45 @@
 Ties together the PIT membership reconstruction (quantcortex/data/universe/sp500_wikipedia)
 and real price data: it shows how many names that were in the index on a past
 date are (a) no longer in the index today and (b) no longer priceable on a
-survivor-only feed like yfinance - i.e. exactly the rows a survivorship-biased
-backtest silently omits, inflating returns.
+current-symbol feed like yfinance - i.e. rows a survivorship-biased backtest may
+silently omit.
 
-    python scripts/survivorship_demo.py            # as of 2018-06-01
-    python scripts/survivorship_demo.py 2015-06-01
+    python scripts/survivorship_demo.py --live-yfinance
+    python scripts/survivorship_demo.py 2015-06-01 --live-yfinance
 
 Requires network + lxml (Wikipedia) and yfinance (pricing the dropped names).
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
 import sys
 import warnings
+from datetime import date, timedelta
 
 warnings.filterwarnings("ignore")
 # yfinance reports failed (delisted) downloads via logging + stderr; quiet it so
 # the survivorship summary is readable (the failures are the point, counted below).
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+YFINANCE_NOTICE = (
+    "Live Yahoo Finance data is fetched through yfinance. Review Yahoo's terms "
+    "and yfinance's legal disclaimer at https://ranaroussi.github.io/yfinance/."
+)
 
 
 def main(argv) -> int:
-    as_of = argv[1] if len(argv) > 1 else "2018-06-01"
+    parser = argparse.ArgumentParser(description="quantify S&P 500 survivorship bias")
+    parser.add_argument("as_of", nargs="?", default="2018-06-01")
+    parser.add_argument(
+        "--live-yfinance",
+        action="store_true",
+        required=True,
+        help="explicitly permit this run to fetch live data through yfinance",
+    )
+    args = parser.parse_args(argv[1:])
+    as_of = args.as_of
+    print(YFINANCE_NOTICE, file=sys.stderr)
     try:
         from quantcortex.data.universe.sp500_universe import SP500Universe
     except Exception as exc:  # pragma: no cover
@@ -52,12 +68,13 @@ def main(argv) -> int:
 
     # A naive backtest that uses *today's* members for all history would simply
     # never see the `dropped` names. Show how many are now un-priceable on a
-    # survivor-only feed - those are the silently-deleted bankruptcies/delistings.
+    # current-symbol feed - those are potential omissions in a survivor-only run.
     try:
         from quantcortex.data.providers.yfinance_provider import YFinanceProvider
 
         provider = YFinanceProvider()
-        px = provider.get_prices(dropped, start=as_of, end="2024-12-31")
+        provider_end = (date.today() + timedelta(days=1)).isoformat()
+        px = provider.get_prices(dropped, start=as_of, end=provider_end)
         cols = list(getattr(px, "columns", []))
         # A name is "priceable" only if a column came back AND it carries real
         # (non-NaN) data; a failed/delisted download yields no column or all-NaN.
@@ -68,12 +85,12 @@ def main(argv) -> int:
         print("  merged/renamed) - the rows a survivor-only backtest omits.")
         print(f"  examples no longer priceable: {unpriceable[:12]}")
     except Exception as exc:
-        print(f"\n  (pricing step skipped: {type(exc).__name__})")
-        print(f"  dropped examples: {dropped[:12]}")
+        print(f"pricing step failed: {exc}", file=sys.stderr)
+        return 1
 
     print("\n" + "=" * 70)
     print("Takeaway: building a backtest universe from today's constituents")
-    print(f"silently discards ~{len(dropped)} names that were tradable as of {as_of}.")
+    print(f"omits {len(dropped)} names that were members as of {as_of}.")
     print("Use SP500Universe.from_wikipedia() (or a licensed PIT feed) so the")
     print("universe is queried as-of each rebalance date instead.")
     return 0

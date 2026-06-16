@@ -1,66 +1,63 @@
-# Measured Performance
+# Performance Evaluation
 
-Reproduce with:
+This repository does not publish a fixed performance result. Market data,
+executed notebook outputs, and generated charts are intentionally excluded.
+Evaluate the reference strategies on data you are permitted to use and retain
+the source metadata needed to reproduce the run.
+
+## Generate a Report
+
+Use a licensed or otherwise permitted wide adjusted-close CSV:
 
 ```bash
-python scripts/validate_performance.py            # 2018-2025, real adjusted prices
-python scripts/validate_performance.py 2010 2020  # any window
+PYTHONPATH=. python scripts/generate_report.py \
+  --prices-csv local_data/rotation_prices.csv \
+  --start 2018 --end 2025 --n-trials 10
 ```
 
-The harness fetches real split/dividend-adjusted prices via `yfinance`, runs the
-reference strategies through the mandatory-cost backtest engine (3 bps
-commission + 10 bps slippage, 10% ADV cap), and reports measured metrics next to
-naive buy-and-hold benchmarks. Numbers below were measured on the **2018-01-02
-to 2025-12-30** window (2010 trading days); they depend on the `yfinance` data
-vintage and will move as data is revised.
+The required columns are documented in `local_data/README.md`. The command
+writes charts to ignored `reports/img/` and prints markdown tables containing
+the local file path, SHA-256 digest, and observed date window.
 
-## Results (2018-2025)
+For an explicitly requested live download:
 
-The rotation row is **reproducible** from the bundled snapshot
-(`quantcortex/data/sample/rotation_prices.csv`); the backtest is deterministic, so
-`python scripts/generate_report.py` reproduces it exactly. The momentum_ml row
-is a live-fetch reading and is vintage-dependent (and survivorship-biased).
+```bash
+PYTHONPATH=. python scripts/generate_report.py --live-yfinance
+PYTHONPATH=. python scripts/validate_performance.py --live-yfinance --pit
+```
 
-| Strategy / benchmark | Sharpe | CAGR | Sortino | Calmar | Max DD | DSR | Design target |
-|---|---|---|---|---|---|---|---|
-| SPY buy & hold | 0.78 | - | - | - | - | - | benchmark |
-| Equal-weight 6-ETF buy & hold | 1.00 | - | - | - | - | - | benchmark |
-| **multi_asset_rotation** (bundled snapshot) | **+0.17** | +1.08% | 0.23 | 0.07 | -14.64% | 0.136 | Sharpe > 1.10 - **not met** |
-| **momentum_ml** (survivorship-biased, live) | **~0.63** | ~+13% | - | - | ~-32% | ~0.5 | Sharpe > 0.9 - **not met** |
+Review Yahoo's terms and the
+[yfinance legal disclaimer](https://ranaroussi.github.io/yfinance/) before use.
+Live historical data may be revised, so preserve your own permitted input if
+exact reproduction matters.
 
-## Honest interpretation
+## Reporting Requirements
 
-- **The README's Sharpe targets are aspirational design goals; the reference
-  implementations do not meet them on this window.** This is reported as-is
-  rather than tuned away. Searching hyper-parameters until a single backtest
-  clears 1.10 is exactly the overfitting the platform's Deflated Sharpe Ratio
-  and BHY multiple-testing tooling exist to flag.
-- **multi_asset_rotation underperforms a naive equal-weight buy-and-hold** (Sharpe
-  +0.17 vs 1.00). This is expected, not a bug: it is a *defensive* rotation that
-  holds only 2 of 3 asset-class groups and an HMM regime gate that sits in cash a
-  large fraction of weeks. In a bull-dominated 2018-2025 sample, time spent flat
-  is pure return drag; an ablation shows the core selection alone scores higher
-  than the gated book, i.e. the regime gate removes most of the upside. The
-  strategy is logically correct (selection sign, causal residual momentum,
-  deterministic and contract-valid weights all verified) but offers no edge over
-  buy-and-hold in this regime.
-- **momentum_ml shows real positive alpha** (13% CAGR, DSR 0.59) but its read is
-  **survivorship-biased** - the universe is today's large-caps, which excludes
-  firms that were delisted or merged over the window, inflating the result.
-- **A clean evaluation needs a licensed point-in-time feed** with
-  delisted-name coverage and historical index constituents. The point-in-time
-  membership is already available via `SP500Universe.from_wikipedia()`, and
-  `python scripts/survivorship_demo.py` quantifies the gap concretely: of the
-  501 S&P 500 names as of 2018-06-01, 122 are gone today and **55 are no longer
-  priceable** on `yfinance` (acquired/delisted) - exactly the rows a
-  survivor-only single-name backtest omits. `yfinance` adjusted closes are
-  adequate for the all-ETF rotation (none were delisted) but a clean single-name
-  read still needs delisted-name *price* history from a licensed vendor.
+- Report the data provider, license or permission basis, retrieval date, date
+  window, symbols, adjustment method, and input-file digest.
+- Set `--n-trials` to the actual number of configurations evaluated. The
+  default `10` is a convenience, not a factual statement about a research run.
+- Compare against relevant buy-and-hold and equal-weight benchmarks.
+- Label whether benchmarks are gross or cost-adjusted. The reference report's
+  buy-and-hold benchmarks are gross.
+- Report costs, turnover, maximum drawdown, and the Deflated Sharpe Ratio.
+- Keep failed variants in the trial count; do not tune until a target is met.
 
-## What this validates
+## Known Limitations
 
-The harness confirms the end-to-end machinery is sound and honest: real data
-flows through selection -> allocation -> timing -> risk -> mandatory-cost
-backtest -> tearsheet/DSR, benchmarks compute correctly, and the reported
-numbers are trustworthy (if unflattering). It does **not** claim the strategies
-are profitable as shipped; they are correct, well-tested baselines.
+The default transaction-cost model uses flat commission and slippage rates.
+Size-, spread-, and volatility-aware impact is available in
+`quantcortex/backtest/execution_models/market_impact.py` but is not wired into
+the reference report. The report supplies no ADV series, so its configured
+volume cap is also inactive. The vectorized engine holds target weights constant
+between explicit rebalances without charging for the implied re-pegging trades;
+use the event-driven engine when position drift and fill mechanics matter.
+Single-name tests remain survivorship-biased unless the price feed includes
+delisted securities and the universe is point-in-time.
+`SP500Universe.from_wikipedia()` supplies historical membership, not delisted
+price history. yfinance fundamentals also use a documented 45-day filing-date
+proxy rather than exact announcement timestamps.
+
+Design targets in the README are aspirational. They are not evidence that a
+strategy is profitable, deployable, or expected to meet the target on unseen
+data.

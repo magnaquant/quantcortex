@@ -24,4 +24,4 @@ RUN pip install --upgrade pip poetry-core \
 # Copy the source tree.
 COPY . .
 
-CMD ["python", "-c", "import portfolio, data, alpha, backtest, execution, strategies; print('quantcortex container ready')"]
+CMD ["python", "-c", "import quantcortex.alpha, quantcortex.backtest, quantcortex.data, quantcortex.execution, quantcortex.portfolio, quantcortex.strategies; print('quantcortex container ready')"]
