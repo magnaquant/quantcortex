@@ -293,7 +293,19 @@ def _save_figures(
     def save(fig, stem: str) -> None:
         for suffix, dpi in (("pdf", None), ("png", 180)):
             path = output_dir / f"{stem}.{suffix}"
-            fig.savefig(path, dpi=dpi, bbox_inches="tight")
+            metadata = None
+            if suffix == "pdf":
+                metadata = {
+                    "CreationDate": None,
+                    "ModDate": None,
+                    "Creator": "quantcortex paper experiment generator",
+                }
+            fig.savefig(
+                path,
+                dpi=dpi,
+                bbox_inches="tight",
+                metadata=metadata,
+            )
             paths.append(path)
         plt.close(fig)
 
