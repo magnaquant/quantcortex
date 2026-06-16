@@ -21,8 +21,8 @@ a feature ``DataFrame`` that flag the structural fingerprints of leakage:
    certainly *is* (a transform of) the target.
 
 The detector *flags* - it errs toward surfacing suspects.  The companion
-``backtest/validation/lookahead_audit.py`` performs the dynamic, model-based
-audit (re-run with shifted features).
+``quantcortex/backtest/validation/lookahead_audit.py`` performs the dynamic,
+model-based audit (re-run with shifted features).
 """
 
 from __future__ import annotations

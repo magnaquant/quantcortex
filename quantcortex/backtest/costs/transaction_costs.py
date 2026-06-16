@@ -1,7 +1,7 @@
 """Transaction cost model - mandatory in every backtest engine.
 
 quantcortex treats transaction costs as a *first-class*, non-optional input:
-backtest engines refuse to run without a cost model (see ``backtest/engines``).
+backtest engines refuse to run without a cost model (see ``quantcortex/backtest/engines``).
 The model below implements the three frictions that dominate realistic equity
 execution:
 
@@ -29,7 +29,7 @@ Slippage here is a *constant* per-unit-traded rate, independent of order size,
 volatility, or spread.  That is a reasonable first-order model for liquid names
 traded well within the ADV cap, but it understates the cost of large or urgent
 orders.  For size- and volatility-dependent impact, use the Almgren-Chriss model
-in ``backtest/execution_models/market_impact.py`` with the event-driven engine
+in ``quantcortex/backtest/execution_models/market_impact.py`` with the event-driven engine
 (and set this model's ``slippage`` to 0 there to avoid double-counting).
 """
 
