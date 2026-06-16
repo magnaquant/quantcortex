@@ -31,3 +31,8 @@ updates:
       time: "09:30"
       timezone: America/Los_Angeles
     open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: python
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
