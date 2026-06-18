@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "status": "repository_frozen_prospective_not_externally_registered",
+  "freeze_date": "2026-06-18",
+  "historical_case_confirmatory": false,
+  "data": {
+    "start": "2014-01-02",
+    "evaluation_start": "2018-01-02",
+    "evaluation_end": "2025-12-31",
+    "cash_proxy": "SHV",
+    "provider_adapter": "yfinance",
+    "provider_request": {
+      "request_start": "2014-01-02",
+      "request_end_exclusive": "2026-01-01",
+      "auto_adjust": false,
+      "actions": false,
+      "repair": false,
+      "threads": false,
+      "selected_field": "Adj Close"
+    },
+    "adjustment": "provider adjusted close with auto_adjust disabled",
+    "alignment": "complete-row intersection",
+    "forward_fill": false,
+    "minimum_pre_evaluation_sessions": 252,
+    "raw_data_committed": false
+  },
+  "panels": {
+    "us_sector_etfs": [
+      "XLB",
+      "XLE",
+      "XLF",
+      "XLI",
+      "XLK",
+      "XLP",
+      "XLU",
+      "XLV",
+      "XLY"
+    ],
+    "country_equity_etfs": [
+      "EWA",
+      "EWC",
+      "EWG",
+      "EWH",
+      "EWJ",
+      "EWL",
+      "EWP",
+      "EWQ",
+      "EWS",
+      "EWU"
+    ]
+  },
+  "decision_schedule": "first complete panel session of each calendar month",
+  "score_tie_break": "ascending symbol",
+  "strategies": {
+    "ts_momentum": {
+      "lookback_sessions": 252,
+      "selection": "all positive signals",
+      "weighting": "equal weight across selected assets"
+    },
+    "cross_sectional_momentum": {
+      "lookback_start_sessions": 252,
+      "skip_recent_sessions": 21,
+      "selection_count": 3,
+      "weighting": "one third per selected asset"
+    },
+    "short_term_reversal": {
+      "lookback_sessions": 5,
+      "selection_count": 3,
+      "eligibility": "negative trailing return",
+      "weighting": "one third per selected asset without renormalizing"
+    },
+    "learned_gbrt": {
+      "estimator": "sklearn.ensemble.GradientBoostingRegressor",
+      "label_horizon_sessions": 21,
+      "label_cutoff": "forward endpoint on or before current decision",
+      "training_observation": "pooled asset-month row without symbol identity",
+      "return_transform": "log",
+      "feature_return_windows": [5, 21, 63, 126, 252],
+      "feature_volatility_windows": [21, 63],
+      "include_trailing_high_distance": true,
+      "cross_sectional_rank_windows": [21, 252],
+      "training_decision_months": 60,
+      "minimum_training_decision_months": 24,
+      "n_estimators": 100,
+      "learning_rate": 0.03,
+      "max_depth": 2,
+      "min_samples_leaf": 10,
+      "subsample": 0.8,
+      "seeds": [11, 29, 47, 71, 97],
+      "selection_count": 3,
+      "eligibility": "positive predicted forward return",
+      "weighting": "one third per selected asset without renormalizing"
+    }
+  },
+  "execution": {
+    "primary_engine": "event_driven",
+    "diagnostic_engine": "vectorized",
+    "timing": "first strictly later panel close",
+    "initial_nav": 1.0,
+    "long_only": true,
+    "max_gross": 1.0,
+    "residual_cash_return": "SHV",
+    "cost_per_one_way_gross_notional": 0.0013
+  },
+  "comparator": {
+    "type": "causal target-exposure-matched equal weight",
+    "same_dates": true,
+    "same_cash_proxy": true,
+    "same_cost_rate": true
+  },
+  "switches": [
+    "same_close_assignment",
+    "zero_cash_return",
+    "zero_transaction_cost",
+    "causal_exposure_matched_comparator",
+    "vectorized_engine"
+  ],
+  "uncertainty": {
+    "method": "joint circular block bootstrap",
+    "replications": 5000,
+    "primary_block_sessions": 21,
+    "sensitivity_block_sessions": [5, 63],
+    "seed": 20260618,
+    "interval": "two-sided 95 percent percentile",
+    "annualized_arithmetic_return": "252 times daily arithmetic mean",
+    "sharpe": "sqrt(252) times mean daily strategy-minus-SHV return divided by sample standard deviation"
+  }
+}
