@@ -8,7 +8,9 @@ specified market-data tape.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -19,6 +21,43 @@ TARGET_TAPE_COLUMNS = (
     "target_weight",
 )
 TARGET_TAPE_SCHEMA_VERSION = 1
+_RFC3339_TIMESTAMP = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+
+
+def _validated_payload_timestamp(value: object) -> str:
+    """Validate the RFC 3339 subset emitted by the canonical serializer."""
+    if not isinstance(value, str):
+        raise TypeError(
+            "target-tape decision_timestamp must be an RFC 3339 string"
+        )
+    if _RFC3339_TIMESTAMP.fullmatch(value) is None:
+        raise ValueError(
+            "target-tape decision_timestamp must be an RFC 3339 date-time"
+        )
+    candidate = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError as exc:
+        raise ValueError(
+            "target-tape decision_timestamp must be an RFC 3339 date-time"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(
+            "target-tape decision_timestamp must include a UTC offset"
+        )
+    return value
+
+
+def _validated_payload_number(value: object, *, name: str) -> float:
+    """Accept only JSON number primitives, excluding booleans and strings."""
+    if type(value) not in (int, float):
+        raise TypeError(f"{name} must be a JSON number")
+    parsed = float(value)
+    if not np.isfinite(parsed):
+        raise ValueError(f"{name} must be finite")
+    return parsed
 
 
 def _validated_max_gross(value: object) -> float:
@@ -88,7 +127,7 @@ def validate_target_tape(
         raise ValueError("target_weight values must be finite")
     if (weights < -1e-12).any():
         raise ValueError("target_weight values must be long-only")
-    normalized.loc[normalized["target_weight"].abs() < 1e-15, "target_weight"] = 0.0
+    normalized.loc[normalized["target_weight"] < 0.0, "target_weight"] = 0.0
 
     duplicate = normalized.duplicated(
         subset=["decision_timestamp", "symbol"],
@@ -154,7 +193,12 @@ def target_tape_to_weights(
     )
     weights.columns.name = None
     weights.index.name = None
-    return weights.sort_index().sort_index(axis=1)
+    column_order = (
+        sorted(normalized["symbol"].unique())
+        if expected_symbols is None
+        else [symbol.strip() for symbol in expected_symbols]
+    )
+    return weights.sort_index().reindex(columns=column_order)
 
 
 def weights_to_target_tape(
@@ -234,11 +278,16 @@ def target_tape_from_payload(payload: Mapping[str, object]) -> pd.DataFrame:
             "target-tape payload keys must be exactly "
             + ", ".join(sorted(required_keys))
         )
-    if payload["schema_version"] != TARGET_TAPE_SCHEMA_VERSION:
+    schema_version = payload["schema_version"]
+    if type(schema_version) is not int:
+        raise TypeError("target-tape schema_version must be an integer")
+    if schema_version != TARGET_TAPE_SCHEMA_VERSION:
         raise ValueError("unsupported target-tape schema version")
     symbols = payload["symbols"]
     if not isinstance(symbols, list):
         raise TypeError("target-tape symbols must be a list")
+    if any(not isinstance(symbol, str) for symbol in symbols):
+        raise TypeError("target-tape symbols must contain strings")
     records = payload["records"]
     if not isinstance(records, list) or not records:
         raise ValueError("target-tape records must be a non-empty list")
@@ -249,10 +298,30 @@ def target_tape_from_payload(payload: Mapping[str, object]) -> pd.DataFrame:
             "target-tape record keys must be exactly "
             + ", ".join(TARGET_TAPE_COLUMNS)
         )
-    tape = pd.DataFrame(records, columns=TARGET_TAPE_COLUMNS)
+    normalized_records = []
+    for record in records:
+        timestamp = _validated_payload_timestamp(record["decision_timestamp"])
+        symbol = record["symbol"]
+        if not isinstance(symbol, str):
+            raise TypeError("target-tape record symbol must be a string")
+        target_weight = _validated_payload_number(
+            record["target_weight"],
+            name="target-tape target_weight",
+        )
+        normalized_records.append(
+            {
+                "decision_timestamp": timestamp,
+                "symbol": symbol,
+                "target_weight": target_weight,
+            }
+        )
+    max_gross = _validated_payload_number(
+        payload["max_gross"],
+        name="target-tape max_gross",
+    )
     return validate_target_tape(
-        tape,
-        max_gross=_validated_max_gross(payload["max_gross"]),
+        pd.DataFrame(normalized_records, columns=TARGET_TAPE_COLUMNS),
+        max_gross=_validated_max_gross(max_gross),
         expected_symbols=symbols,
     )
 

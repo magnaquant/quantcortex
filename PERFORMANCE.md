@@ -135,6 +135,14 @@ The fixed paper experiment is stricter than the general report: it accepts no
 missing price rows, performs no forward fill, and requires at least 274 signal
 warm-up sessions before the evaluation window.
 
+`scripts/release_paper_artifacts.sh` is intentionally bound to the reviewed
+input digest. When release-critical paths are unchanged, it regenerates from the
+recorded source commit and timestamp. Changed experiment, report, or paper source
+requires an explicit `QUANTCORTEX_GENERATED_AT` and regenerates from current
+`HEAD`. The wrapper fails rather than labeling a different matrix with the
+reviewed provider provenance. A new panel requires a new, explicitly reviewed
+experiment configuration and source record.
+
 For an explicitly requested live download:
 
 ```bash

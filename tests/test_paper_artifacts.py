@@ -22,7 +22,7 @@ def test_paper_artifacts_match_manifest_and_generator():
     manifest = json.loads(
         (PAPER_ROOT / "results" / "manifest.json").read_text(encoding="utf-8")
     )
-    assert manifest["schema_version"] == 4
+    assert manifest["schema_version"] == 5
 
     source = manifest["source"]
     assert source["raw_input_committed"] is False
@@ -157,6 +157,7 @@ def test_paper_artifacts_match_manifest_and_generator():
     assert "results/ablation_uncertainty.csv" in artifacts
     assert "results/comparator_diagnostics.csv" in artifacts
     assert "results/evaluation_contract.json" in artifacts
+    assert "results/target_tape_hashes.json" in artifacts
     assert "results/return_decomposition.csv" in artifacts
     assert "results/sharpe_uncertainty.csv" in artifacts
     assert "results/protocol_switches.csv" in artifacts
@@ -166,6 +167,18 @@ def test_paper_artifacts_match_manifest_and_generator():
         artifact = PAPER_ROOT / relative_path
         assert artifact.is_file(), relative_path
         assert _sha256(artifact) == expected_digest, relative_path
+
+    target_tape_path = PAPER_ROOT / manifest["decision_streams"]["path"]
+    target_tapes = json.loads(target_tape_path.read_text(encoding="utf-8"))
+    assert target_tapes == manifest["decision_streams"]["variants"]
+    assert set(target_tapes) == {"full", "no_regime", "no_vol_scaler", "signal_only"}
+    for metadata in target_tapes.values():
+        assert metadata["symbols"] == sorted(metadata["symbols"])
+        assert metadata["record_count"] == (
+            metadata["decision_count"] * len(metadata["symbols"])
+        )
+        assert len(metadata["canonical_payload_sha256"]) == 64
+        int(metadata["canonical_payload_sha256"], 16)
 
     with (PAPER_ROOT / "results" / "protocol_switches.csv").open(
         encoding="utf-8",
@@ -231,6 +244,9 @@ def test_paper_artifacts_match_manifest_and_generator():
 
 def test_paper_source_and_reviewed_pdf_are_published():
     main = (PAPER_ROOT / "main.tex").read_text(encoding="utf-8")
+    release_script = (REPO_ROOT / "scripts" / "release_paper_artifacts.sh").read_text(
+        encoding="utf-8"
+    )
 
     assert "\\usepackage[preprint]{neurips_2026}" in main
     assert "\\usepackage{orcidlink}" in main
@@ -243,6 +259,16 @@ def test_paper_source_and_reviewed_pdf_are_published():
     assert "\\PaperInputDigest" in main
     assert "{bootstrap_robustness.pdf}" in main
     assert "target-exposure comparator" in main
+    assert "actual_input_digest" in release_script
+    assert "expected_input_digest" in release_script
+    assert "ls-files --error-unmatch" in release_script
+    assert "reviewed_generated_at" in release_script
+    assert "reviewed_source_commit" in release_script
+    assert "release_source_paths" in release_script
+    assert "QUANTCORTEX_GENERATED_AT is required for changed release source" in (
+        release_script
+    )
+    assert '--data-provider "${provider}"' in release_script
 
     anonymous_source = (PAPER_ROOT / "anonymous.tex").read_text(encoding="ascii")
     assert "\\def\\quantcortexanonymous{1}" in anonymous_source

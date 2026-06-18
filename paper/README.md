@@ -38,11 +38,16 @@ scripts/release_paper_artifacts.sh \
 ```
 
 The input must contain `QQQ`, `VGT`, `GLD`, `TLT`, `SPY`, `VIG`, and `SHV` and
-must match the SHA-256 digest in `results/manifest.json` for exact
-reproduction. The wrapper requires committed tracked source, regenerates the
-reviewed `docs/img/` gallery and paper experiment in a detached clean worktree
-with the input mounted outside it, verifies the recorded source commit and clean
-start state, then copies reviewed artifacts back. The
+must match the SHA-256 digest in `results/manifest.json`; the release wrapper
+rejects another matrix rather than attaching the reviewed provenance to it. It
+uses the recorded source commit and timestamp when all release-critical paths
+are unchanged, so the final artifact commit can reproduce without timestamp-only
+drift. Changed experiment, report, or paper source must set
+`QUANTCORTEX_GENERATED_AT` explicitly; that creates a release from current
+`HEAD`. The wrapper requires committed tracked source, regenerates the reviewed
+`docs/img/` gallery and paper experiment in a detached clean worktree with the
+input mounted outside it, verifies the recorded source commit and clean start
+state, then copies reviewed artifacts back. The
 fixed experiment requires complete rows, performs no forward fill, and rejects
 fewer than 274 pre-evaluation sessions. Raw provider data is not committed.
 Aggregate tables, generated LaTeX values, figures, the explicit experiment
@@ -58,6 +63,9 @@ and 63-session sensitivity results. `sharpe_uncertainty.csv` directly resamples
 the conventional sample Sharpe statistic. `comparator_diagnostics.csv` records
 the causal target-exposure comparator after its own costs, while
 `evaluation_contract.json` records the machine-readable semantics.
+`target_tape_hashes.json` records the canonical payload hash, decision count,
+record count, and symbol set for every audited strategy variant without
+publishing the underlying provider matrix.
 
 The primary accounting path is the event-driven engine. It holds explicit
 adjusted-close pseudo-shares between rebalances, sizes targets against post-cost

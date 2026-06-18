@@ -95,12 +95,16 @@ def load_price_matrix(
     start: str | None = None,
     end: str | None = None,
     max_ffill: int | None = 5,
+    *,
+    require_complete: bool = False,
 ) -> pd.DataFrame:
     """Load a wide adjusted-close CSV indexed by a required ``date`` column.
 
     Missing prices are forward-filled for at most ``max_ffill`` rows. Set it to
     ``None`` to disable filling; unlimited filling is intentionally unsupported
-    because it can keep stale or delisted assets alive indefinitely.
+    because it can keep stale or delisted assets alive indefinitely. When
+    ``require_complete`` is true, any missing value that remains in the requested
+    date window raises instead of silently removing that row.
     """
     resolved, frame = _read_dated_csv(path)
     frame.columns = [str(column).strip() for column in frame.columns]
@@ -126,6 +130,8 @@ def load_price_matrix(
     frame = _numeric(frame, resolved)
     if (frame <= 0).any(axis=None):
         raise LocalDataError(f"prices must be strictly positive in {resolved}")
+    if not isinstance(require_complete, bool):
+        raise LocalDataError("require_complete must be a boolean")
 
     if max_ffill is not None:
         if (
@@ -135,7 +141,20 @@ def load_price_matrix(
         ):
             raise LocalDataError("max_ffill must be a non-negative integer or None")
         frame = frame.ffill(limit=int(max_ffill)) if max_ffill > 0 else frame
-    frame = _slice(frame, start, end).dropna(how="any")
+    frame = _slice(frame, start, end)
+    if require_complete and frame.isna().any(axis=None):
+        missing = frame.isna().stack()
+        locations = [
+            f"{timestamp.date().isoformat()}:{symbol}"
+            for (timestamp, symbol), is_missing in missing.items()
+            if is_missing
+        ]
+        preview = ", ".join(locations[:3])
+        raise LocalDataError(
+            "price matrix contains missing required observations"
+            + (f"; first missing values: {preview}" if preview else "")
+        )
+    frame = frame.dropna(how="any")
     if frame.empty:
         raise LocalDataError("no complete price rows remain after forward-filling")
     return frame

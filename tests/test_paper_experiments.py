@@ -4,6 +4,7 @@ import argparse
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -20,6 +21,7 @@ from scripts.run_paper_experiments import (
     _cagr,
     _costed_target_exposure_comparator,
     _git_metadata,
+    _git_path_is_tracked,
     _max_drawdown,
     _save_figures,
     _tex_number,
@@ -385,6 +387,33 @@ def test_git_metadata_captures_cleanliness_before_writes(tmp_path):
     assert dirty["worktree_clean_at_start"] is False
 
 
+def test_git_path_tracking_is_measured_from_the_source_repository(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    tracked = tmp_path / "tracked.csv"
+    untracked = tmp_path / "untracked.csv"
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.csv"
+    tracked.write_text("date,A\n2024-01-01,1\n", encoding="ascii")
+    untracked.write_text("date,A\n2024-01-01,1\n", encoding="ascii")
+    outside.write_text("date,A\n2024-01-01,1\n", encoding="ascii")
+    subprocess.run(["git", "add", "tracked.csv"], cwd=tmp_path, check=True)
+
+    assert _git_path_is_tracked(tmp_path, tracked) is True
+    assert _git_path_is_tracked(tmp_path, untracked) is False
+    assert _git_path_is_tracked(tmp_path, outside) is False
+
+
+def test_git_path_tracking_fails_closed_on_git_errors(monkeypatch, tmp_path):
+    candidate = tmp_path / "prices.csv"
+    candidate.write_text("date,A\n2024-01-01,1\n", encoding="ascii")
+    monkeypatch.setattr(
+        "scripts.run_paper_experiments.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=128, stderr="fatal"),
+    )
+
+    with pytest.raises(RuntimeError, match="could not determine"):
+        _git_path_is_tracked(tmp_path, candidate)
+
+
 def test_paper_cli_requires_clean_source_before_reading_input(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "scripts.run_paper_experiments._git_metadata",
@@ -408,6 +437,36 @@ def test_paper_cli_requires_clean_source_before_reading_input(monkeypatch, tmp_p
                 "--adjustment-method",
                 "test adjustment",
                 "--require-clean-source",
+            ]
+        )
+
+
+def test_paper_cli_rejects_a_git_tracked_price_input(monkeypatch):
+    monkeypatch.setattr(
+        "scripts.run_paper_experiments._git_metadata",
+        lambda _repo_root: {
+            "source_commit": "0" * 40,
+            "worktree_clean_at_start": True,
+        },
+    )
+    tracked_fixture = (
+        Path(__file__).resolve().parent / "fixtures" / "conformance" / "prices.csv"
+    )
+
+    with pytest.raises(RuntimeError, match="must not be tracked by Git"):
+        paper_main(
+            [
+                "run_paper_experiments.py",
+                "--prices-csv",
+                str(tracked_fixture),
+                "--data-provider",
+                "test provider",
+                "--permission-basis",
+                "test permission",
+                "--retrieved-at",
+                "2026-06-16",
+                "--adjustment-method",
+                "test adjustment",
             ]
         )
 
@@ -442,6 +501,16 @@ def test_paper_cli_writes_a_complete_test_only_artifact_set(monkeypatch, tmp_pat
         "scripts.run_paper_experiments._threadpool_environment",
         lambda: [{"user_api": "test", "num_threads": 1}],
     )
+    from scripts import run_paper_experiments as paper_experiments
+
+    parsed_payloads = []
+    original_parser = paper_experiments.target_tape_from_payload
+
+    def recording_parser(payload):
+        parsed_payloads.append(payload)
+        return original_parser(payload)
+
+    monkeypatch.setattr(paper_experiments, "target_tape_from_payload", recording_parser)
 
     assert (
         paper_main(
@@ -476,7 +545,7 @@ def test_paper_cli_writes_a_complete_test_only_artifact_set(monkeypatch, tmp_pat
     manifest = json.loads(
         (output_dir / "results" / "manifest.json").read_text(encoding="utf-8")
     )
-    assert manifest["schema_version"] == 4
+    assert manifest["schema_version"] == 5
     assert manifest["generated_at"] == "2026-06-16T00:00:00Z"
     assert manifest["generator"]["git"] == {
         "source_commit": "1" * 40,
@@ -485,10 +554,23 @@ def test_paper_cli_writes_a_complete_test_only_artifact_set(monkeypatch, tmp_pat
     assert manifest["source"]["raw_input_committed"] is False
     assert manifest["source"]["provider"] == "deterministic synthetic test fixture"
     assert "results/evaluation_contract.json" in manifest["artifacts"]
+    assert "results/target_tape_hashes.json" in manifest["artifacts"]
     assert "results/sharpe_uncertainty.csv" in manifest["artifacts"]
     assert "figures/accounting_summary.pdf" in manifest["artifacts"]
     for relative_path in manifest["artifacts"]:
         assert (output_dir / relative_path).is_file(), relative_path
+
+    target_tapes = manifest["decision_streams"]["variants"]
+    assert set(target_tapes) == {"full", "no_regime", "no_vol_scaler", "signal_only"}
+    assert all(metadata["schema_version"] == 1 for metadata in target_tapes.values())
+    assert all(metadata["decision_count"] > 0 for metadata in target_tapes.values())
+    assert all(metadata["symbols"] == sorted(metadata["symbols"]) for metadata in target_tapes.values())
+    assert all(
+        metadata["record_count"]
+        == metadata["decision_count"] * len(metadata["symbols"])
+        for metadata in target_tapes.values()
+    )
+    assert len(parsed_payloads) == 4
 
 
 def test_evaluation_contract_separates_attribution_and_tradable_comparator():

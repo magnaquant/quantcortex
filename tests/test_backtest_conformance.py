@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
+from jsonschema import Draft202012Validator, FormatChecker
 
 from quantcortex.backtest.conformance import (
     TARGET_TAPE_COLUMNS,
@@ -88,6 +91,81 @@ def test_canonical_target_tape_payload_rejects_unknown_fields():
         target_tape_from_payload(payload)
 
 
+def test_target_tape_to_weights_preserves_declared_symbol_order():
+    weights = target_tape_to_weights(
+        _fixture_tape(),
+        expected_symbols=["B", "A"],
+    )
+
+    assert list(weights.columns) == ["B", "A"]
+
+
+def test_target_tape_long_only_tolerance_preserves_positive_weights_only():
+    tape = _fixture_tape()
+    tape.loc[0, "target_weight"] = 5e-16
+    tape.loc[1, "target_weight"] = -5e-13
+
+    normalized = validate_target_tape(tape, expected_symbols=["A", "B"])
+
+    assert normalized.loc[0, "target_weight"] == 5e-16
+    assert normalized.loc[1, "target_weight"] == 0.0
+    payload = target_tape_to_payload(normalized, expected_symbols=["A", "B"])
+    roundtrip = target_tape_to_weights(
+        target_tape_from_payload(payload),
+        expected_symbols=["A", "B"],
+    )
+    assert roundtrip.iloc[0].to_dict() == {"A": 5e-16, "B": 0.0}
+
+    tape.loc[1, "target_weight"] = -2e-12
+    with pytest.raises(ValueError, match="long-only"):
+        validate_target_tape(tape, expected_symbols=["A", "B"])
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "error", "message"),
+    [
+        (("schema_version",), True, TypeError, "schema_version must be an integer"),
+        (("max_gross",), "1.0", TypeError, "max_gross must be a JSON number"),
+        (
+            ("records", 0, "decision_timestamp"),
+            "2024-01-01",
+            ValueError,
+            "must be an RFC 3339 date-time",
+        ),
+        (
+            ("records", 0, "decision_timestamp"),
+            1_704_067_200,
+            TypeError,
+            "must be an RFC 3339 string",
+        ),
+        (
+            ("records", 0, "target_weight"),
+            "1.0",
+            TypeError,
+            "target_weight must be a JSON number",
+        ),
+        (
+            ("records", 0, "target_weight"),
+            np.float64(1.0),
+            TypeError,
+            "target_weight must be a JSON number",
+        ),
+    ],
+)
+def test_canonical_target_tape_payload_enforces_published_json_types(
+    path, value, error, message
+):
+    payload = target_tape_to_payload(_fixture_tape(), expected_symbols=["A", "B"])
+    mutated = copy.deepcopy(payload)
+    cursor = mutated
+    for key in path[:-1]:
+        cursor = cursor[key]
+    cursor[path[-1]] = value
+
+    with pytest.raises(error, match=message):
+        target_tape_from_payload(mutated)
+
+
 def test_conformance_fixture_has_hand_computable_next_bar_returns():
     weights = target_tape_to_weights(
         _fixture_tape(),
@@ -136,3 +214,17 @@ def test_committed_contract_schemas_are_versioned_and_specific():
     assert contract_schema["properties"]["target_tape"][
         "additionalProperties"
     ] is False
+
+    target_validator = Draft202012Validator(
+        target_schema,
+        format_checker=FormatChecker(),
+    )
+    target_validator.validate(
+        target_tape_to_payload(_fixture_tape(), expected_symbols=["A", "B"])
+    )
+    contract_validator = Draft202012Validator(contract_schema)
+    contract_validator.validate(
+        json.loads(
+            (REPO_ROOT / "paper" / "results" / "evaluation_contract.json").read_text()
+        )
+    )

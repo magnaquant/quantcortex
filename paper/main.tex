@@ -319,7 +319,9 @@ A central manifest records the clean source revision, Python and package
 versions, dependency lock, input SHA-256, experiment design, source-tree hashes,
 and the hash of every published table and figure. A versioned JSON contract and
 canonical long-form target-tape schema make the engine boundary machine
-readable; deterministic fixtures exercise it without using the empirical price
+readable. The fixed experiment round-trips every strategy decision stream
+through the versioned payload boundary and records a canonical payload hash;
+deterministic fixtures test the same boundary without using the empirical price
 matrix. The empirical sections below exercise the
 research and backtest contracts. Order-state controls are verified by
 deterministic tests: paper-trading state is written atomically as a versioned

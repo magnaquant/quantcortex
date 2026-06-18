@@ -26,8 +26,92 @@ if [[ ! -f "${prices_csv}" ]]; then
   exit 1
 fi
 
-source_commit="$(git -C "${repo_root}" rev-parse HEAD)"
-generated_at="${QUANTCORTEX_GENERATED_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
+reviewed_manifest="${repo_root}/paper/results/manifest.json"
+if [[ ! -f "${reviewed_manifest}" ]]; then
+  printf '%s\n' \
+    "reviewed paper manifest not found: ${reviewed_manifest}" >&2
+  exit 1
+fi
+expected_input_digest="$(
+  "${python_bin}" -c \
+    'import json, sys; print(json.load(open(sys.argv[1]))["source"]["input_sha256"])' \
+    "${reviewed_manifest}"
+)"
+actual_input_digest="$(
+  "${python_bin}" -c \
+    'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' \
+    "${prices_csv}"
+)"
+if [[ "${actual_input_digest}" != "${expected_input_digest}" ]]; then
+  printf '%s\n' \
+    "price matrix digest does not match the reviewed experiment" \
+    "expected: ${expected_input_digest}" \
+    "actual:   ${actual_input_digest}" >&2
+  exit 1
+fi
+case "${prices_csv}" in
+  "${repo_root}"/*)
+    relative_prices="${prices_csv#${repo_root}/}"
+    if git -C "${repo_root}" ls-files --error-unmatch -- "${relative_prices}" \
+      >/dev/null 2>&1; then
+      printf '%s\n' \
+        "reviewed raw price input must not be tracked by Git: ${relative_prices}" >&2
+      exit 1
+    else
+      tracking_status=$?
+      if [[ "${tracking_status}" -ne 1 ]]; then
+        printf '%s\n' \
+          "could not determine whether the raw price input is tracked" >&2
+        exit 1
+      fi
+    fi
+    ;;
+esac
+
+current_commit="$(git -C "${repo_root}" rev-parse HEAD)"
+reviewed_source_commit="$(
+  "${python_bin}" -c \
+    'import json, sys; print(json.load(open(sys.argv[1]))["generator"]["git"]["source_commit"])' \
+    "${reviewed_manifest}"
+)"
+reviewed_generated_at="$(
+  "${python_bin}" -c \
+    'import json, sys; print(json.load(open(sys.argv[1]))["generated_at"])' \
+    "${reviewed_manifest}"
+)"
+if [[ -n "${QUANTCORTEX_GENERATED_AT:-}" ]]; then
+  source_commit="${current_commit}"
+  generated_at="${QUANTCORTEX_GENERATED_AT}"
+else
+  if ! git -C "${repo_root}" cat-file -e "${reviewed_source_commit}^{commit}" \
+    >/dev/null 2>&1; then
+    printf '%s\n' "reviewed source commit is unavailable" >&2
+    exit 1
+  fi
+  release_source_paths=(
+    quantcortex
+    schemas
+    pyproject.toml
+    poetry.lock
+    scripts/build_paper.sh
+    scripts/generate_report.py
+    scripts/run_paper_experiments.py
+    paper/main.tex
+    paper/anonymous.tex
+    paper/checklist.tex
+    paper/references.bib
+    paper/neurips_2026.sty
+  )
+  if ! git -C "${repo_root}" diff --quiet \
+    "${reviewed_source_commit}" "${current_commit}" -- \
+    "${release_source_paths[@]}"; then
+    printf '%s\n' \
+      "QUANTCORTEX_GENERATED_AT is required for changed release source" >&2
+    exit 1
+  fi
+  source_commit="${reviewed_source_commit}"
+  generated_at="${reviewed_generated_at}"
+fi
 source_date_epoch="${SOURCE_DATE_EPOCH:-$(git -C "${repo_root}" show -s --format=%ct "${source_commit}")}"
 temporary_root="$(mktemp -d "${TMPDIR:-/tmp}/quantcortex-paper-release.XXXXXX")"
 source_worktree="${temporary_root}/source"
@@ -44,10 +128,26 @@ trap cleanup EXIT
 git -C "${repo_root}" worktree add --detach "${source_worktree}" "${source_commit}" \
   >/dev/null
 
-permission="Owner-supplied local input; publication of derived aggregate "
-permission+="results authorized by the repository owner; provider terms not "
-permission+="independently verified"
-adjustment="yfinance adjusted close with auto_adjust=False"
+provider="$(
+  "${python_bin}" -c \
+    'import json, sys; print(json.load(open(sys.argv[1]))["source"]["provider"])' \
+    "${reviewed_manifest}"
+)"
+permission="$(
+  "${python_bin}" -c \
+    'import json, sys; print(json.load(open(sys.argv[1]))["source"]["permission_basis"])' \
+    "${reviewed_manifest}"
+)"
+retrieved_at="$(
+  "${python_bin}" -c \
+    'import json, sys; print(json.load(open(sys.argv[1]))["source"]["retrieved_at"])' \
+    "${reviewed_manifest}"
+)"
+adjustment="$(
+  "${python_bin}" -c \
+    'import json, sys; print(json.load(open(sys.argv[1]))["source"]["adjustment_method"])' \
+    "${reviewed_manifest}"
+)"
 
 (
   cd "${source_worktree}"
@@ -58,9 +158,9 @@ adjustment="yfinance adjusted close with auto_adjust=False"
     --cash-proxy-symbol SHV \
     --output-dir "${generated_output}" \
     --bootstrap-replications 5000 \
-    --data-provider "Yahoo Finance via yfinance 1.4.1" \
+    --data-provider "${provider}" \
     --permission-basis "${permission}" \
-    --retrieved-at 2026-06-16 \
+    --retrieved-at "${retrieved_at}" \
     --adjustment-method "${adjustment}" \
     --generated-at "${generated_at}" \
     --require-clean-source
@@ -76,9 +176,9 @@ adjustment="yfinance adjusted close with auto_adjust=False"
     --imgdir "${performance_output}/img" \
     --report-out "${performance_output}/report.md" \
     --manifest-out "${performance_output}/img/performance_manifest.json" \
-    --data-provider "Yahoo Finance via yfinance 1.4.1" \
+    --data-provider "${provider}" \
     --permission-basis "${permission}" \
-    --retrieved-at 2026-06-16 \
+    --retrieved-at "${retrieved_at}" \
     --adjustment-method "${adjustment}" \
     --generated-at "${generated_at}" \
     --require-clean-source \

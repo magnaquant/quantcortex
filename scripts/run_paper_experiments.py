@@ -25,6 +25,12 @@ import pandas as pd
 logging.getLogger("hmmlearn").setLevel(logging.ERROR)
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
+from quantcortex.backtest.conformance import (
+    target_tape_from_payload,
+    target_tape_to_payload,
+    target_tape_to_weights,
+    weights_to_target_tape,
+)
 from quantcortex.backtest.costs.transaction_costs import TransactionCostModel
 from quantcortex.backtest.engines.event_driven import EventDrivenBacktest
 from quantcortex.backtest.engines.vectorized import BacktestResult, VectorizedBacktest
@@ -78,7 +84,7 @@ BOOTSTRAP_BLOCK_LENGTHS = (5, 21, 63)
 PRIMARY_BOOTSTRAP_BLOCK_LENGTH = 21
 BOOTSTRAP_SEED = 42
 PAPER_MAX_FORWARD_FILL = 0
-PROVENANCE_SCHEMA_VERSION = 4
+PROVENANCE_SCHEMA_VERSION = 5
 EVALUATION_CONTRACT_SCHEMA_VERSION = 1
 TARGET_TAPE_SCHEMA_VERSION = 1
 TARGET_EXPOSURE_COMPARATOR_SYMBOL = "equal_initial_weight_basket"
@@ -150,6 +156,32 @@ def _git_metadata(repo_root: Path) -> dict[str, str | bool]:
         "source_commit": commit,
         "worktree_clean_at_start": not status.strip(),
     }
+
+
+def _git_path_is_tracked(repo_root: Path, path: Path) -> bool:
+    """Return whether ``path`` is tracked in the source repository."""
+    try:
+        relative = path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return False
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", relative],
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise RuntimeError("could not determine whether paper input is tracked") from exc
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    detail = result.stderr.strip() or f"git exited with status {result.returncode}"
+    raise RuntimeError(
+        f"could not determine whether paper input is tracked: {detail}"
+    )
 
 
 def _sha256(path: Path) -> str:
@@ -1756,6 +1788,7 @@ def run_experiments(
         evaluation_end,
     )
     strategy_weights: dict[str, pd.DataFrame] = {}
+    target_tape_metadata: dict[str, dict[str, object]] = {}
     ablation_rows: list[dict[str, float | str]] = []
     variant_series: dict[str, dict[str, pd.Series]] = {}
     gross_active_by_variant: dict[str, pd.Series] = {}
@@ -1776,8 +1809,28 @@ def run_experiments(
         )
 
     for variant, strategy in strategies.items():
-        weights = strategy.generate_weights(prices, weekly)
+        raw_weights = strategy.generate_weights(prices, weekly)
+        target_tape = weights_to_target_tape(raw_weights, max_gross=1.0)
+        target_payload = target_tape_to_payload(
+            target_tape,
+            max_gross=1.0,
+            expected_symbols=list(prices.columns),
+        )
+        validated_tape = target_tape_from_payload(target_payload)
+        weights = target_tape_to_weights(
+            validated_tape,
+            max_gross=1.0,
+            expected_symbols=list(prices.columns),
+        )
         strategy_weights[variant] = weights
+        target_tape_metadata[variant] = {
+            "schema_version": TARGET_TAPE_SCHEMA_VERSION,
+            "decision_count": int(weights.shape[0]),
+            "record_count": int(len(target_tape)),
+            "symbols": list(target_payload["symbols"]),
+            "max_gross": 1.0,
+            "canonical_payload_sha256": _json_sha256(target_payload),
+        }
         result = _engine_result(
             weights,
             prices,
@@ -2088,6 +2141,7 @@ def run_experiments(
         "evaluation_index": evaluation_index,
         "warmup_sessions": available_warmup_sessions,
         "required_warmup_sessions": required_warmup_sessions,
+        "target_tape_metadata": target_tape_metadata,
         "accounting": pd.DataFrame(accounting_rows),
         "ablation": ablation,
         "ablation_uncertainty": ablation_uncertainty,
@@ -2160,12 +2214,16 @@ def main(argv: list[str]) -> int:
         raise ValueError(f"dependency lock is missing: {dependency_lock_path}")
 
     source = args.prices_csv.expanduser().resolve()
+    raw_input_committed = _git_path_is_tracked(repo_root, source)
+    if raw_input_committed:
+        raise RuntimeError("paper price input must not be tracked by Git")
     input_digest = sha256_file(source)
     symbols = UNIVERSE + [args.cash_proxy_symbol]
     prices_with_cash = load_price_matrix(
         source,
         symbols=symbols,
         max_ffill=PAPER_MAX_FORWARD_FILL,
+        require_complete=True,
     )
     prices = prices_with_cash.loc[:, UNIVERSE]
     cash_returns = prices_with_cash[args.cash_proxy_symbol].pct_change(
@@ -2233,6 +2291,10 @@ def main(argv: list[str]) -> int:
             path=results_dir / "generated_values.tex",
         ),
         _write_json(contract, results_dir / "evaluation_contract.json"),
+        _write_json(
+            experiment["target_tape_metadata"],
+            results_dir / "target_tape_hashes.json",
+        ),
     ]
     uncertainty_path = results_dir / "uncertainty.json"
     artifacts.append(_write_json(experiment["uncertainty"], uncertainty_path))
@@ -2286,7 +2348,7 @@ def main(argv: list[str]) -> int:
         "source": {
             "file_name": source.name,
             "input_sha256": input_digest,
-            "raw_input_committed": False,
+            "raw_input_committed": raw_input_committed,
             "symbols": symbols,
             "cash_proxy": args.cash_proxy_symbol,
             "provider": args.data_provider,
@@ -2413,6 +2475,10 @@ def main(argv: list[str]) -> int:
             "path": "results/evaluation_contract.json",
             "schema_version": EVALUATION_CONTRACT_SCHEMA_VERSION,
             "canonical_sha256": _json_sha256(contract),
+        },
+        "decision_streams": {
+            "path": "results/target_tape_hashes.json",
+            "variants": experiment["target_tape_metadata"],
         },
         "artifacts": {
             str(path.relative_to(output_dir)): _sha256(path)

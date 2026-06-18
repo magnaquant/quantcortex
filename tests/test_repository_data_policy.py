@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import re
+import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -41,6 +42,28 @@ DOCUMENTATION_FILES = [
 def test_redistributed_market_data_is_absent():
     present = [path for path in FORBIDDEN_MARKET_DATA if (REPO_ROOT / path).exists()]
     assert not present, f"redistributed market-data snapshots reappeared: {present}"
+
+    tracked = subprocess.run(
+        ["git", "ls-files"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert [path for path in tracked if path.startswith("local_data/")] == [
+        "local_data/README.md"
+    ]
+
+    raw_columns = {"date", "QQQ", "VGT", "GLD", "TLT", "SPY", "VIG", "SHV"}
+    leaked = []
+    for relative_path in tracked:
+        if not relative_path.endswith(".csv"):
+            continue
+        with (REPO_ROOT / relative_path).open(encoding="utf-8", newline="") as handle:
+            header = set(next(csv.reader(handle), []))
+        if raw_columns <= header:
+            leaked.append(relative_path)
+    assert not leaked, f"tracked raw paper price matrices detected: {leaked}"
 
 
 def test_published_performance_charts_match_manifest_and_readme():

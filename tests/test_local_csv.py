@@ -70,6 +70,31 @@ def test_load_price_matrix_rejects_missing_symbol(tmp_path):
         load_price_matrix(path, max_ffill=True)
     with pytest.raises(LocalDataError, match="valid timestamp"):
         load_price_matrix(path, start="not-a-date")
+    with pytest.raises(LocalDataError, match="must be a boolean"):
+        load_price_matrix(path, require_complete=1)
+
+
+def test_load_price_matrix_can_fail_closed_on_incomplete_rows(tmp_path):
+    path = tmp_path / "prices.csv"
+    pd.DataFrame(
+        {
+            "date": ["2024-01-01", "2024-01-02", "2024-01-03"],
+            "AAA": [10.0, None, 12.0],
+            "BBB": [20.0, 21.0, 22.0],
+        }
+    ).to_csv(path, index=False)
+
+    permissive = load_price_matrix(path, max_ffill=0)
+    assert permissive.index.tolist() == [
+        pd.Timestamp("2024-01-01"),
+        pd.Timestamp("2024-01-03"),
+    ]
+
+    with pytest.raises(
+        LocalDataError,
+        match=r"missing required observations.*2024-01-02:AAA",
+    ):
+        load_price_matrix(path, max_ffill=0, require_complete=True)
 
 
 def test_load_price_matrix_rejects_duplicate_csv_headers(tmp_path):
