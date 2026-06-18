@@ -86,7 +86,7 @@ packages = [
 poetry-plugin-export = ">=1.10,<1.11"
 
 [tool.poetry.group.test.dependencies]
-jsonschema = ">=4.20,<5"
+jsonschema = { version = ">=4.20,<5", extras = ["format-nongpl"] }
 packaging = ">=24"
 pytest = ">=8.0"
 pytest-cov = ">=4.1"

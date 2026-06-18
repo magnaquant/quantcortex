@@ -95,6 +95,7 @@ else
     poetry.lock
     scripts/build_paper.sh
     scripts/generate_report.py
+    scripts/release_paper_artifacts.sh
     scripts/run_paper_experiments.py
     paper/main.tex
     paper/anonymous.tex

@@ -22,7 +22,8 @@ TARGET_TAPE_COLUMNS = (
 )
 TARGET_TAPE_SCHEMA_VERSION = 1
 _RFC3339_TIMESTAMP = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+    r"^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d"
+    r"(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$"
 )
 
 
@@ -54,10 +55,35 @@ def _validated_payload_number(value: object, *, name: str) -> float:
     """Accept only JSON number primitives, excluding booleans and strings."""
     if type(value) not in (int, float):
         raise TypeError(f"{name} must be a JSON number")
-    parsed = float(value)
+    try:
+        parsed = float(value)
+    except OverflowError as exc:
+        raise ValueError(f"{name} must be finite binary64") from exc
     if not np.isfinite(parsed):
-        raise ValueError(f"{name} must be finite")
+        raise ValueError(f"{name} must be finite binary64")
     return parsed
+
+
+def _validated_payload_schema_version(value: object) -> int:
+    """Normalize JSON numbers that represent an integral schema version."""
+    parsed = _validated_payload_number(value, name="target-tape schema_version")
+    if not parsed.is_integer():
+        raise TypeError("target-tape schema_version must be an integer")
+    version = int(parsed)
+    if version != TARGET_TAPE_SCHEMA_VERSION:
+        raise ValueError("unsupported target-tape schema version")
+    return version
+
+
+def _validated_payload_symbol(value: object, *, name: str) -> str:
+    """Validate a canonical wire symbol without silently normalizing it."""
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string")
+    if not value or value != value.strip() or "\r" in value or "\n" in value:
+        raise ValueError(
+            f"{name} must be non-empty with no outer whitespace or line breaks"
+        )
+    return value
 
 
 def _validated_max_gross(value: object) -> float:
@@ -100,6 +126,7 @@ def validate_target_tape(
     try:
         timestamps = pd.to_datetime(
             normalized["decision_timestamp"],
+            format="mixed",
             utc=True,
             errors="raise",
         )
@@ -278,16 +305,14 @@ def target_tape_from_payload(payload: Mapping[str, object]) -> pd.DataFrame:
             "target-tape payload keys must be exactly "
             + ", ".join(sorted(required_keys))
         )
-    schema_version = payload["schema_version"]
-    if type(schema_version) is not int:
-        raise TypeError("target-tape schema_version must be an integer")
-    if schema_version != TARGET_TAPE_SCHEMA_VERSION:
-        raise ValueError("unsupported target-tape schema version")
+    _validated_payload_schema_version(payload["schema_version"])
     symbols = payload["symbols"]
     if not isinstance(symbols, list):
         raise TypeError("target-tape symbols must be a list")
-    if any(not isinstance(symbol, str) for symbol in symbols):
-        raise TypeError("target-tape symbols must contain strings")
+    symbols = [
+        _validated_payload_symbol(symbol, name="target-tape symbol")
+        for symbol in symbols
+    ]
     records = payload["records"]
     if not isinstance(records, list) or not records:
         raise ValueError("target-tape records must be a non-empty list")
@@ -301,13 +326,16 @@ def target_tape_from_payload(payload: Mapping[str, object]) -> pd.DataFrame:
     normalized_records = []
     for record in records:
         timestamp = _validated_payload_timestamp(record["decision_timestamp"])
-        symbol = record["symbol"]
-        if not isinstance(symbol, str):
-            raise TypeError("target-tape record symbol must be a string")
+        symbol = _validated_payload_symbol(
+            record["symbol"],
+            name="target-tape record symbol",
+        )
         target_weight = _validated_payload_number(
             record["target_weight"],
             name="target-tape target_weight",
         )
+        if target_weight < 0.0:
+            raise ValueError("target-tape target_weight must be non-negative")
         normalized_records.append(
             {
                 "decision_timestamp": timestamp,

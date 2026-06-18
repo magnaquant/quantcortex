@@ -96,6 +96,7 @@ DECOMPOSITION_LABELS = {
     "net_excess_over_cash": "Net excess over cash",
 }
 SOURCE_TREE_FIXED_FILES = (
+    "scripts/release_paper_artifacts.sh",
     "scripts/run_paper_experiments.py",
     "schemas/canonical_target_tape.schema.json",
     "schemas/evaluation_contract.schema.json",

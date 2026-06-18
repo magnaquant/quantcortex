@@ -7,6 +7,7 @@
   "required": ["schema_version", "symbols", "max_gross", "records"],
   "properties": {
     "schema_version": {
+      "type": "integer",
       "const": 1
     },
     "symbols": {
@@ -16,12 +17,13 @@
       "items": {
         "type": "string",
         "minLength": 1,
-        "pattern": ".*\\S.*"
+        "pattern": "^(?:\\S|\\S.*\\S)$"
       }
     },
     "max_gross": {
       "type": "number",
-      "exclusiveMinimum": 0.0
+      "exclusiveMinimum": 0.0,
+      "maximum": 1.7976931348623157e308
     },
     "records": {
       "type": "array",
@@ -38,15 +40,17 @@
           "decision_timestamp": {
             "type": "string",
             "format": "date-time",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
           },
           "symbol": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "pattern": "^(?:\\S|\\S.*\\S)$"
           },
           "target_weight": {
             "type": "number",
-            "minimum": 0.0
+            "minimum": 0.0,
+            "maximum": 1.7976931348623157e308
           }
         }
       }

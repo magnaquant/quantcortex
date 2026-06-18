@@ -51,6 +51,7 @@ def test_paper_artifacts_match_manifest_and_generator():
             source_commit,
             "--",
             "quantcortex",
+            "scripts/release_paper_artifacts.sh",
             "scripts/run_paper_experiments.py",
             "schemas",
             "pyproject.toml",
@@ -64,6 +65,7 @@ def test_paper_artifacts_match_manifest_and_generator():
     assert dependency_lock["sha256"] == _sha256(REPO_ROOT / "poetry.lock")
     assert generator["threadpools"]
     source_tree = generator["source_tree"]
+    assert "scripts/release_paper_artifacts.sh" in source_tree["files"]
     assert source_tree == source_tree_manifest(
         REPO_ROOT,
         list(source_tree["files"]),
@@ -265,6 +267,7 @@ def test_paper_source_and_reviewed_pdf_are_published():
     assert "reviewed_generated_at" in release_script
     assert "reviewed_source_commit" in release_script
     assert "release_source_paths" in release_script
+    assert "scripts/release_paper_artifacts.sh" in release_script
     assert "QUANTCORTEX_GENERATED_AT is required for changed release source" in (
         release_script
     )
