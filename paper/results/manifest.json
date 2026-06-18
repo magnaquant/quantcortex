@@ -20,15 +20,81 @@
     "results/cost_sensitivity.csv": "25b9969cf8ecdabd19e7761ad2973252c9f5b9f994b6dc147595a2a112c24d88",
     "results/engine_comparison.csv": "ea0322dcd2aa4a1eb3b5996045c3a4b2ed25a85684a578ee788b013b99b643cd",
     "results/evaluation_contract.json": "77ee05ce64622ef9ba1bfbd7dae85c4f6fd44f07db0b21feaf6b3e0e418673e7",
-    "results/generated_values.tex": "f14a548364f13b40e75d44c2eb2c3aa0965668ac35a6acd30d22ef207abb1fdf",
+    "results/generated_values.tex": "89cd92d665460e351d5fbd9b86ea86027cf515efd8584f6434fab1ea91bb6601",
     "results/protocol_switches.csv": "20d5a0dc37e07a20c1f2772c8e9940ff6464ef1da98692edd5fdb06531bc2393",
     "results/return_decomposition.csv": "53a84aa9b91c92f0037e48dc09154807cbf003ccf0038f39da8406108bf709cc",
     "results/sharpe_uncertainty.csv": "aead873ced9b25c76c6944aa6e3ba0901ade65c784fa5cb8cc10ad1c6c01f136",
     "results/subperiods.csv": "9e6206fd38422640b4539e1207aade8821c2ee474af18e74268cb4bf69c249db",
+    "results/target_tape_hashes.json": "7eac818e4f37ed936561138c9a00f2038b6051723673a0162b609b2ae64bca03",
     "results/uncertainty.json": "6a6a0aa9a02def987f09de273d99cb28a6929cedf090d6245e2e1fa818d2c54a",
     "results/yearly_returns.csv": "53cfee7bb987c332b9db1766619b0eb085415e358724872a77ebd6c5f1ed6256"
   },
   "configuration_sha256": "20ab6c2850734e9c7a44eae17b4c3f7db4dbfda18d85cb9ecd9fcc729b475128",
+  "decision_streams": {
+    "path": "results/target_tape_hashes.json",
+    "variants": {
+      "full": {
+        "canonical_payload_sha256": "a5c103d7d53dbc538971a7f85674843e5ace76ea10e4e09cc061f6bc9a05aaf4",
+        "decision_count": 521,
+        "max_gross": 1.0,
+        "record_count": 3126,
+        "schema_version": 1,
+        "symbols": [
+          "GLD",
+          "QQQ",
+          "SPY",
+          "TLT",
+          "VGT",
+          "VIG"
+        ]
+      },
+      "no_regime": {
+        "canonical_payload_sha256": "cdbf2c1a4a500589ed0ee3b4954c2b85b9774bffd7fd046d77359a25c0908280",
+        "decision_count": 521,
+        "max_gross": 1.0,
+        "record_count": 3126,
+        "schema_version": 1,
+        "symbols": [
+          "GLD",
+          "QQQ",
+          "SPY",
+          "TLT",
+          "VGT",
+          "VIG"
+        ]
+      },
+      "no_vol_scaler": {
+        "canonical_payload_sha256": "faeb6bca8e7a467d670b0be6ad1cbd44192e468b159c1a30456afa4dcf58c7fa",
+        "decision_count": 521,
+        "max_gross": 1.0,
+        "record_count": 3126,
+        "schema_version": 1,
+        "symbols": [
+          "GLD",
+          "QQQ",
+          "SPY",
+          "TLT",
+          "VGT",
+          "VIG"
+        ]
+      },
+      "signal_only": {
+        "canonical_payload_sha256": "0746243609426143207f8c42a83026fb4f78c6564d893e57cab56831c7c18a69",
+        "decision_count": 521,
+        "max_gross": 1.0,
+        "record_count": 3126,
+        "schema_version": 1,
+        "symbols": [
+          "GLD",
+          "QQQ",
+          "SPY",
+          "TLT",
+          "VGT",
+          "VIG"
+        ]
+      }
+    }
+  },
   "design": {
     "all_in_cost_levels_bps": [
       0.0,
@@ -174,14 +240,14 @@
     "path": "results/evaluation_contract.json",
     "schema_version": 1
   },
-  "generated_at": "2026-06-16T22:00:41Z",
+  "generated_at": "2026-06-18T04:32:48Z",
   "generator": {
     "dependency_lock": {
       "path": "poetry.lock",
-      "sha256": "fa8904674c2b24f3141acae607fd0a49d97125bc109c18def9fccbb2256c8de0"
+      "sha256": "bf5c536966be29e3cafa807c954b49aa1a097bad1bbed2cc676eeec50c5881b4"
     },
     "git": {
-      "source_commit": "d185c44928af865882c4d830066432dc97eb9972",
+      "source_commit": "bce0ca6c094f67c38f443e3fdb552c26e88923d4",
       "worktree_clean_at_start": true
     },
     "packages": {
@@ -195,12 +261,12 @@
     "path": "scripts/run_paper_experiments.py",
     "platform": "macOS-26.4-arm64-arm-64bit-Mach-O",
     "python": "3.14.4",
-    "script_sha256": "2f7c00e1d387d7efde57c0264d3cd702176af2fa94e5f5646309b0641ddb34bc",
+    "script_sha256": "00ded585aaf5ca39254c84d1fa289e487b995fc439a1cebd7838f3b21060516c",
     "source_tree": {
       "file_count": 109,
       "files": {
-        "poetry.lock": "fa8904674c2b24f3141acae607fd0a49d97125bc109c18def9fccbb2256c8de0",
-        "pyproject.toml": "175abd743d38f6b6c1cc8ae42471d62d83c86beb245d93fea231c666f51b2643",
+        "poetry.lock": "bf5c536966be29e3cafa807c954b49aa1a097bad1bbed2cc676eeec50c5881b4",
+        "pyproject.toml": "55ee8092718433e41c5bf2bb7d400fc9501096a207c9dc6b330c40b2ed7d8311",
         "quantcortex/__init__.py": "14bf1ebdacd054c3738e4704d33da6709a39206463df8b8ced5376da342c4036",
         "quantcortex/alpha/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "quantcortex/alpha/factors/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -224,7 +290,7 @@
         "quantcortex/alpha/validation/alphalens_report.py": "8463289117add78a576e37a5b99a539be5c808fca86100e26deb29e8060aa60d",
         "quantcortex/alpha/validation/factor_decay.py": "9e6e049165f014db2122d9ed57415e45e48142b475dfb7221247d447d9a50397",
         "quantcortex/backtest/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "quantcortex/backtest/conformance.py": "e169cc67cac9eb56d8da4e4a0da1e257bb6cb8d1745baca681f50fab6c62fc57",
+        "quantcortex/backtest/conformance.py": "3a37ec8fe8a28bcd1ac5b3ae30214ea490c8480fb9912f405b9b83d398272121",
         "quantcortex/backtest/costs/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "quantcortex/backtest/costs/transaction_costs.py": "48200419f37004c58df6f89041e31516d9ad98f66c22f75d11a0b9342474d5c7",
         "quantcortex/backtest/engines/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -245,7 +311,7 @@
         "quantcortex/backtest/validation/multiple_testing.py": "6b68f6f150dcc8fb90213dcf769307454c0c506e99666a533d5d07ae3ccb0b5d",
         "quantcortex/backtest/validation/survivorship_check.py": "5b772bd6b40ffe44f590ec0ddb00b7e3dc61a1aba9cae8831227325f4f53beff",
         "quantcortex/data/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "quantcortex/data/local_csv.py": "30c11c3200530810b3345f8e29fdf966f35671e30c94fc5bb1b2db656e6df79b",
+        "quantcortex/data/local_csv.py": "6e5f3d24b1477ce122a1e80899e841fffd6d857034189f7d8605705f52c6839c",
         "quantcortex/data/processors/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "quantcortex/data/processors/adjustments.py": "ae2d4d0362e3484b89b5a5c57a7fd6320973b208ee0cd5a6be9a3f29d2544e2c",
         "quantcortex/data/processors/calendar.py": "e591bccc3e7f632501b068e7abec1ece182d0ef930589381776fe89158d1df51",
@@ -305,11 +371,11 @@
         "quantcortex/timing/kama.py": "ffb848ba93041af1e04f2b7896ea7a8f33ac7e5e3e53db1e44f53af111829eda",
         "quantcortex/timing/tsmom.py": "c78ac313268091f45e0e589067f12e07e8a340fa243b8fae2853778ef4ba8ea9",
         "quantcortex/timing/vix_scaler.py": "a3667424e5573fb289e63c26c69da6a68d6c943742359f0466d29b25c56e3686",
-        "schemas/canonical_target_tape.schema.json": "81acbd7e03163ea0dc28f7b1a4bd2a73a4bbeef85dbdbc70aee01aa100c4e7e5",
+        "schemas/canonical_target_tape.schema.json": "5751ed1dac67def67fa2bcc53c856b3a52e3329b75cffb9726d90a17bac40965",
         "schemas/evaluation_contract.schema.json": "970f24f587e669925306625d12c5a84dffd03ff5b222a59905849b2fa222784f",
-        "scripts/run_paper_experiments.py": "2f7c00e1d387d7efde57c0264d3cd702176af2fa94e5f5646309b0641ddb34bc"
+        "scripts/run_paper_experiments.py": "00ded585aaf5ca39254c84d1fa289e487b995fc439a1cebd7838f3b21060516c"
       },
-      "sha256": "df200735ec35013b252a3aa689752b9eae485c21abe7247bc590c444f18221b6"
+      "sha256": "81187dc1c7daba3fac350f992fdc4163017176c4a68f80322dde97b588f28d60"
     },
     "threadpools": [
       {
@@ -321,7 +387,7 @@
       }
     ]
   },
-  "schema_version": 4,
+  "schema_version": 5,
   "source": {
     "adjustment_method": "yfinance adjusted close with auto_adjust=False",
     "cash_proxy": "SHV",

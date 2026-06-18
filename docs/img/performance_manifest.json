@@ -1,19 +1,19 @@
 {
   "schema_version": 4,
-  "generated_at": "2026-06-16T22:00:41Z",
+  "generated_at": "2026-06-18T04:32:48Z",
   "generator": {
     "path": "scripts/generate_report.py",
     "script_sha256": "b536aa7fc5e4fe7df6c7ff28c0992629a489869eaec46486db7aff1cb946099b",
     "git": {
-      "source_commit": "d185c44928af865882c4d830066432dc97eb9972",
+      "source_commit": "bce0ca6c094f67c38f443e3fdb552c26e88923d4",
       "worktree_clean_at_start": true
     },
     "source_tree": {
-      "sha256": "a72c2fcd825bb15a2879a3b33d63487a34348b837ff733b7c1ee9d0232ed19cb",
+      "sha256": "bad09f5c067dd16f556bdff8789fd6d33ff70a9860d856cb66e080f7b063c4bc",
       "file_count": 107,
       "files": {
-        "poetry.lock": "fa8904674c2b24f3141acae607fd0a49d97125bc109c18def9fccbb2256c8de0",
-        "pyproject.toml": "175abd743d38f6b6c1cc8ae42471d62d83c86beb245d93fea231c666f51b2643",
+        "poetry.lock": "bf5c536966be29e3cafa807c954b49aa1a097bad1bbed2cc676eeec50c5881b4",
+        "pyproject.toml": "55ee8092718433e41c5bf2bb7d400fc9501096a207c9dc6b330c40b2ed7d8311",
         "quantcortex/__init__.py": "14bf1ebdacd054c3738e4704d33da6709a39206463df8b8ced5376da342c4036",
         "quantcortex/alpha/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "quantcortex/alpha/factors/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -37,7 +37,7 @@
         "quantcortex/alpha/validation/alphalens_report.py": "8463289117add78a576e37a5b99a539be5c808fca86100e26deb29e8060aa60d",
         "quantcortex/alpha/validation/factor_decay.py": "9e6e049165f014db2122d9ed57415e45e48142b475dfb7221247d447d9a50397",
         "quantcortex/backtest/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "quantcortex/backtest/conformance.py": "e169cc67cac9eb56d8da4e4a0da1e257bb6cb8d1745baca681f50fab6c62fc57",
+        "quantcortex/backtest/conformance.py": "3a37ec8fe8a28bcd1ac5b3ae30214ea490c8480fb9912f405b9b83d398272121",
         "quantcortex/backtest/costs/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "quantcortex/backtest/costs/transaction_costs.py": "48200419f37004c58df6f89041e31516d9ad98f66c22f75d11a0b9342474d5c7",
         "quantcortex/backtest/engines/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -58,7 +58,7 @@
         "quantcortex/backtest/validation/multiple_testing.py": "6b68f6f150dcc8fb90213dcf769307454c0c506e99666a533d5d07ae3ccb0b5d",
         "quantcortex/backtest/validation/survivorship_check.py": "5b772bd6b40ffe44f590ec0ddb00b7e3dc61a1aba9cae8831227325f4f53beff",
         "quantcortex/data/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "quantcortex/data/local_csv.py": "30c11c3200530810b3345f8e29fdf966f35671e30c94fc5bb1b2db656e6df79b",
+        "quantcortex/data/local_csv.py": "6e5f3d24b1477ce122a1e80899e841fffd6d857034189f7d8605705f52c6839c",
         "quantcortex/data/processors/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "quantcortex/data/processors/adjustments.py": "ae2d4d0362e3484b89b5a5c57a7fd6320973b208ee0cd5a6be9a3f29d2544e2c",
         "quantcortex/data/processors/calendar.py": "e591bccc3e7f632501b068e7abec1ece182d0ef930589381776fe89158d1df51",
