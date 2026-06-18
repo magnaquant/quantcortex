@@ -191,6 +191,9 @@ def test_expansion_tables_and_target_hashes_are_complete_and_finite():
         r"\newcommand{\ExpansionFamilyCount}{4}",
         r"\newcommand{\ExpansionFamilyPanelCount}{8}",
         r"\newcommand{\ExpansionBootstrapReplications}{5,000}",
+        rf"\newcommand{{\ExpansionProtocolDigest}}{{{FROZEN_PROTOCOL_SHA256}}}",
+        r"\newcommand{\ExpansionSectorInputDigest}{c5947c4ca6ad6d21ad834c8f344dcdd07acc59ba411e3dcb2202a2413642b2f9}",
+        r"\newcommand{\ExpansionCountryInputDigest}{870fa926b5080378c65bd629b9959bd73b16391dded5720c894c0f35558132a9}",
         r"\newcommand{\ExpansionBaselineRows}",
         r"\newcommand{\ExpansionEffectRows}",
     ):

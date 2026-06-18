@@ -703,7 +703,18 @@ panels. Aggregate CSVs, generated LaTeX, figures, and hashes are listed in
 \texttt{paper/expansion/results/manifest.json}. The expansion manifest also
 records the pre-data protocol commit, provider-request metadata, canonical tape
 hashes, thread libraries, dependency lock, and every source file used by the
-run. The frozen JSON key
+run. The three matrix digests are:
+\begin{center}
+  \scriptsize
+  Retrospective: \texttt{\PaperInputDigest}\\
+  U.S. sectors: \texttt{\ExpansionSectorInputDigest}\\
+  Country equities: \texttt{\ExpansionCountryInputDigest}
+\end{center}
+The expansion protocol digest is
+\begin{center}
+  \scriptsize\texttt{\ExpansionProtocolDigest}
+\end{center}
+The frozen JSON key
 \texttt{cost\_per\_one\_way\_gross\_notional} is misnamed: its 0.0013 value is
 applied to gross two-sided traded notional, as defined in Section 3. The key is
 retained to preserve the pre-retrieval protocol hash. The retrospective

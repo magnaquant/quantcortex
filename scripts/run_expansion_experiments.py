@@ -692,6 +692,7 @@ def _write_generated_values(
     engine: pd.DataFrame,
     metrics: pd.DataFrame,
     ranks: pd.DataFrame,
+    data_records: list[dict[str, object]],
     path: Path,
 ) -> None:
     """Write paper-facing LaTeX values from the aggregate result tables."""
@@ -701,6 +702,20 @@ def _write_generated_values(
 
     def percent(value: float) -> str:
         return f"{value * 100.0:.2f}\\%"
+
+    data_by_panel = {str(record["panel"]): record for record in data_records}
+    if set(data_by_panel) != set(PANEL_LABELS):
+        raise ValueError("generated values require one provenance record per panel")
+    input_digests = {}
+    for panel, record in data_by_panel.items():
+        digest = record.get("input_sha256")
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise ValueError(f"invalid input digest for {panel}")
+        try:
+            int(digest, 16)
+        except ValueError as exc:
+            raise ValueError(f"invalid input digest for {panel}") from exc
+        input_digests[panel] = digest
 
     baseline = summary.loc[summary["variant"] == "baseline"].copy()
     baseline_rows = []
@@ -779,6 +794,12 @@ def _write_generated_values(
         ),
         macro("ExpansionEvaluationSessions", f"{int(baseline['observations'].min()):,}"),
         macro("ExpansionBootstrapReplications", f"{int(primary['replications'].min()):,}"),
+        macro("ExpansionProtocolDigest", FROZEN_PROTOCOL_SHA256),
+        macro("ExpansionSectorInputDigest", input_digests["us_sector_etfs"]),
+        macro(
+            "ExpansionCountryInputDigest",
+            input_digests["country_equity_etfs"],
+        ),
         macro("ExpansionBaselineRows", "\n".join(baseline_rows)),
         macro("ExpansionEffectRows", "\n".join(effect_rows)),
         macro(
@@ -1223,6 +1244,7 @@ def run_expansion(
             engine=engine,
             metrics=metrics,
             ranks=ranks,
+            data_records=data_records,
             path=result_dir / "generated_values.tex",
         )
         (result_dir / "target_tape_hashes.json").write_text(

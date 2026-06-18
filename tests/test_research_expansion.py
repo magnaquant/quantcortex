@@ -625,6 +625,10 @@ def test_expansion_latex_values_are_derived_from_aggregate_tables(tmp_path):
         engine=engine,
         metrics=learned_metrics,
         ranks=ranks,
+        data_records=[
+            {"panel": "us_sector_etfs", "input_sha256": "a" * 64},
+            {"panel": "country_equity_etfs", "input_sha256": "b" * 64},
+        ],
         path=path,
     )
 
@@ -632,6 +636,9 @@ def test_expansion_latex_values_are_derived_from_aggregate_tables(tmp_path):
     assert "\\newcommand{\\ExpansionPanelCount}{2}" in generated
     assert "\\newcommand{\\ExpansionFamilyCount}{4}" in generated
     assert "\\newcommand{\\ExpansionBootstrapReplications}{5,000}" in generated
+    assert f"\\newcommand{{\\ExpansionProtocolDigest}}{{{FROZEN_PROTOCOL_SHA256}}}" in generated
+    assert f"\\newcommand{{\\ExpansionSectorInputDigest}}{{{'a' * 64}}}" in generated
+    assert f"\\newcommand{{\\ExpansionCountryInputDigest}}{{{'b' * 64}}}" in generated
     assert "U.S. sector ETFs & TS momentum" in generated
     assert "95%" not in generated
 
