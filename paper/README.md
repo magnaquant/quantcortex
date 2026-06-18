@@ -1,9 +1,11 @@
 # Research Paper
 
-`main.tex` is a NeurIPS 2026-format public preprint on executable evaluation contracts
-for target-weight trading pipelines. It presents exact return attribution,
-single-assumption diagnostics, a causal costed comparator, and a fixed negative
-case study with uncertainty-aware ablations and block-length sensitivity.
+`main.tex` is a NeurIPS 2026-format public preprint on executable evaluation
+contracts for target-weight trading pipelines. It presents exact return
+attribution, a retrospective negative case, and a repository-frozen expansion
+across four strategy families and two real-data panels. The expansion estimates
+five one-switch effects with joint block resampling and reports every frozen
+learned-model seed.
 `anonymous.tex` builds the same preprint without author or repository identifiers.
 The work is not represented as accepted by or submitted to NeurIPS 2026; the
 full-paper deadline was May 6, 2026.
@@ -67,22 +69,39 @@ the causal target-exposure comparator after its own costs, while
 record count, and symbol set for every audited strategy variant without
 publishing the underlying provider matrix.
 
+Release the expansion from the same clean source revision and its two local
+panel matrices:
+
+```bash
+QUANTCORTEX_EXPANSION_GENERATED_AT=2026-06-18T22:38:40Z \
+  scripts/release_expansion_artifacts.sh local_data/expansion
+```
+
+The directory must contain `us_sector_etfs.csv`,
+`country_equity_etfs.csv`, and their `.metadata.json` sidecars. The wrapper
+rejects a protocol or input hash mismatch, runs in a detached worktree, and
+publishes only aggregate CSV/JSON, generated LaTeX, and figures under
+`paper/expansion/`. The paper wrapper requires these artifacts to name the same
+clean source commit. A changed release must use explicit, fixed UTC timestamps
+for both wrappers; unchanged reviewed source reuses the recorded timestamps.
+
 The primary accounting path is the event-driven engine. It holds explicit
 adjusted-close pseudo-shares between rebalances, sizes targets against post-cost
 NAV, and reports both one-way turnover and gross two-sided traded notional. The
-vectorized engine remains an approximation and parity diagnostic.
+vectorized engine remains an approximation and model-convention sensitivity
+diagnostic; equality with pseudo-share accounting is not expected.
 
 Citation keys are checked against `references.bib`, and DOI/arXiv identifiers
 are kept explicit. Revalidate the unversioned 2026 preprints before any future
 submission because their metadata and claims may change.
 
-The absent raw matrix is a material reproducibility limitation. The open target
-tape, schemas, and synthetic conformance fixtures reproduce software semantics,
-not the historical returns. Exact independent reproduction still requires
-authorized access to a matrix matching the manifest digest. Data-source
-acceptance rules are in `docs/data-source-due-diligence.md`; the prospective
-expansion protocol is in `paper/preregistration.md` and is explicitly not yet
-registered.
+The three absent raw matrices are a material reproducibility limitation. The
+open target tape, schemas, and synthetic conformance fixtures reproduce software
+semantics, not the historical returns. Exact independent reproduction still
+requires access to matrices matching the manifests' digests. Data-source
+acceptance rules are in `docs/data-source-due-diligence.md`; the expansion
+protocol in `paper/preregistration.md` was repository-frozen before retrieval
+but was not externally registered.
 
 ## Submission Readiness
 

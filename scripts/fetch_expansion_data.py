@@ -15,6 +15,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from quantcortex.research.expansion import FROZEN_PROTOCOL_SHA256
+
 YFINANCE_TERMS = "https://ranaroussi.github.io/yfinance/"
 YAHOO_TERMS = "https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html"
 
@@ -29,6 +31,18 @@ def _sha256(path: Path) -> str:
 
 def _protocol_digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _parse_aware_timestamp(value: str, *, name: str) -> datetime:
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be an ISO-8601 string")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{name} must include a UTC offset")
+    return parsed
 
 
 def _is_tracked(repo_root: Path, path: Path) -> bool:
@@ -143,6 +157,9 @@ def fetch_panels(
     """Fetch every frozen panel and return local provenance records."""
     import yfinance as yf
 
+    _parse_aware_timestamp(retrieved_at, name="retrieved_at")
+    if _protocol_digest(protocol_path) != FROZEN_PROTOCOL_SHA256:
+        raise ValueError("expansion protocol differs from the pre-data freeze")
     protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
     if protocol.get("status") != (
         "repository_frozen_prospective_not_externally_registered"

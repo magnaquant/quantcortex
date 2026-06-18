@@ -1,9 +1,10 @@
 # Performance Evaluation
 
-This repository publishes one owner-authorized reference run as derived chart
-artifacts. The raw market data remains uncommitted. Ordinary generated reports
-and executed notebook outputs remain excluded unless publication is explicitly
-approved and accompanied by complete provenance and artifact hashes.
+This repository publishes one owner-authorized reference audit and one
+repository-frozen multi-panel expansion as derived artifacts. Raw market data
+remains uncommitted. Ordinary generated reports and executed notebook outputs
+remain excluded unless publication is explicitly approved and accompanied by
+complete provenance and artifact hashes.
 
 ## Published Reference Run
 
@@ -101,6 +102,46 @@ never an executable path. Assigning zero return to residual cash lowers the
 consistently measured SHV-excess Sharpe to -0.42. See
 `paper/results/protocol_switches.csv`.
 
+## Repository-Frozen Expansion
+
+The expansion protocol was frozen in public commit
+`4018f4063f46889f41d6981db5a71079e1dbd713` before the two provider requests.
+It was not externally registered, and the 2018-2025 evaluation interval had
+already occurred. The design therefore limits researcher degrees of freedom
+relative to this run but is not a temporal out-of-sample test.
+
+The evaluation covers time-series momentum, cross-sectional momentum,
+short-term reversal, and a walk-forward gradient-boosted model across U.S.
+sector and country-equity ETF panels. Each family uses monthly mature signals,
+next-bar event accounting, SHV residual cash, and the same 13 bps proportional
+cost. The learned family reports all five frozen seeds.
+
+| Panel | Strategy family | Arithmetic return | SHV-excess Sharpe |
+|---|---|---:|---:|
+| U.S. sectors | Time-series momentum | 11.44% | 0.49 |
+| U.S. sectors | Cross-sectional momentum | 14.19% | 0.60 |
+| U.S. sectors | Short-term reversal | 11.02% | 0.44 |
+| U.S. sectors | Learned GBRT | 13.66% | 0.53 |
+| Country equities | Time-series momentum | 2.18% | -0.02 |
+| Country equities | Cross-sectional momentum | 8.84% | 0.33 |
+| Country equities | Short-term reversal | 6.03% | 0.20 |
+| Country equities | Learned GBRT | 7.84% | 0.31 |
+
+These baselines are inputs to the audit, not discoveries. Under the primary
+21-session circular-block analysis, removing modeled cost raises annualized
+return by 0.57-1.81 percentage points and has an interval above zero in all
+eight family-panel cells. Invalid same-close assignment is below zero in three
+cells and overlaps zero in five; zero residual-cash return is below zero in
+five and overlaps zero in three. The maximum one-day vectorized-versus-event
+difference is 93.21 bps and the largest absolute terminal-wealth gap is 3.89%.
+The engine result reflects different documented holding conventions, not an
+external-engine conformance claim.
+
+All intervals are unstudentized, pointwise, and conditional on the selected
+historical paths. They are not multiplicity-adjusted evidence of future alpha.
+See `paper/expansion/results/`, the plots under `paper/expansion/figures/`, and
+the frozen design in `paper/preregistration.md`.
+
 ## Generate a Report
 
 Use a licensed or otherwise permitted wide adjusted-close CSV:
@@ -187,6 +228,13 @@ walk-forward or live-start boundaries only when the run records those regimes;
 capacity and slippage curves only with spread, volume, and order-size inputs;
 factor attribution only with validated factor returns/exposures; and fill
 quality only from authenticated order and execution records.
+
+The expansion release is separate from the general report. From a clean source
+commit, `scripts/release_expansion_artifacts.sh local_data/expansion` regenerates
+the six aggregate CSVs, target-tape and data-provenance JSON, generated LaTeX,
+and five figures in a detached worktree. Its manifest binds the frozen protocol,
+both input hashes, source tree, environment, and every output hash. The paper
+release requires expansion artifacts from the same clean source commit.
 
 ## Reporting Requirements
 

@@ -12,6 +12,11 @@ FORBIDDEN_MARKET_DATA = [
     "data/sample/rotation_prices.csv",
     "quantcortex/data/sample/rotation_prices.csv",
 ]
+RAW_MARKET_DATA_SIGNATURES = (
+    {"date", "QQQ", "VGT", "GLD", "TLT", "SPY", "VIG", "SHV"},
+    {"date", "XLB", "XLE", "XLF", "XLI", "XLK", "XLP", "XLU", "XLV", "XLY", "SHV"},
+    {"date", "EWA", "EWC", "EWG", "EWH", "EWJ", "EWL", "EWP", "EWQ", "EWS", "EWU", "SHV"},
+)
 PUBLISHED_CHARTS = {
     "allocation_and_exposure.png",
     "drawdown.png",
@@ -54,14 +59,13 @@ def test_redistributed_market_data_is_absent():
         "local_data/README.md"
     ]
 
-    raw_columns = {"date", "QQQ", "VGT", "GLD", "TLT", "SPY", "VIG", "SHV"}
     leaked = []
     for relative_path in tracked:
         if not relative_path.endswith(".csv"):
             continue
         with (REPO_ROOT / relative_path).open(encoding="utf-8", newline="") as handle:
             header = set(next(csv.reader(handle), []))
-        if raw_columns <= header:
+        if any(signature <= header for signature in RAW_MARKET_DATA_SIGNATURES):
             leaked.append(relative_path)
     assert not leaked, f"tracked raw paper price matrices detected: {leaked}"
 

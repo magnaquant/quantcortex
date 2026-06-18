@@ -10,8 +10,9 @@ outside the CSV.
 
 ## Wide Adjusted-Close CSV
 
-`scripts/generate_report.py`, `scripts/run_paper_experiments.py`, and all
-research notebooks accept a date-by-symbol matrix:
+`scripts/generate_report.py`, `scripts/run_paper_experiments.py`,
+`scripts/run_expansion_experiments.py`, and all research notebooks accept a
+date-by-symbol matrix:
 
 ```csv
 date,QQQ,VGT,GLD,TLT,SPY,VIG,SHV
@@ -41,6 +42,22 @@ For a report intended for external review, also pass `--data-provider`,
 record the owner's provenance assertions but do not independently establish
 that redistribution is permitted. Pass `--manifest-out` as well so the input,
 source tree, settings, and generated artifacts are hash-bound.
+
+The expansion uses two separate complete matrices plus metadata sidecars under
+`local_data/expansion/`:
+
+- `us_sector_etfs.csv`: `date`, XLB, XLE, XLF, XLI, XLK, XLP, XLU, XLV, XLY,
+  and SHV.
+- `country_equity_etfs.csv`: `date`, EWA, EWC, EWG, EWH, EWJ, EWL, EWP, EWQ,
+  EWS, EWU, and SHV.
+
+Each `.metadata.json` records the exact request, provider version, retrieval
+timestamp, protocol digest, row coverage, missingness, and CSV SHA-256. The
+frozen expansion requires complete rows from 2014-01-02 through 2025-12-31,
+performs no forward fill, and rejects a missing evaluation month or hash
+mismatch. `scripts/fetch_expansion_data.py` can create these files through the
+explicit provider adapter; using it does not establish permission to publish or
+redistribute the observations.
 
 ## Single-Symbol OHLCV CSV
 

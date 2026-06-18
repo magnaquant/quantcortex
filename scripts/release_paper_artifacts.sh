@@ -95,13 +95,18 @@ else
     poetry.lock
     scripts/build_paper.sh
     scripts/generate_report.py
+    scripts/fetch_expansion_data.py
+    scripts/release_expansion_artifacts.sh
     scripts/release_paper_artifacts.sh
+    scripts/run_expansion_experiments.py
     scripts/run_paper_experiments.py
     paper/main.tex
     paper/anonymous.tex
     paper/checklist.tex
     paper/references.bib
     paper/neurips_2026.sty
+    paper/preregistration.md
+    paper/expansion/protocol.json
   )
   if ! git -C "${repo_root}" diff --quiet \
     "${reviewed_source_commit}" "${current_commit}" -- \
@@ -221,6 +226,30 @@ PY
 rm -rf "${source_worktree}/paper/results" "${source_worktree}/paper/figures"
 cp -R "${generated_output}/results" "${source_worktree}/paper/results"
 cp -R "${generated_output}/figures" "${source_worktree}/paper/figures"
+
+expansion_manifest="${repo_root}/paper/expansion/results/manifest.json"
+if [[ ! -f "${expansion_manifest}" ]]; then
+  printf '%s\n' "reviewed expansion manifest not found: ${expansion_manifest}" >&2
+  exit 1
+fi
+expansion_source_commit="$(
+  "${python_bin}" -c \
+    'import json, sys; print(json.load(open(sys.argv[1]))["git"]["source_commit"])' \
+    "${expansion_manifest}"
+)"
+if [[ "${expansion_source_commit}" != "${source_commit}" ]]; then
+  printf '%s\n' \
+    "expansion artifacts do not match the paper source commit" \
+    "paper source:     ${source_commit}" \
+    "expansion source: ${expansion_source_commit}" >&2
+  exit 1
+fi
+rm -rf "${source_worktree}/paper/expansion/results" \
+       "${source_worktree}/paper/expansion/figures"
+cp -R "${repo_root}/paper/expansion/results" \
+  "${source_worktree}/paper/expansion/results"
+cp -R "${repo_root}/paper/expansion/figures" \
+  "${source_worktree}/paper/expansion/figures"
 
 (
   cd "${source_worktree}"

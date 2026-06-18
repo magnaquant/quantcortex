@@ -24,9 +24,10 @@
   urlcolor=blue
 }
 
-\graphicspath{{figures/}}
+\graphicspath{{figures/}{expansion/figures/}}
 \newcommand{\system}{\textsc{quantcortex}}
 \input{results/generated_values}
+\input{expansion/results/generated_values}
 
 \title{Executable Evaluation Contracts for Target-Weight Trading Pipelines}
 
@@ -50,33 +51,33 @@ A sequence of target weights is not a complete backtest specification.
 Reported performance also depends on when signals become executable, what
 residual cash earns, how turnover incurs cost, and whether the comparator bears
 the same exposure. We encode these choices as executable contracts in
-\system, an open-source research and paper-trading system. The contracts cover
-causal inputs, bounded targets, adjusted-close pseudo-share execution, explicit
-cash and costs, separate attribution and tradable comparators, fail-closed order
-state, and provenance for every published result artifact.
+\system, with a canonical target tape, fail-closed invariants, explicit cash and
+cost accounting, and content-hashed result artifacts.
 
-We apply the protocol to a fixed six-ETF rotation strategy over
-\PaperObservationCount{} U.S. trading sessions from 2018--2025. Under the
-audited conventions, the strategy records a \PaperNetCAGR{} net CAGR and a
-\PaperNetSharpe{} conventional sample Sharpe relative to a short-Treasury ETF
-cash proxy (SHV). A causal target-exposure comparator, after its own modeled
-costs, records \PaperCostedComparatorCAGR{} and \PaperCostedComparatorSharpe{};
-the strategy's annualized arithmetic shortfall is \PaperCostedActiveMean{}
-[\PaperCostedActiveLower{}, \PaperCostedActiveUpper{}]. An exact daily identity
-decomposes its \PaperNetExcessMean{} annualized excess over cash into
-\PaperPassiveExposureMean{} from passive risky exposure,
-\PaperAllocationMean{} from active risky allocation, \PaperTimingMean{} from
-exposure timing, and \PaperImplementationCostMean{} from modeled cost. The
-active-allocation interval is [\PaperAllocationLower{},
-\PaperAllocationUpper{}]. Holding the targets and data fixed, omitting costs
-changes the Sharpe to \PaperZeroCostSharpe{}; deliberately assigning a
-close-derived target to the return ending at that close changes it to
-\PaperSameCloseSharpe{}.
+We first use a retrospective six-ETF rotation case to show how an exact daily
+identity localizes a negative result: net CAGR is \PaperNetCAGR{}, conventional
+cash-excess Sharpe is \PaperNetSharpe{}, and active risky allocation contributes
+\PaperAllocationMean{} per year. We then run a protocol frozen in the public
+repository before the two input panels were retrieved. The expansion evaluates
+time-series momentum, cross-sectional momentum, short-term reversal, and a
+walk-forward gradient-boosted model over \ExpansionEvaluationSessions{} sessions
+in U.S. sector and country-equity ETF panels. Across the resulting
+\ExpansionFamilyPanelCount{} family--panel cells, removing 13-basis-point costs
+raises annualized arithmetic return by \ExpansionCostEffectRange{}; all
+\ExpansionFamilyPanelCount{}
+pointwise 95\% block-bootstrap intervals lie above zero. Setting residual-cash
+return to zero produces intervals below zero in \ExpansionZeroCashBelowCount{}
+cells. Deliberately assigning close-derived targets to the return ending at that
+close produces intervals below zero in \ExpansionSameCloseBelowCount{} cells and
+changes \ExpansionSameCloseRankChanges{} within-panel family ranks. Engine
+conventions create a maximum
+daily return difference of \ExpansionEngineMaxDailyBp{} basis points.
 
-This is an evaluation methodology and a negative case study, not a new alpha
-model. It shows that deterministic, artifact-traced computation can still
-produce an economically misleading estimate when timing, cash, costs, and
-comparator exposure are left implicit.
+These are controlled evaluation effects, not evidence of profitable alpha.
+The historical panels are neither temporally out of sample nor openly
+redistributable, and the intervals are pointwise rather than
+multiplicity-adjusted. The result is a reproducible evaluation methodology and
+reference implementation with an explicit boundary around its empirical claims.
 \end{abstract}
 
 \section{Introduction}
@@ -105,17 +106,17 @@ bailey2017pbo,arnott2019protocol}. We ask a narrower systems question: how can a
 target-weight pipeline make its economic and operational semantics executable,
 testable, and traceable from the information set to paper-order state?
 
-The primary contribution is the evaluation methodology. The strategy is a test
-case, and the software is a reference implementation. Specifically, we
+The primary contribution is the evaluation methodology; the strategies are test
+vehicles and the software is a reference implementation. Specifically, we
 (i) define a machine-readable evaluation contract and canonical target tape for
-information timing, weights, overlays, execution lag, cash, costs, comparison,
-and uncertain order outcomes;
-(ii) formalize an exact daily return decomposition for portfolios with changing
-risky exposure and preserve that identity under joint block resampling; and
-(iii) bind the fixed case-study evidence to its configuration, source tree,
-environment, input digest, and published artifacts. The empirical result is
-intentionally negative: it localizes why one fully traced rotation strategy
-fails rather than presenting it as profitable alpha.
+information timing, weights, execution lag, cash, costs, comparison, and
+uncertain order outcomes; (ii) formalize an exact daily return decomposition for
+changing risky exposure and preserve it under joint block resampling; (iii)
+estimate five one-switch effects under a repository-frozen protocol across four
+heterogeneous strategy families and two real-data panels; and (iv) bind every
+reported result to its protocol, clean source revision, environment, input
+digest, and artifact hash. The purpose is to expose sensitivity to evaluation
+semantics, not to select the best-performing strategy after inspection.
 
 \section{Related work}
 
@@ -138,10 +139,11 @@ brinson1985measuring}. We apply that principle to a portfolio whose risky
 exposure changes over time. The identity separates passive exposure, exposure
 timing around the sample mean, active allocation, and modeled cost. It is an
 exact arithmetic decomposition, not a new geometric linking method. The
-case-study signal draws on cross-sectional, time-series, and residual momentum
-ideas
-\citep{jegadeesh1993returns,moskowitz2012timeseries,
-blitz2011residual}, but is used only as a fixed test vehicle.
+strategy set draws on cross-sectional and time-series momentum, short-term
+reversal, residual momentum, and gradient boosting
+\citep{jegadeesh1993returns,moskowitz2012timeseries,lehmann1990fads,
+blitz2011residual,friedman2001greedy}, but each model is used only as a fixed
+test vehicle.
 
 \paragraph{Research software and implementation risk.}
 Qlib and FinRL provide modular financial-AI workflows
@@ -153,9 +155,10 @@ the reported result exactly only 52\% of the time
 \citep{perignon2024computational}.
 In a recent preprint, \citet{yin2026implementation} compare five engines across
 15 strategies and find material divergence from implementation choices,
-including transaction costs. Our two-engine result is deliberately more
-limited: it is an internal parity check for one configuration, not an estimate
-of industry-wide implementation risk. The manifest and source fingerprints
+including transaction costs. Our two-engine diagnostic is deliberately more
+limited: it compares two documented holding conventions on identical target
+tapes, not independent third-party implementations or an estimate of
+industry-wide implementation risk. The manifest and source fingerprints
 follow the broader reproducibility objectives of
 \citet{pineau2021reproducibility}. Our contribution lies in connecting those
 artifacts to explicit economic contracts within one executable evaluation.
@@ -195,7 +198,7 @@ Table~\ref{tab:invariants} states the checks used in this study.
     Overlay & Timing and risk overlays may reduce exposure but cannot create an invalid book. & Reject non-finite or over-limit weights. \\
     Timing & A close-derived target earns returns only after the first strictly later execution bar. & Shift holdings; never use the observed close twice. \\
     Accounting & Risky assets, residual cash, turnover, and costs share one capital clock. & Reject missing cash bars or cost models. \\
-    Comparison & Exact attribution uses realized exposure; a tradable control follows target exposure and pays costs. & Label ex-post controls and cost implementable comparators. \\
+    Comparison & Exact attribution uses realized exposure; a tradable control follows target exposure and pays costs. & Label ex-post controls; charge costs to implementable comparators. \\
     Execution & Persist intent before broker submission; uncertain outcomes are not retried automatically. & Block until broker reconciliation. \\
     \bottomrule
   \end{tabular}
@@ -210,8 +213,8 @@ pseudo-shares $q_{i,e(d)}$ against post-cost NAV so that the resulting risky
 allocation matches $w_d$. It holds $q_i$ fixed between rebalances. If $P_{i,t}$
 is the adjusted close and $V_t$ is portfolio NAV, the realized risky weight at
 the prior close is $h_{i,t-1}=q_{i,t-1}P_{i,t-1}/V_{t-1}$. Close-derived targets
-therefore earn neither the close they observe nor the return ending at their
-execution close. For the long-only case, $h_{i,t}\geq 0$ and
+are therefore not filled at the close they observe and do not earn the return
+ending at their execution close. For the long-only case, $h_{i,t}\geq 0$ and
 $\sum_i h_{i,t}\leq 1$; the residual cash holding is
 \begin{equation}
   h^c_t = 1-\sum_{i=1}^N h_{i,t}.
@@ -232,8 +235,8 @@ fraction of pre-trade NAV is $\kappa_t=0.0013(B_t+S_t)$. If $V^-_t$ is
 pre-trade NAV and $V_{t-1}$ is prior-close NAV, the return drag is
 $d_t=\kappa_t V^-_t/V_{t-1}$ and
 $r^{\mathrm{net}}_t=r^{\mathrm{gross}}_t-d_t$. Target shares are solved against
-post-cost NAV.
-It does not separately estimate commissions, bid--ask spread, taxes, or market
+post-cost NAV. The cost model does not separately estimate commissions,
+bid--ask spread, taxes, or market
 impact. This proportional model is a first-order sensitivity assumption; large
 or urgent orders require models that account for order size, volatility, and
 execution urgency, such as \citet{almgren2001execution}.
@@ -248,8 +251,9 @@ Sharpe statistic
   \label{eq:sharpe}
 \end{equation}
 Equation~\ref{eq:sharpe} is a descriptive statistic, not an iid-normal inference
-procedure; serial dependence is handled separately through circular-block
-resampling \citep{lo2002statistics}. An SHV adjusted-close series supplies the
+procedure; serial dependence is represented approximately in a separate
+circular-block sensitivity analysis \citep{lo2002statistics}. An SHV
+adjusted-close series supplies the
 return credited to residual cash; the
 engine does not trade SHV when cash weight changes. It is a short-duration cash
 proxy, not a frictionless risk-free asset. Because the input contains adjusted
@@ -319,7 +323,7 @@ A central manifest records the clean source revision, Python and package
 versions, dependency lock, input SHA-256, experiment design, source-tree hashes,
 and the hash of every published table and figure. A versioned JSON contract and
 canonical long-form target-tape schema make the engine boundary machine
-readable. The fixed experiment round-trips every strategy decision stream
+readable. Each empirical run round-trips every strategy decision stream
 through the versioned payload boundary and records a canonical payload hash;
 deterministic fixtures test the same boundary without using the empirical price
 matrix. The empirical sections below exercise the
@@ -332,326 +336,250 @@ transport or venue behavior. Appendix~\ref{app:evidence} separates exact
 identities, property tests, counterfactuals, fault injection, SDK conformance,
 and untested live behavior.
 
-\section{Case study and evaluation design}
+\section{Evaluation design}
 
-\subsection{Fixed audit configuration}
+\subsection{Retrospective worked audit}
 
-The universe contains QQQ, VGT, GLD, TLT, SPY, and VIG, grouped as growth
-equities (QQQ, VGT), gold and nominal duration (GLD, TLT), and broad and dividend
-equities (SPY, VIG). On the first session of each week, the
-strategy ranks groups by a 126-session information ratio relative to QQQ and
-keeps the top two. Within selected groups, it estimates a one-factor regression
-on a preceding 126-session window and sums residual returns over a separate
-126-session formation window, skipping the latest 21 sessions. Positive scores
-receive proportional long-only weights, capped at 60\% per asset; if no selected
-member has a positive score, the target is all cash.
-QQQ is also one of the two growth-group members, so that group's active-return
-spread contains one zero benchmark leg. This asymmetry is a fixed design
-choice.
+The first study is a fixed six-ETF weekly rotation strategy evaluated from
+2018-01-02 through 2025-12-31. It combines group ranking, residual momentum, a
+Gaussian-mixture exposure gate, and volatility scaling. The study was assembled
+before a prospective protocol existed, and its earlier trial count is unknown;
+it is therefore a worked accounting audit, not confirmatory evidence. Its
+known construct issues are retained rather than repaired after seeing the
+result: QQQ is both a group member and the ranking benchmark, two regime
+features are exact volatility rescalings, early regime windows are immature,
+and one seed controls the mixture fit. Appendix~\ref{app:retrospective} gives the
+complete configuration.
 
-Two overlays control risky exposure. A seeded three-component Gaussian mixture
-maps the latest observation to zero, half, or full exposure. Its inputs are QQQ
-return and rolling realized volatility configured for 20 sessions, represented
-both as a decimal and in volatility points. The earliest 19 feature rows use
-the shorter history then available. The two volatility columns are exact
-rescalings, not independent signals. At each weekly decision, the model is
-refit on the expanding history available through that close after at least 60
-QQQ return observations. Components are ordered by fitted-sample mean return,
-and only the latest label controls exposure. A separate scaler targets 20
-volatility points using a 21-session QQQ realized-volatility proxy because no
-VIX series is supplied.
+The owner-supplied adjusted-close matrix is not distributed. It is identified by
+a manifest-recorded SHA-256. The event engine credits SHV to residual
+cash, charges 13 basis points per dollar traded on each buy or sell leg, and
+executes close-derived weekly targets on the first strictly later bar. The
+exact attribution uses a realized-exposure ex-post control; a separate causal
+target-exposure comparator pays the same modeled costs.
 
-The full strategy uses both overlays. Three named variants remove the regime
-gate, the volatility scaler, or both. Every experiment-facing parameter is
-recorded in the manifest, and the source-tree digest detects changes to
-implementation constants. The configuration was frozen for the reported run,
-but the project was not preregistered and its earlier research trial count is
-unknown. We therefore report all named variants and make no
-multiple-testing-adjusted discovery claim.
+\subsection{Repository-frozen expansion}
+
+The second study was specified in the public repository before its two provider
+requests. The freeze is a Git timestamp, not an external registry entry, and the
+historical interval is not temporally out of sample. Two complete-row panels use
+adjusted closes from 2014-01-02 through 2025-12-31: nine U.S. sector ETFs and ten
+country-equity ETFs, each with SHV. Evaluation covers
+\ExpansionEvaluationSessions{} sessions from 2018-01-02 through 2025-12-31.
+There is no forward fill or symbol substitution. The panels contain surviving,
+currently available ETFs and share broad market exposures, so they are not
+independent replications.
+
+Table~\ref{tab:expansion-design} summarizes the frozen strategy families. Each
+decision uses the first complete session of the month and executes on the first
+strictly later panel close. Long-only target exposure is at most one; unused
+capital earns SHV. The primary event engine holds adjusted-close pseudo-shares
+between rebalances and charges 13 basis points per dollar traded. Every target
+round-trips through the canonical JSON tape before evaluation.
 
 \begin{table}[t]
-  \caption{Experiment specification recorded in the manifest.}
-  \label{tab:design}
+  \caption{Frozen expansion strategies. Ties use ascending symbols.}
+  \label{tab:expansion-design}
   \centering
   \small
-  \begin{tabular}{>{\raggedright\arraybackslash}p{0.24\linewidth}
-                  >{\raggedright\arraybackslash}p{0.68\linewidth}}
+  \begin{tabular}{>{\raggedright\arraybackslash}p{0.22\linewidth}
+                  >{\raggedright\arraybackslash}p{0.70\linewidth}}
     \toprule
-    Component & Fixed value \\
+    Family & Fixed rule \\
     \midrule
-    Universe & QQQ, VGT, GLD, TLT, SPY, VIG; QQQ benchmark \\
-    Rebalance & First observed session of each calendar week \\
-    Group ranking & 126-session active-return information ratio; top 2 groups \\
-    Residual momentum & 126-session estimation + 126-session formation; 21-session gap \\
-    Allocation & Positive scores, proportional long-only weights, 60\% asset cap \\
-    Regime overlay & Rolling vol feature, up to 20 sessions; seeded 3-component full-covariance GMM; 100 EM iterations; $10^{-5}$ regularization \\
-    Volatility overlay & 20-point target; 0.3--1.0 multiplier; 21-session proxy \\
-    Execution & Event-driven adjusted-close pseudo-shares; first bar strictly after the close-derived decision \\
-    Cash and costs & SHV return credited to residual cash; 13 bps of pre-trade gross traded notional \\
-    Evaluation & 2018-01-02 to 2025-12-31 after \PaperWarmupSessions{} warm-up sessions (\PaperRequiredWarmupSessions{} required) \\
-    Uncertainty & \PaperBootstrapReplications{} joint circular-block draws; seed 42 \\
+    Time-series momentum & Positive 252-session total returns; equal weight across eligible assets. \\
+    Cross-sectional momentum & Top three returns from $t-252$ to $t-21$; one-third each. \\
+    Short-term reversal & Up to three lowest negative 5-session returns; one-third each, without renormalizing unused exposure. \\
+    Learned GBRT & Walk-forward 21-session return prediction from return, volatility, trailing-high, and rank features; top three positive predictions; five frozen seeds. \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\subsection{Data, comparators, and uncertainty}
+The learned family pools asset-month observations without symbol identity.
+Features are 5-, 21-, 63-, 126-, and 252-session log returns; 21- and 63-session
+sample volatility; distance from the trailing 252-session high; and ordinal
+cross-sectional ranks of 21- and 252-session returns. They are neither
+standardized nor winsorized. At each evaluation decision the model uses only
+training labels whose 21-session endpoint is observable by that close, retains
+at most 60 mature decision months, and requires at least 24. A gradient-boosted
+regressor with 100 depth-2 trees, learning rate 0.03, minimum leaf size 10, and
+subsample 0.8 is refit separately for seeds 11, 29, 47, 71, and 97. Features and
+labels are recomputed walk-forward; no fitted model crosses a decision boundary.
 
-The owner-supplied matrix is documented as adjusted closes from 2016-01-04
-through 2025-12-31, retrieved on 2026-06-16 through yfinance 1.4.1 with
-\texttt{auto\_adjust=False}. The yfinance documentation describes the Yahoo
-Finance API as intended for personal use and directs users to Yahoo's terms of
-use.\footnote{\url{https://ranaroussi.github.io/yfinance/}} The owner authorizes
-publication of the derived aggregates, but the raw matrix is not distributed.
-The audited loader requires complete rows and performs no forward filling.
-The manifest records the provider, retrieval date, adjustment setting, and
-input SHA-256:
-\begin{center}
-  \small\texttt{\PaperInputDigest}
-\end{center}
-The first \PaperWarmupSessions{} sessions are signal history; evaluation covers
-\PaperObservationCount{} sessions
-from 2018-01-02 through 2025-12-31.
+\subsection{One-switch estimands and uncertainty}
 
-Comparators share one capital clock. SPY and a six-ETF buy-and-hold basket
-initialized at equal dollar weights are measured from the close immediately
-preceding the evaluation window. The exact attribution control multiplies the
-basket return by the strategy's realized risky exposure each day and assigns
-the remainder to SHV. It is ex-post and gross of comparator costs, so it is used
-to explain return rather than presented as tradable. Gross-to-gross and
-net-to-gross differences against this control remain useful attribution
-quantities.
+For each family--panel cell, five paired switches compare (i) invalid
+same-close assignment with next-bar execution, (ii) zero cash return with SHV,
+(iii) zero cost with 13-basis-point cost, (iv) the strategy with a causal costed
+equal-weight comparator at the same target risky exposure, and (v) vectorized
+with event-driven accounting. The comparator is conditional on the strategy's
+target exposure and is a conditional exposure control, not an independent market
+benchmark. The vectorized engine re-pegs weights between decisions, whereas the
+event engine holds drifting pseudo-shares; their difference is a model-convention
+sensitivity, not automatically an implementation error.
 
-We separately run a causal, costed comparator. At each original strategy
-decision time it targets the strategy's declared gross risky exposure in the
-same equal-initial-weight buy-and-hold basket, executes on the next bar, assigns
-residual capital to SHV, and pays the same 13-bps proportional cost. Its initial
-position is established on the pre-evaluation close, outside the reported
-window. For Equation~\ref{eq:decomposition}, the basket is also held at the
-strategy's full-sample mean exposure. That constant-exposure series is another
-explicitly ex-post diagnostic.
-
-For dependent daily observations, we jointly resample return-component rows
-with the circular-block bootstrap of \citet{politis1992circular}. We use
-\PaperBootstrapReplications{}
-replications, a 21-session primary block (approximately one trading month),
-seed 42, and unstudentized two-sided 95\% percentile intervals. We repeat the
-active-return and conventional sample Sharpe calculations with 5- and
-63-session blocks to span roughly one week through one quarter. Sharpe is
-recomputed inside every draw rather than assigned an iid standard error.
-Intervals quantify sampling variation conditional on this historical path,
-strategy specification, cash proxy, and block length. They do not establish
-stationarity or future performance. Fractions of positive draws are descriptive
-and are not interpreted as significance tests.
+Primary outcomes are paired changes in annualized arithmetic return and
+conventional SHV-excess Sharpe. We use \ExpansionBootstrapReplications{} joint
+circular-block draws with a 21-session primary block and repeat the calculation
+with 5 and 63 sessions \citep{politis1992circular}. Return series, cash, and all
+five learned seeds share each draw. Intervals are unstudentized pointwise 95\%
+percentile intervals. They condition on the selected panels and frozen models,
+are not multiplicity adjusted, and do not establish future performance.
 
 \section{Results}
 
-\subsection{Cash accounting changes performance, not the verdict}
+\subsection{Baseline outcomes are inputs to the audit, not discoveries}
 
-Table~\ref{tab:accounting} and Figure~\ref{fig:accounting} separate cash and
-cost effects. Crediting residual cash raises net CAGR from
-\PaperZeroCashCAGR{} under a zero-return cash assumption to \PaperNetCAGR{}.
-That correction is economically material because mean risky exposure is only
-\PaperMeanExposure{} and the strategy is fully in cash on \PaperFullyCash{} of
-sessions; the exposure path in Figure~\ref{fig:accounting} makes that changing
-capital allocation explicit. It does not create evidence of alpha. SHV alone
-compounds at \PaperCashCAGR{}. The realized-exposure attribution control
-compounds at \PaperMatchedCAGR{} before comparator costs; the causal
-target-exposure comparator compounds at \PaperCostedComparatorCAGR{} after its
-own modeled costs.
+Appendix Figure~\ref{fig:expansion-baseline} reports after-cost arithmetic return and
+SHV-excess Sharpe. \ExpansionPositiveBaselineSharpeCount{} of
+\ExpansionFamilyPanelCount{} family--panel cells have positive sample
+Sharpe; country-panel time-series momentum is slightly negative. The sector
+panel is stronger for every family. These rankings are descriptive: the panels,
+families, and 2018--2025 interval are not a random sample, and no baseline
+interval or multiple-testing correction supports an alpha claim.
 
-\begin{table}[t]
-  \caption{Audited accounting over 2018--2025. Conventional sample Sharpe
-  statistics use SHV except for the explicitly zero-cash row, which uses a zero
-  reference rate.}
-  \label{tab:accounting}
-  \centering
+\subsection{Contract effects depend on the strategy}
+
+Table~\ref{tab:effect-counts} counts pointwise intervals across the eight
+family--panel cells. Cost removal is a positive-by-construction check, but its
+size is material: annualized arithmetic return rises by
+\ExpansionCostEffectRange{}. In contrast, same-close assignment is not a
+uniformly optimistic bias. Its interval is below zero in
+\ExpansionSameCloseBelowCount{} cells and overlaps zero in
+\ExpansionSameCloseOverlapCount{},
+driven by the deliberately contrarian reversal rule and, in one panel, the
+learned model. Zero cash return is below zero in
+\ExpansionZeroCashBelowCount{} cells and overlaps zero in
+\ExpansionZeroCashOverlapCount{}. These patterns
+show why a convention cannot be summarized by one global correction factor.
+
+\refstepcounter{table}
+\label{tab:effect-counts}
+\begin{center}
+  \parbox{0.86\textwidth}{\small Table~\thetable: Number of 21-session pointwise
+  intervals below zero / overlapping zero / above zero, out of eight
+  family--panel cells. Counts are descriptive and are not
+  multiplicity-adjusted tests.}
+  \smallskip
   \small
-  \begin{tabular}{lrrr}
+  \begin{tabular}{lcc}
     \toprule
-    Series & CAGR & Sharpe & Max drawdown \\
+    Switch difference & Annual return & Sharpe \\
     \midrule
-    Strategy, after costs and SHV cash & \PaperNetCAGR & \PaperNetSharpe & \PaperNetMaxDrawdown \\
-    Strategy, before costs and SHV cash & \PaperGrossCAGR & \PaperGrossSharpe & \PaperGrossMaxDrawdown \\
-    SHV cash proxy & \PaperCashCAGR & -- & \PaperCashMaxDrawdown \\
-    Realized-exposure attribution control, gross & \PaperMatchedCAGR & \PaperMatchedSharpe & \PaperMatchedMaxDrawdown \\
-    Target-exposure comparator, after costs & \PaperCostedComparatorCAGR & \PaperCostedComparatorSharpe & \PaperCostedComparatorMaxDrawdown \\
-    Strategy, after costs and zero cash & \PaperZeroCashCAGR & \PaperZeroCashSharpe & \PaperZeroCashMaxDrawdown \\
+    \ExpansionEffectRows
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
+
+Figure~\ref{fig:contract-return} displays the return effects. Relative to its
+costed exposure-matched comparator, only country-panel time-series momentum has
+an interval below zero; the other seven overlap zero. This does not validate the
+strategies. It says the conditional comparator is not precise enough to rank
+most cells on this single path. Same-close and zero-cost switches change
+\ExpansionSameCloseRankChanges{} and \ExpansionZeroCostRankChanges{} of the
+\ExpansionFamilyPanelCount{} within-panel family ranks, respectively; replacing
+strategies with their costed comparators changes
+\ExpansionComparatorRankChanges{} ranks.
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\textwidth]{accounting_summary.pdf}
-  \caption{(a) Growth of one dollar under audited cash and cost accounting.
-  (b) The daily capital split between risky assets and residual cash; the
-  dashed line is mean risky exposure. Panel (a) distinguishes the gross ex-post
-  attribution control from the causal target-exposure comparator after costs.}
-  \label{fig:accounting}
+  \includegraphics[width=\textwidth]{contract_effects_return.pdf}
+  \caption{Paired annualized arithmetic-return effects with 21-session
+  circular-block percentile intervals. Marker shape and color encode whether
+  the pointwise interval is above, overlaps, or is below zero. The same-close
+  switch is causally invalid and is never a candidate strategy.}
+  \label{fig:contract-return}
 \end{figure}
 
-\subsection{Allocation and cost explain the shortfall}
+\subsection{Seed and engine sensitivity remain visible}
 
-Equation~\ref{eq:decomposition} changes the interpretation of the headline
-return. Passive risky exposure contributes \PaperPassiveExposureMean{} per
-year; active allocation contributes \PaperAllocationMean{}, exposure timing
-\PaperTimingMean{}, and modeled cost \PaperImplementationCostMean{}. These
-components sum exactly to \PaperNetExcessMean{} annualized excess over SHV
-before rounding.
+The learned family is not represented by a favorable seed. Across the five
+frozen seeds, baseline SHV-excess Sharpe ranges from
+\ExpansionSectorSeedRange{} in sectors and \ExpansionCountrySeedRange{} in
+countries; every seed-level result is published. The vectorized-minus-event
+mean effect is small, but the maximum one-day difference reaches
+\ExpansionEngineMaxDailyBp{} basis points and the largest absolute terminal
+wealth gap is \ExpansionEngineMaxWealthGap{}. This divergence is expected from
+daily weight re-pegging versus drifting pseudo-shares. Appendix
+Figures~\ref{fig:seed-sensitivity} and \ref{fig:engine-sensitivity} report both
+diagnostics.
 
-Table~\ref{tab:decomposition} shows that active allocation is the clearest
-source of underperformance: its 95\% interval is
-[\PaperAllocationLower{}, \PaperAllocationUpper{}], wholly below zero. The
-timing interval spans zero, so this sample does not isolate a reliable timing
-effect. Passive exposure is positive, while modeled cost is negative by
-construction. The net-cash interval also spans zero; that does not contradict
-the stronger matched-comparator result, because the positive passive-exposure
-component partially offsets allocation and cost losses.
+\subsection{The worked audit localizes one negative result}
 
-\begin{table}[t]
-  \caption{Exact attribution of annualized arithmetic net excess over SHV.
-  Intervals use common 21-session circular-block draws. ``Positive'' is the
-  number of resampled annualized means above zero, not a posterior probability.}
-  \label{tab:decomposition}
-  \centering
-  \small
-  \begin{tabular}{lrrr}
-    \toprule
-    Component & Mean & 95\% interval & Positive \\
-    \midrule
-    \PaperDecompositionRows
-    \bottomrule
-  \end{tabular}
-\end{table}
+The retrospective case records \PaperNetCAGR{} net CAGR and
+\PaperNetSharpe{} SHV-excess Sharpe. Its causal target-exposure comparator,
+after its own costs, records \PaperCostedComparatorCAGR{} and
+\PaperCostedComparatorSharpe{}; annualized arithmetic shortfall is
+\PaperCostedActiveMean{} [\PaperCostedActiveLower{},
+\PaperCostedActiveUpper{}]. Equation~\ref{eq:decomposition} attributes net
+excess over SHV exactly: passive risky exposure contributes
+\PaperPassiveExposureMean{}, active risky allocation \PaperAllocationMean{},
+dynamic exposure timing \PaperTimingMean{}, and modeled cost
+\PaperImplementationCostMean{} per year. The active-allocation interval
+[\PaperAllocationLower{}, \PaperAllocationUpper{}] is wholly below zero.
 
-Panel (b) of Figure~\ref{fig:attribution-switches} reports the
-single-assumption diagnostics. Omitting cash return lowers the CAGR to
-\PaperZeroCashCAGR{}; evaluated relative to SHV, its Sharpe is
-\PaperZeroCashSHVSharpe{}. Omitting modeled costs raises the CAGR and Sharpe to
-\PaperZeroCostCAGR{} and \PaperZeroCostSharpe{}. The deliberately invalid
-same-close calculation reports \PaperSameCloseCAGR{} and
-\PaperSameCloseSharpe{}. Thus cost omission and the invalid same-close
-assignment each change the Sharpe sign relative to the audited value of
-\PaperNetSharpe{}.
-This sign flip is evidence of protocol sensitivity, not evidence that either
-shortcut is tradable.
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=\textwidth]{return_attribution_and_protocol_switches.pdf}
-  \caption{(a) Exact arithmetic return attribution with primary block-bootstrap
-  intervals. (b) One-assumption diagnostics. Amber bars change economic
-  assumptions; the red same-close bar violates causality. None is a strategy
-  alternative.}
-  \label{fig:attribution-switches}
-\end{figure}
-
-\subsection{Cost sensitivity and overlay ablations}
-
-The strategy turns over \PaperTurnover{} times per year on a one-way basis and
-trades \PaperGrossTradedNotional{} times NAV per year on a gross two-sided
-basis. At zero cost, its cash-excess Sharpe is \PaperCostZeroSharpe{}; it falls
-to
-\PaperCostFiveSharpe{} at 5 bps, \PaperCostBaselineSharpe{} at the 13-bps
-baseline, \PaperCostTwentyFiveSharpe{} at 25 bps, and
-\PaperCostFiftySharpe{} at 50 bps. The performance estimate is therefore highly
-sensitive to modest proportional friction.
-
-Appendix Figure~\ref{fig:sensitivity} compares each variant before costs with a passive
-basket at the same daily exposure. This avoids attributing the result solely to
-strategy turnover. The full model has gross cash-excess Sharpe
-\PaperGrossSharpe{} versus \PaperMatchedSharpe{} for its comparator. Removing
-the regime gate, the volatility scaler, or both increases strategy exposure and
-raw returns, but every gross strategy still trails its matched comparator. The
-corresponding annualized gross active returns are \PaperGrossActiveFull{},
-\PaperGrossActiveNoRegime{}, \PaperGrossActiveNoVolScaler{}, and
-\PaperGrossActiveSignalOnly{}; every 21-session block-bootstrap interval remains
-below zero. No variant is selected as a replacement model.
-
-\subsection{Uncertainty, subperiods, and engine parity}
-
-The net strategy's annualized arithmetic excess return over SHV is
-\PaperNetCashActiveMean{}, with a 95\% block-bootstrap interval of
-[\PaperNetCashActiveLower{}, \PaperNetCashActiveUpper{}]. Before costs, the
-corresponding estimate is \PaperGrossCashActiveMean{}
-[\PaperGrossCashActiveLower{}, \PaperGrossCashActiveUpper{}]. Neither supports
-a positive cash-relative claim. Its conventional sample Sharpe is
-\PaperNetSharpe{}, with a direct block-bootstrap interval of
-[\PaperNetSharpeLower{}, \PaperNetSharpeUpper{}].
-
-Relative to the causal comparator after both sides pay modeled costs, annualized
-arithmetic active return is \PaperCostedActiveMean{}
-[\PaperCostedActiveLower{}, \PaperCostedActiveUpper{}], and conventional active
-Sharpe is \PaperCostedActiveSharpe{}
-[\PaperCostedActiveSharpeLower{}, \PaperCostedActiveSharpeUpper{}]. Relative to
-the realized-exposure attribution control, gross active return is
-\PaperGrossMatchedActiveMean{}
-[\PaperGrossMatchedActiveLower{}, \PaperGrossMatchedActiveUpper{}], and only
-\PaperGrossMatchedPositive{} of primary bootstrap draws are positive. After
-costs it is \PaperNetMatchedActiveMean{}
-[\PaperNetMatchedActiveLower{}, \PaperNetMatchedActiveUpper{}], with no positive
-primary draw among \PaperBootstrapReplications{}.
-
-Appendix Figure~\ref{fig:block-sensitivity} shows that changing the
-circular-block length from 5 to 21 or 63 sessions does not change the
-matched-comparator conclusion: all before- and after-cost intervals remain
-below zero.
-
-The costed target-exposure comparator also outperforms in both fixed calendar
-halves (\texttt{subperiods.csv}). The adjusted-close pseudo-share event engine
-is primary. Its net CAGR and Sharpe are \PaperEventCAGR{} and
-\PaperEventSharpe{}, versus \PaperVectorizedCAGR{} and
-\PaperVectorizedSharpe{} for the vectorized diagnostic. This close agreement is
-local and does not make their rebalancing semantics equivalent.
+Crediting SHV instead of zero to residual cash raises CAGR from
+\PaperZeroCashCAGR{} to \PaperNetCAGR{} because mean risky exposure is only
+\PaperMeanExposure{}. Omitting modeled costs changes Sharpe from
+\PaperNetSharpe{} to \PaperZeroCostSharpe{}; invalid same-close assignment
+changes it to \PaperSameCloseSharpe{}. The expansion qualifies that last result:
+look-ahead changes estimates and ranks, but its direction depends on the signal.
+Appendix~\ref{app:retrospective-results} contains accounting, cost, subperiod,
+and block-length diagnostics for the worked case.
 
 \section{Limitations and broader impact}
 
 \subsection{Statistical validity}
 
-The configuration was frozen only before the reported run. The project was not
-preregistered, and no complete log of earlier strategy trials survives.
-Reporting all four named variants prevents selection within that set but cannot
-recover unknown prior trials; a Deflated Sharpe Ratio or Reality Check would
-therefore create false precision
-\citep{white2000reality,bailey2014deflated}. The block bootstrap conditions on
-one path and approximate dependence through the chosen block length. Its
-positive-draw fractions are descriptive, and its marginal intervals are not
-multiplicity-adjusted. Stability across 5, 21, and 63 sessions is sensitivity
-evidence, not proof of stationarity or future performance. Component interval
-endpoints need not add, although the decomposition holds within every draw.
-The conventional $\sqrt{252}$ Sharpe remains a descriptive statistic; block
-resampling addresses uncertainty but does not remove the weak-dependence and
-stationarity assumptions needed to interpret that uncertainty.
+The retrospective strategy predates the protocol, and no complete log of its
+earlier trials survives. The expansion protocol was committed before the two
+provider requests, but it was not externally registered and evaluates an
+historical interval. Neither study is a temporal holdout. A Deflated Sharpe
+Ratio or Reality Check would require a defensible count of prior trials that is
+not available \citep{white2000reality,bailey2014deflated}.
+
+The eight family--panel cells are dependent: models share dates, panels share
+global market exposures, and five learned seeds are repeated fits rather than
+independent strategies. The circular-block bootstrap conditions on these paths
+and approximates serial dependence through fixed block lengths. Pointwise
+intervals and interval-category counts are not multiplicity adjusted. Stability
+across 5, 21, and 63 sessions is sensitivity evidence, not proof of stationarity
+or future performance. The conventional $\sqrt{252}$ Sharpe remains a
+descriptive statistic; block resampling does not remove the assumptions needed
+to interpret it. Component interval endpoints need not add, although the exact
+decomposition holds within every joint draw.
 
 \subsection{Economic construct validity}
 
-``Active risky allocation'' combines group selection, within-risky weighting,
-and the engine's between-rebalance semantics. ``Dynamic exposure timing'' is
-relative to full-sample mean exposure, hence diagnostic rather than tradable.
-The realized-exposure attribution control is not tradable and excludes its own
-costs. The target-exposure comparator is causal and costed, but its risky leg is
-a constructed buy-and-hold basket rather than a quoted security; its cost model
-still omits spread and impact. Arithmetic means decompose exactly; compounded
+``Active risky allocation'' in the worked case combines group selection,
+within-risky weighting, and between-rebalance engine semantics. ``Dynamic
+exposure timing'' is relative to full-sample mean exposure, hence diagnostic
+rather than tradable. In both studies, the exposure-matched comparator is
+conditional on the strategy's own target path; it controls exposure but is not
+an independent benchmark. Arithmetic means decompose exactly; compounded
 wealth does not.
 
-SHV is only a cash proxy: it has duration, expenses, and market-price variation.
-Adjusted-close pseudo-shares embed total-return adjustments and omit broker
-share records, spreads, queue position, and fill uncertainty. The proportional
-cost grid has no order-size, volatility, venue, impact, ADV, or capacity term.
-Without VIX, the regime model receives realized volatility twice in different
-units; its covariance regularization is scale-sensitive, and the separate
-volatility scaler uses the same underlying proxy.
+The frozen models are deliberately simple. The ETF panels do not represent
+point-in-time constituent universes, the country funds are unhedged U.S.-listed
+securities, and the learned model pools symbols without identity or
+hyperparameter search. SHV has duration, expenses, and market-price variation;
+it is not a risk-free account. Adjusted-close pseudo-shares embed total-return
+adjustments and omit broker share records, spreads, queue position, and fill
+uncertainty. The proportional cost model has no order-size, volatility, venue,
+impact, ADV, or capacity term.
 
 \subsection{External validity and reproducibility}
 
-The study covers one U.S.-listed ETF universe, one strategy family, and one
-eight-year path; it does not estimate failure magnitudes for other settings or
+The expansion broadens the worked case but still covers two U.S.-listed ETF
+panels, four hand-specified families, one eight-year interval, and two internal
+engines. It does not estimate a population distribution of backtest errors or
 match broader multi-model and multi-engine studies
-\citep{zhang2026alpha,yin2026implementation}. The provider can revise adjusted
-histories. The raw input is not redistributed, and provider permission for the
-derived publication has not been independently verified. Open schemas and
-conformance fixtures reproduce software semantics, not these returns; an open
-performance evaluation requires a permitted, reviewer-accessible panel.
+\citep{zhang2026alpha,yin2026implementation}. Provider-adjusted histories can be
+revised. Raw inputs are not redistributed, and provider permission for the
+derived publication has not been independently verified. Open schemas,
+canonical tapes, and conformance fixtures reproduce software semantics, not the
+reported returns; full empirical reproduction requires owner-supplied matrices
+with the recorded hashes.
 
 \subsection{Operational scope and broader impact}
 
@@ -666,37 +594,120 @@ that risk. Past simulated performance does not imply future returns.
 
 A target-weight generator does not determine a realized return; information
 timing, execution, cash, costs, and comparator exposure complete the experiment.
-Here, crediting residual cash corrects performance but does not create alpha:
-passive exposure contributes positively, while active allocation and modeled
-cost erase that benefit. A causal comparator using the same target exposure and
-cost model reaches the same negative verdict as the exact ex-post attribution.
-Cost omission or same-close return assignment changes the Sharpe sign without
-changing the target generator. The contribution is a localized, testable
-failure analysis rather than a profitable signal.
+In the retrospective case, exact attribution shows that active allocation and
+modeled cost erase the benefit of passive risky exposure. In the frozen
+expansion, removing modeled cost raises annualized return in every family--panel
+cell, while cash,
+same-close timing, comparator, and engine effects vary by strategy. The
+same-close switch can worsen a contrarian model rather than mechanically inflate
+all results; the error is using unavailable information, not a guaranteed sign
+of bias. Canonical tapes, one-switch counterfactuals, and artifact provenance
+make those distinctions testable. The contribution is an executable evaluation
+methodology and bounded negative evidence, not a profitable signal or deployment
+claim.
 
 \bibliographystyle{plainnat}
 \bibliography{references}
 
 \appendix
 
+\section{Retrospective case specification}
+\label{app:retrospective}
+
+The universe is QQQ, VGT, GLD, TLT, SPY, and VIG, grouped as growth equities,
+gold and nominal duration, and broad and dividend equities. On the first session
+of each week, the strategy keeps the top two groups by a 126-session information
+ratio relative to QQQ. Within selected groups, it estimates a one-factor
+regression over 126 sessions and ranks a separate 126-session residual-return
+window with a 21-session gap. Positive scores receive proportional long-only
+weights capped at 60\% per asset.
+
+A seeded three-component Gaussian mixture maps QQQ return and two exact
+rescalings of realized volatility to zero, half, or full exposure. A separate
+21-session volatility scaler targets 20 volatility points. Named variants remove
+the regime gate, the volatility scaler, or both; none was selected after the
+result. The full manifest records every parameter and warm-up requirement.
+
+\subsection{Retrospective accounting results}
+\label{app:retrospective-results}
+
+\begin{table}[h]
+  \caption{Audited retrospective accounting over 2018--2025.}
+  \centering
+  \small
+  \begin{tabular}{lrrr}
+    \toprule
+    Series & CAGR & Sharpe & Max drawdown \\
+    \midrule
+    Strategy, after costs and SHV cash & \PaperNetCAGR & \PaperNetSharpe & \PaperNetMaxDrawdown \\
+    Strategy, before costs and SHV cash & \PaperGrossCAGR & \PaperGrossSharpe & \PaperGrossMaxDrawdown \\
+    SHV cash proxy & \PaperCashCAGR & -- & \PaperCashMaxDrawdown \\
+    Realized-exposure control, gross & \PaperMatchedCAGR & \PaperMatchedSharpe & \PaperMatchedMaxDrawdown \\
+    Target-exposure comparator, after costs & \PaperCostedComparatorCAGR & \PaperCostedComparatorSharpe & \PaperCostedComparatorMaxDrawdown \\
+    Strategy, after costs and zero cash & \PaperZeroCashCAGR & \PaperZeroCashSharpe & \PaperZeroCashMaxDrawdown \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[h]
+  \caption{Exact attribution of annualized arithmetic net excess over SHV in
+  the retrospective case. Intervals use common 21-session block draws.}
+  \label{tab:decomposition}
+  \centering
+  \small
+  \begin{tabular}{lrrr}
+    \toprule
+    Component & Mean & 95\% interval & Positive draws \\
+    \midrule
+    \PaperDecompositionRows
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\refstepcounter{figure}
+\begin{center}
+  \centering
+  \includegraphics[width=0.92\textwidth]{accounting_summary.pdf}
+  \parbox{0.92\textwidth}{\small Figure~\thefigure: Growth of one dollar and the
+  capital split between risky assets and SHV under the audited retrospective
+  accounting.}
+\end{center}
+
+\refstepcounter{figure}
+\begin{center}
+  \centering
+  \includegraphics[width=0.92\textwidth]{return_attribution_and_protocol_switches.pdf}
+  \parbox{0.92\textwidth}{\small Figure~\thefigure: Exact return attribution and
+  one-assumption diagnostics for the retrospective case. The same-close result
+  is causally invalid.}
+\end{center}
+
 \section{Reproducibility details}
 
-The complete generator is \texttt{scripts/run\_paper\_experiments.py}. The
-release wrapper checks out the committed source revision in a detached clean
-worktree, writes experiment outputs outside that worktree, verifies the recorded
-revision and start-state cleanliness, then builds the paper with Tectonic 0.16.9.
-The reviewed invocation is:
+The retrospective and expansion generators are
+\texttt{scripts/run\_paper\_experiments.py} and
+\texttt{scripts/run\_expansion\_experiments.py}. Their release wrappers check
+out the recorded source revision in a detached clean worktree, keep raw inputs
+outside that worktree, and verify source cleanliness and output hashes. The
+reviewed invocations are:
 \begin{verbatim}
+scripts/release_expansion_artifacts.sh \
+  local_data/expansion
 scripts/release_paper_artifacts.sh \
   local_data/published_rotation_prices.csv
 \end{verbatim}
-The input must contain adjusted-close columns QQQ, VGT, GLD, TLT, SPY, VIG,
-and SHV and match the input digest reported in Section 4 for exact
-reproduction. Aggregate CSVs, generated LaTeX values, figures, and their hashes
-are listed in \texttt{paper/results/manifest.json}. The manifest also records
-the clean source commit, dependency lock, canonical configuration hash, thread
-libraries, contract hash, and every package Python file individually. The
-aggregate source-tree digest is:
+Exact empirical reproduction requires three owner-supplied files matching the
+recorded SHA-256 values: the six-ETF retrospective matrix and the two expansion
+panels. Aggregate CSVs, generated LaTeX, figures, and hashes are listed in
+\texttt{paper/results/manifest.json} and
+\texttt{paper/expansion/results/manifest.json}. The expansion manifest also
+records the pre-data protocol commit, provider-request metadata, canonical tape
+hashes, thread libraries, dependency lock, and every source file used by the
+run. The frozen JSON key
+\texttt{cost\_per\_one\_way\_gross\_notional} is misnamed: its 0.0013 value is
+applied to gross two-sided traded notional, as defined in Section 3. The key is
+retained to preserve the pre-retrieval protocol hash. The retrospective
+source-tree digest is:
 \begin{center}
   \scriptsize\texttt{\PaperSourceTreeDigest}
 \end{center}
@@ -706,14 +717,64 @@ The anonymous review build omits author and repository identifiers.
 The public code is available at
 \url{https://github.com/magnaquant/quantcortex}.
 \fi
-The reviewed run
-used Python 3.14.4 on an eight-core Apple M1 with 8 GiB RAM and completed in
-under 40 seconds on CPU; no GPU was used. Supported CI runs use Python
-3.11 through 3.14. The reported experiment consumed less than one CPU-minute;
-repository-wide testing, packaging, notebook execution, and broker conformance
-checks were additional engineering validation rather than model search.
+Both reviewed runs were CPU-only; environment versions and thread-pool metadata
+are machine readable. Supported CI runs use Python 3.11 through 3.14.
+Repository-wide testing, packaging, notebook execution, and broker conformance
+checks are engineering validation rather than model search.
 
-\section{Block-length sensitivity}
+\section{Expansion tables and diagnostics}
+
+\begin{center}
+\small
+\begin{tabular}{llrrrr}
+  \toprule
+  Panel & Family & Ann. return & Sharpe & CAGR & Max DD \\
+  \midrule
+  \ExpansionBaselineRows
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\refstepcounter{figure}
+\label{fig:expansion-baseline}
+\begin{center}
+  \centering
+  \includegraphics[width=0.90\textwidth]{baseline_performance.pdf}
+  \parbox{0.90\textwidth}{\small Figure~\thefigure: After-cost baseline
+  estimates under the frozen expansion protocol. The learned point is the
+  arithmetic mean across five seed-level metrics.}
+\end{center}
+
+\refstepcounter{figure}
+\begin{center}
+  \centering
+  \includegraphics[width=0.94\textwidth]{contract_effects_sharpe.pdf}
+  \parbox{0.94\textwidth}{\small Figure~\thefigure: Paired conventional
+  cash-excess Sharpe effects and 21-session pointwise block-bootstrap intervals
+  for all expansion cells.}
+\end{center}
+
+\refstepcounter{figure}
+\label{fig:seed-sensitivity}
+\begin{center}
+  \centering
+  \includegraphics[width=0.90\textwidth]{learned_seed_sensitivity.pdf}
+  \parbox{0.90\textwidth}{\small Figure~\thefigure: Learned-model baseline
+  Sharpe for all five frozen random seeds. Dashed lines are within-panel seed
+  means.}
+\end{center}
+
+\refstepcounter{figure}
+\label{fig:engine-sensitivity}
+\begin{center}
+  \centering
+  \includegraphics[width=0.82\textwidth]{engine_conformance.pdf}
+  \parbox{0.82\textwidth}{\small Figure~\thefigure: Maximum absolute one-day
+  return difference between event-driven pseudo-share accounting and the
+  vectorized daily re-pegging convention.}
+\end{center}
+
+\section{Retrospective block-length sensitivity}
 
 \refstepcounter{figure}
 \label{fig:block-sensitivity}
@@ -727,7 +788,7 @@ checks were additional engineering validation rather than model search.
   retains modeled strategy costs while the control remains gross.}
 \end{center}
 
-\section{Additional engine comparison}
+\section{Retrospective engine comparison}
 
 \refstepcounter{figure}
 \label{fig:engine-comparison}
@@ -740,7 +801,7 @@ checks were additional engineering validation rather than model search.
   here does not remove the semantic distinction.}
 \end{center}
 
-\section{Cost and overlay sensitivity}
+\section{Retrospective cost and overlay sensitivity}
 
 \refstepcounter{figure}
 \label{fig:sensitivity}
@@ -770,7 +831,7 @@ check as equivalent:
   \midrule
   Exact identity & Daily return components reconstruct net cash excess & Per-row assertion and \texttt{return\_decomposition.csv} \\
   Property test & Weight, timing, cash, and target-tape invariants hold & Deterministic pytest cases, including hand-computable tapes \\
-  Counterfactual & One declared assumption changes the reported metric & \texttt{protocol\_switches.csv} \\
+  Counterfactual & One declared assumption changes the reported metric & \texttt{protocol\_switches.csv} and \texttt{contract\_effects.csv} \\
   Fault injection & Unsafe or stale execution state fails closed & Truncated reconciliation, unknown status, and stale-writer tests \\
   SDK conformance & Offline request and response mappings match pinned SDKs & Broker model-construction tests and behavioral mocks \\
   Untested live & Authenticated transport, venue state, and funded orders & No supporting evidence; explicitly outside scope \\
@@ -780,11 +841,13 @@ check as equivalent:
 
 \section{Use of language-model assistance}
 
-The author used an LLM-based coding assistant for repository inspection, code
-review, regression-test drafting, and copyediting. The author retained
-responsibility for the strategy, data, statistical methods, experiment design,
-and all reported claims, and reviewed the resulting code and prose. Numerical
-claims are generated by committed scripts and machine-readable artifacts.
+The author used LLM-based coding assistants for implementation planning,
+repository inspection, code drafting, adversarial review, regression tests, and
+copyediting. The assistants are not an evaluated model or data source. The
+author approved and publicly froze the expansion protocol before its provider
+requests, reviewed the code and artifacts, and remains responsible for the
+methods and claims. Numerical claims are generated by committed scripts and
+machine-readable artifacts.
 
 \input{checklist}
 

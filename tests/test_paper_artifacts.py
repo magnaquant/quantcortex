@@ -253,6 +253,7 @@ def test_paper_source_and_reviewed_pdf_are_published():
     assert "\\usepackage[preprint]{neurips_2026}" in main
     assert "\\usepackage{orcidlink}" in main
     assert "\\input{results/generated_values}" in main
+    assert "\\input{expansion/results/generated_values}" in main
     assert "Executable Evaluation Contracts" in main
     assert "Kevin Lee\\,\\orcidlink{0009-0004-0388-9260}" in main
     assert "University of California, Los Angeles" in main
@@ -260,6 +261,8 @@ def test_paper_source_and_reviewed_pdf_are_published():
     assert "\\input{checklist}" in main
     assert "\\PaperInputDigest" in main
     assert "{bootstrap_robustness.pdf}" in main
+    assert "{contract_effects_return.pdf}" in main
+    assert "{baseline_performance.pdf}" in main
     assert "target-exposure comparator" in main
     assert "actual_input_digest" in release_script
     assert "expected_input_digest" in release_script
@@ -340,13 +343,23 @@ def test_paper_source_and_reviewed_pdf_are_published():
         "checklist.tex",
         "references.bib",
         "neurips_2026.sty",
+        "preregistration.md",
         "results/generated_values.tex",
+        "results/manifest.json",
+        "expansion/protocol.json",
+        "expansion/results/generated_values.tex",
+        "expansion/results/manifest.json",
         "figures/accounting_summary.pdf",
         "figures/audit_protocol.pdf",
         "figures/bootstrap_robustness.pdf",
         "figures/engine_comparison.pdf",
         "figures/return_attribution_and_protocol_switches.pdf",
         "figures/sensitivity_and_ablation.pdf",
+        "expansion/figures/baseline_performance.pdf",
+        "expansion/figures/contract_effects_return.pdf",
+        "expansion/figures/contract_effects_sharpe.pdf",
+        "expansion/figures/engine_conformance.pdf",
+        "expansion/figures/learned_seed_sensitivity.pdf",
     } == set(source_entries)
     for relative_path, expected_digest in source_entries.items():
         assert _sha256(PAPER_ROOT / relative_path) == expected_digest

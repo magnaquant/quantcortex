@@ -42,9 +42,10 @@ the complete symbol set and gross limit:
 and primitive constraints for other engines. Runtime validation additionally
 enforces cross-record portfolio invariants: no duplicate timestamp-symbol rows,
 the declared symbol universe at every decision, and the per-decision gross
-limit. The paper experiment round-trips each variant through this boundary
-before backtesting and publishes canonical payload hashes in
-`paper/results/target_tape_hashes.json`.
+limit. The paper experiments round-trip each variant through this boundary
+before backtesting and publish canonical payload hashes in
+`paper/results/target_tape_hashes.json` and
+`paper/expansion/results/target_tape_hashes.json`.
 
 The evaluation contract also records post-overlay exposure rules and the
 paper-trading order-state policy: persist intent before submission, block

@@ -128,11 +128,41 @@ chart hashes and provenance are recorded in
 That owner-supplied authorization does not independently establish that the
 provider's terms permit publication.
 
+## Repository-Frozen Expansion
+
+The paper also evaluates four fixed strategy families across U.S. sector and
+country-equity ETF panels from 2018 through 2025. The protocol was committed
+before either panel was requested, but it was not externally registered and the
+historical interval is not a temporal holdout. All models use mature features,
+next-bar execution, SHV residual cash, 13 bps per dollar traded, and 5,000 joint
+circular-block draws.
+
+![After-cost baseline outcomes across the frozen strategy-panel cells](paper/expansion/figures/baseline_performance.png)
+
+Seven of eight baseline sample Sharpes are positive, but these descriptive
+outcomes are not alpha claims. The central result is sensitivity to evaluation
+semantics:
+
+| 21-session pointwise interval result | Cells out of 8 |
+|---|---:|
+| Removing modeled cost: above zero | 8 |
+| Invalid same-close assignment: below / overlaps / above | 3 / 5 / 0 |
+| Zero cash return: below / overlaps / above | 5 / 3 / 0 |
+| Strategy minus costed exposure comparator: below / overlaps / above | 1 / 7 / 0 |
+
+![Paired annualized-return effects under each contract switch](paper/expansion/figures/contract_effects_return.png)
+
+The intervals are pointwise, conditional on two selected panels, and not
+multiplicity adjusted. Raw matrices are not distributed; panel digests, target
+tape hashes, aggregate tables, source fingerprints, and figure hashes are in
+[`paper/expansion/results/manifest.json`](paper/expansion/results/manifest.json).
+
 ## Research Paper
 
 The [NeurIPS 2026-format public preprint](paper/quantcortex_audit_neurips2026.pdf)
 formalizes the executable contracts, exact attribution, controlled protocol
-diagnostics, fixed negative result, uncertainty, limitations, and provenance.
+diagnostics, the retrospective negative result, the repository-frozen expansion,
+uncertainty, limitations, and provenance.
 It is not represented as accepted by or submitted to NeurIPS.
 An [anonymized preprint build](paper/quantcortex_audit_anonymous.pdf) is generated
 from the same source and omits author and repository identifiers.
@@ -141,7 +171,7 @@ from the same source and omits author and repository identifiers.
 
 See [paper/README.md](paper/README.md) for the build and reproduction workflow.
 Aggregate tables, generated paper values, source fingerprints, and artifact
-hashes are committed under `paper/results/`.
+hashes are committed under `paper/results/` and `paper/expansion/results/`.
 
 ## Quick Start
 
@@ -189,6 +219,9 @@ PYTHONPATH=. python scripts/generate_report.py \
 # Regenerate reviewed README charts and paper artifacts from a clean commit.
 scripts/release_paper_artifacts.sh \
   local_data/published_rotation_prices.csv
+
+# Regenerate the reviewed expansion aggregates and figures from a clean commit.
+scripts/release_expansion_artifacts.sh local_data/expansion
 
 # Explicit live-data diagnostics; review the provider's terms first.
 python scripts/validate_performance.py --live-yfinance
@@ -254,7 +287,7 @@ before using production capital. Security reporting is documented in
 - [docs/data-source-due-diligence.md](docs/data-source-due-diligence.md): publication-data acceptance rules
 - [docs/production-readiness.md](docs/production-readiness.md): external release gates
 - [paper/README.md](paper/README.md): paper reproduction and submission constraints
-- [paper/preregistration.md](paper/preregistration.md): prospective expansion protocol, not yet registered
+- [paper/preregistration.md](paper/preregistration.md): repository-frozen expansion protocol; not an external registry entry
 - [local_data/README.md](local_data/README.md): accepted local-data schemas and provenance
 - [CONTRIBUTING.md](CONTRIBUTING.md): contribution workflow
 - [AGENTS.md](AGENTS.md): concise repository guidance for coding agents

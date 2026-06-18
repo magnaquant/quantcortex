@@ -20,6 +20,10 @@ from quantcortex.backtest.engines.event_driven import EventDrivenBacktest
 from quantcortex.backtest.engines.vectorized import BacktestResult, VectorizedBacktest
 
 PERIODS_PER_YEAR = 252
+FROZEN_PROTOCOL_COMMIT = "4018f4063f46889f41d6981db5a71079e1dbd713"
+FROZEN_PROTOCOL_SHA256 = (
+    "e49e41a12a19fa5404a573ba5e21eb8a2888e616985f8c610d9652866923315c"
+)
 
 
 @dataclass(frozen=True)
@@ -182,6 +186,7 @@ def learned_gbrt_targets(
 ) -> LearnedTargetResult:
     """Fit the frozen pooled walk-forward GBRT and emit causal monthly targets."""
     from sklearn.ensemble import GradientBoostingRegressor
+    from threadpoolctl import threadpool_limits
 
     symbols = _validated_symbols(symbols)
     if isinstance(seed, bool) or not isinstance(seed, int):
@@ -243,7 +248,8 @@ def learned_gbrt_targets(
             random_state=seed,
             loss="squared_error",
         )
-        model.fit(train_x.to_numpy(dtype=float), train_y.to_numpy(dtype=float))
+        with threadpool_limits(limits=1):
+            model.fit(train_x.to_numpy(dtype=float), train_y.to_numpy(dtype=float))
         predictions = pd.Series(
             model.predict(current.to_numpy(dtype=float)),
             index=current.index,
@@ -330,8 +336,15 @@ def exposure_matched_comparator_targets(weights: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("weights must be a non-empty DataFrame")
     if weights.shape[1] == 0 or weights.columns.has_duplicates:
         raise ValueError("weights must have unique, non-empty columns")
-    exposure = weights.abs().sum(axis=1)
-    if ((exposure < -1e-12) | (exposure > 1.0 + 1e-12)).any():
+    normalized = weights.apply(pd.to_numeric, errors="coerce").astype("float64")
+    values = normalized.to_numpy(dtype=float)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("target weights must be finite")
+    if np.any(values < -1e-12):
+        raise ValueError("target weights must be long-only")
+    normalized = normalized.clip(lower=0.0)
+    exposure = normalized.sum(axis=1)
+    if (exposure > 1.0 + 1e-12).any():
         raise ValueError("target exposure must remain in [0, 1]")
     comparator = pd.DataFrame(
         np.repeat((exposure / weights.shape[1]).to_numpy()[:, None], weights.shape[1], axis=1),
@@ -355,6 +368,12 @@ def performance_metrics(
     cash = cash_returns.reindex(evaluation_index)
     if returns.isna().any() or cash.isna().any():
         raise ValueError("returns and cash must cover the evaluation window")
+    return_values = returns.to_numpy(dtype=float)
+    cash_values = cash.to_numpy(dtype=float)
+    if not np.all(np.isfinite(return_values)) or not np.all(np.isfinite(cash_values)):
+        raise ValueError("returns and cash must be finite")
+    if np.any(return_values <= -1.0):
+        raise ValueError("returns must remain above -100 percent")
     excess = returns - cash
     years = len(returns) / PERIODS_PER_YEAR
     growth = (1.0 + returns).cumprod()
@@ -398,12 +417,20 @@ def circular_block_indices(
     seed: int,
 ) -> np.ndarray:
     """Return reproducible circular-block row indices."""
+    if isinstance(observations, bool) or not isinstance(observations, int):
+        raise TypeError("observations must be an integer")
     if observations < 2:
         raise ValueError("at least two observations are required")
+    if isinstance(block_length, bool) or not isinstance(block_length, int):
+        raise TypeError("block_length must be an integer")
     if not 0 < block_length <= observations:
         raise ValueError("block_length must be in [1, observations]")
+    if isinstance(replications, bool) or not isinstance(replications, int):
+        raise TypeError("replications must be an integer")
     if replications <= 0:
         raise ValueError("replications must be positive")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise TypeError("seed must be an integer")
     rng = np.random.default_rng(seed)
     block_count = int(np.ceil(observations / block_length))
     starts = rng.integers(0, observations, size=(replications, block_count))
@@ -427,6 +454,8 @@ def bootstrap_metric_difference(
     """Joint block intervals for family-mean return and Sharpe differences."""
     if len(lhs_returns) == 0 or len(lhs_returns) != len(rhs_returns):
         raise ValueError("lhs_returns and rhs_returns must have equal non-zero size")
+    if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size <= 0:
+        raise ValueError("chunk_size must be a positive integer")
     aligned = pd.concat(
         {
             **{f"lhs_{i}": series for i, series in enumerate(lhs_returns)},
@@ -471,30 +500,15 @@ def bootstrap_metric_difference(
     if not np.all(np.isfinite(sharpe)):
         raise ValueError("bootstrap Sharpe difference is undefined")
     annualized_point = float(
-        np.mean(
-            [
-                (lhs_series - rhs_series).mean() * PERIODS_PER_YEAR
-                for lhs_series, rhs_series in zip(
-                    lhs_returns,
-                    rhs_returns,
-                    strict=True,
-                )
-            ]
-        )
+        (lhs.mean(axis=1) - rhs.mean(axis=1)).mean() * PERIODS_PER_YEAR
     )
-    sharpe_point = float(
-        np.mean(
-            [
-                _series_sharpe(lhs_series - cash_returns)
-                - _series_sharpe(rhs_series - cash_returns)
-                for lhs_series, rhs_series in zip(
-                    lhs_returns,
-                    rhs_returns,
-                    strict=True,
-                )
-            ]
-        )
-    )
+    lhs_point_sharpe = _sample_sharpe((lhs - cash[None, :])[:, None, :])[:, 0]
+    rhs_point_sharpe = _sample_sharpe((rhs - cash[None, :])[:, None, :])[:, 0]
+    if not np.all(np.isfinite(lhs_point_sharpe)) or not np.all(
+        np.isfinite(rhs_point_sharpe)
+    ):
+        raise ValueError("point Sharpe difference is undefined")
+    sharpe_point = float((lhs_point_sharpe - rhs_point_sharpe).mean())
     annualized_interval = np.quantile(annualized, [0.025, 0.975])
     sharpe_interval = np.quantile(sharpe, [0.025, 0.975])
     return {
@@ -673,13 +687,6 @@ def _sample_sharpe(excess: np.ndarray) -> np.ndarray:
         return excess.mean(axis=2) / standard_deviation * np.sqrt(PERIODS_PER_YEAR)
 
 
-def _series_sharpe(excess: pd.Series) -> float:
-    standard_deviation = float(excess.std(ddof=1))
-    if not np.isfinite(standard_deviation) or standard_deviation <= 0.0:
-        raise ValueError("Sharpe is undefined for zero-dispersion returns")
-    return float(excess.mean() / standard_deviation * np.sqrt(PERIODS_PER_YEAR))
-
-
 def _validate_lookback(value: int) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError("lookback must be a positive integer")
@@ -727,6 +734,8 @@ def _integer_sequence(config: Mapping[str, object], key: str) -> tuple[int, ...]
 
 
 __all__ = [
+    "FROZEN_PROTOCOL_COMMIT",
+    "FROZEN_PROTOCOL_SHA256",
     "LearnedTargetResult",
     "PERIODS_PER_YEAR",
     "bootstrap_metric_difference",

@@ -27,6 +27,12 @@ the development lock with `pip install -r requirements/dev.lock`, then run
   `generate_report.py --live-yfinance`; `validate_performance.py` requires
   `--live-yfinance`; `survivorship_demo.py` requires `--live-yfinance`;
   `paper_trade_cycle.py` requires either `--offline` or `--live-yfinance`.
+- Expansion release: freeze and commit the protocol before provider requests;
+  keep both matrices under ignored `local_data/expansion/`. After committing
+  source, run `scripts/release_expansion_artifacts.sh local_data/expansion`.
+  A first or changed release requires a fixed UTC
+  `QUANTCORTEX_EXPANSION_GENERATED_AT`. Never edit aggregate tables, generated
+  LaTeX, manifests, or figures by hand.
 - Paper release: commit source changes, then run
   `scripts/release_paper_artifacts.sh local_data/published_rotation_prices.csv`.
   The wrapper regenerates `docs/img/` and the paper from a detached clean
@@ -126,6 +132,8 @@ or vol-scaled book is NOT required to sum to 1. Violations raise
   may be published only with explicit owner approval, adjacent provenance, an
   input digest, and artifact hashes. The same rule applies to reviewed paper
   aggregates and figures under `paper/`; raw provider matrices remain local.
+  Repository freezing reduces post-data discretion but is not external
+  preregistration or a temporal holdout, and documentation must not imply it is.
   Synthetic fixtures remain appropriate for tests and the clearly labeled
   `paper_trade_cycle.py --offline` dry run.
 

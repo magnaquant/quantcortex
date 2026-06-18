@@ -1,7 +1,9 @@
 # Prospective Evaluation Protocol
 
-Status: repository-frozen prospective protocol. The Git commit containing this
-version is the public timestamp. It is not an external registry entry. The
+Status: repository-frozen prospective protocol. Commit
+`4018f4063f46889f41d6981db5a71079e1dbd713` and protocol SHA-256
+`e49e41a12a19fa5404a573ba5e21eb8a2888e616985f8c610d9652866923315c`
+are the pre-retrieval public record. This is not an external registry entry. The
 2018-2025 six-ETF case in the paper was inspected before this freeze and is not
 confirmatory evidence for the expansion.
 
@@ -73,8 +75,9 @@ window may change in response to observed performance.
 Primary accounting uses the event-driven engine, initial NAV 1.0, next-bar
 close execution, SHV residual-cash returns, and 13 basis points per unit of
 one-way gross traded notional. Targets are long-only with gross exposure at
-most one. The vectorized engine is a parity diagnostic on the identical
-canonical target tape.
+most one. The vectorized engine is a model-convention sensitivity diagnostic on
+the identical canonical target tape; equality with pseudo-share accounting is
+not expected.
 
 For each strategy, a causal costed comparator follows the strategy's target
 risky exposure, allocates it equally across the panel, rebalances on the same
@@ -121,3 +124,9 @@ posterior probabilities or multiple-testing-adjusted evidence.
    are documented.
 
 The machine-readable source of truth is `paper/expansion/protocol.json`.
+
+Post-freeze clarification: the JSON key
+`cost_per_one_way_gross_notional` is a naming error retained to preserve the
+pre-retrieval protocol hash. The implementation applies its 0.0013 value to
+gross two-sided traded notional, `sum(abs(delta_weight))`, not to one-way
+turnover. This clarification changes no calculation or frozen parameter.
