@@ -22,6 +22,7 @@
     "alignment": "complete-row intersection",
     "forward_fill": false,
     "minimum_pre_evaluation_sessions": 252,
+    "minimum_mature_training_months": 24,
     "raw_data_committed": false
   },
   "panels": {
@@ -77,8 +78,13 @@
       "return_transform": "log",
       "feature_return_windows": [5, 21, 63, 126, 252],
       "feature_volatility_windows": [21, 63],
+      "feature_volatility": "sample standard deviation of daily log returns",
       "include_trailing_high_distance": true,
+      "trailing_high_distance": "price divided by trailing 252-session high minus one",
       "cross_sectional_rank_windows": [21, 252],
+      "cross_sectional_rank": "ordinal ascending rank normalized to [0,1] with symbol tie-break",
+      "feature_standardization": false,
+      "feature_winsorization": false,
       "training_decision_months": 60,
       "minimum_training_decision_months": 24,
       "n_estimators": 100,

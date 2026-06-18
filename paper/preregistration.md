@@ -24,9 +24,11 @@ retrieval time, input SHA-256, and row coverage.
 The accepted matrix is the complete-row intersection of the declared symbols
 and SHV. There is no forward fill or symbol substitution. A panel is excluded
 only if it has fewer than 252 complete pre-evaluation sessions or a missing
-evaluation month. Any exclusion is reported as a protocol deviation; a new
-universe is not substituted after outcomes are inspected. Provider terms and
-publication rights are reported per panel without legal inference.
+evaluation month. The learned model additionally requires 24 mature monthly
+training dates before evaluation. Any exclusion is reported as a protocol
+deviation; a new universe is not substituted after outcomes are inspected.
+Provider terms and publication rights are reported per panel without legal
+inference.
 
 The frozen retrieval adapter is yfinance with `auto_adjust=False`,
 `actions=False`, `repair=False`, and `threads=False`; the adjusted-close field
@@ -49,20 +51,22 @@ first strictly later panel row.
   remains in SHV.
 - `learned_gbrt`: a walk-forward gradient-boosted regression model predicts
   21-session forward log return. Features are 5-, 21-, 63-, 126-, and
-  252-session log returns; 21- and 63-session realized volatility; distance
-  from the trailing 252-session high; and cross-sectional ranks of 21- and
-  252-session returns. Training examples are prior monthly decisions whose
-  labels end on or before the current decision. The pooled training rows are
-  asset-month pairs; symbol identity is not a feature. The rolling training set
-  is capped at 60 decision months and must contain at least 24. The estimator
+  252-session log returns; sample standard deviations of daily log returns over
+  21 and 63 sessions; `price / trailing_252_session_high - 1`; and normalized
+  ordinal cross-sectional ranks of 21- and 252-session returns. The lowest rank
+  is zero and the highest is one. Training examples are prior monthly decisions
+  whose labels end on or before the current decision. The pooled training rows
+  are asset-month pairs; symbol identity is not a feature. The rolling training
+  set is capped at 60 decision months and must contain at least 24. The estimator
   is scikit-learn `GradientBoostingRegressor` with 100 estimators, learning rate
   0.03, depth 2, minimum leaf size 10, and subsample 0.8. Seeds are 11, 29, 47,
   71, and 97. Each seed is reported; the family estimate is the arithmetic mean
   of seed-level metrics. Up to three positive predictions receive one-third
   each.
 
-All score ties are broken by ascending symbol. No hyperparameter, universe,
-threshold, seed, or window may change in response to observed performance.
+All score and rank ties are broken by ascending symbol. Features are not
+standardized or winsorized. No hyperparameter, universe, threshold, seed, or
+window may change in response to observed performance.
 
 ## Execution And Comparators
 
