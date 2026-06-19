@@ -1,0 +1,314 @@
+[
+  {
+    "decision_count": 96,
+    "panel": "us_sector_etfs",
+    "record_count": 864,
+    "seed": "deterministic",
+    "sha256": "9d0e08318f01be79ef39599241456bac4675dfe066e5cb330f2807e78d76a05a",
+    "strategy": "ts_momentum",
+    "symbols": [
+      "XLB",
+      "XLE",
+      "XLF",
+      "XLI",
+      "XLK",
+      "XLP",
+      "XLU",
+      "XLV",
+      "XLY"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "us_sector_etfs",
+    "record_count": 864,
+    "seed": "deterministic",
+    "sha256": "9545811bb9c8d413be048c4014f64f8f1bb7a3e7b7b066341e7c0e29fb4b57a1",
+    "strategy": "cross_sectional_momentum",
+    "symbols": [
+      "XLB",
+      "XLE",
+      "XLF",
+      "XLI",
+      "XLK",
+      "XLP",
+      "XLU",
+      "XLV",
+      "XLY"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "us_sector_etfs",
+    "record_count": 864,
+    "seed": "deterministic",
+    "sha256": "649bbc004d077c2845eb4884d35a27022cf0583fd3dc3b2e0588b51da24ce0ab",
+    "strategy": "short_term_reversal",
+    "symbols": [
+      "XLB",
+      "XLE",
+      "XLF",
+      "XLI",
+      "XLK",
+      "XLP",
+      "XLU",
+      "XLV",
+      "XLY"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "us_sector_etfs",
+    "record_count": 864,
+    "seed": "11",
+    "sha256": "c04600e960059adb4efaa7043edc9947cb60a496921ab7d87ef89fd2fe69ae4e",
+    "strategy": "learned_gbrt",
+    "symbols": [
+      "XLB",
+      "XLE",
+      "XLF",
+      "XLI",
+      "XLK",
+      "XLP",
+      "XLU",
+      "XLV",
+      "XLY"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "us_sector_etfs",
+    "record_count": 864,
+    "seed": "29",
+    "sha256": "a55ffe7e6694fbfecbd80258dbc7fb504ddcbca778496ef4a65ebc6c9957d900",
+    "strategy": "learned_gbrt",
+    "symbols": [
+      "XLB",
+      "XLE",
+      "XLF",
+      "XLI",
+      "XLK",
+      "XLP",
+      "XLU",
+      "XLV",
+      "XLY"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "us_sector_etfs",
+    "record_count": 864,
+    "seed": "47",
+    "sha256": "9970d2a590571a2568f4ec8b2e46a7816a14a2ab84b18d4a2eeccc7a2e60081e",
+    "strategy": "learned_gbrt",
+    "symbols": [
+      "XLB",
+      "XLE",
+      "XLF",
+      "XLI",
+      "XLK",
+      "XLP",
+      "XLU",
+      "XLV",
+      "XLY"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "us_sector_etfs",
+    "record_count": 864,
+    "seed": "71",
+    "sha256": "40b146bafac5c3102ae92d7800039f357a84f64685b321e27b139f6f2d0d0579",
+    "strategy": "learned_gbrt",
+    "symbols": [
+      "XLB",
+      "XLE",
+      "XLF",
+      "XLI",
+      "XLK",
+      "XLP",
+      "XLU",
+      "XLV",
+      "XLY"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "us_sector_etfs",
+    "record_count": 864,
+    "seed": "97",
+    "sha256": "bc9096451ec5894b097f28c49032ecd7c59c6e168119fc0ea6e970f1d29c39bd",
+    "strategy": "learned_gbrt",
+    "symbols": [
+      "XLB",
+      "XLE",
+      "XLF",
+      "XLI",
+      "XLK",
+      "XLP",
+      "XLU",
+      "XLV",
+      "XLY"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "country_equity_etfs",
+    "record_count": 960,
+    "seed": "deterministic",
+    "sha256": "e7ffb31af0ebbc7c640a85e63db85ac4bab72febd6668fd51769eedfc03d701a",
+    "strategy": "ts_momentum",
+    "symbols": [
+      "EWA",
+      "EWC",
+      "EWG",
+      "EWH",
+      "EWJ",
+      "EWL",
+      "EWP",
+      "EWQ",
+      "EWS",
+      "EWU"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "country_equity_etfs",
+    "record_count": 960,
+    "seed": "deterministic",
+    "sha256": "14a9f59ee53e4430fb22448858327e375be4fae9dc9255b5635dcbf7d66712a1",
+    "strategy": "cross_sectional_momentum",
+    "symbols": [
+      "EWA",
+      "EWC",
+      "EWG",
+      "EWH",
+      "EWJ",
+      "EWL",
+      "EWP",
+      "EWQ",
+      "EWS",
+      "EWU"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "country_equity_etfs",
+    "record_count": 960,
+    "seed": "deterministic",
+    "sha256": "f9ed37cb97fe623eeccdf3e13cbc6ebfab568a629328675fffd7b27a0dc07bc9",
+    "strategy": "short_term_reversal",
+    "symbols": [
+      "EWA",
+      "EWC",
+      "EWG",
+      "EWH",
+      "EWJ",
+      "EWL",
+      "EWP",
+      "EWQ",
+      "EWS",
+      "EWU"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "country_equity_etfs",
+    "record_count": 960,
+    "seed": "11",
+    "sha256": "86b6502e337e29d3b6def87f9329946ac20d18c90c7dfd25ac32d866f825a81e",
+    "strategy": "learned_gbrt",
+    "symbols": [
+      "EWA",
+      "EWC",
+      "EWG",
+      "EWH",
+      "EWJ",
+      "EWL",
+      "EWP",
+      "EWQ",
+      "EWS",
+      "EWU"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "country_equity_etfs",
+    "record_count": 960,
+    "seed": "29",
+    "sha256": "9c07c8550fb54792918af1fdfcc428e9fe13023bd5d46c071cd92c86b1412d4b",
+    "strategy": "learned_gbrt",
+    "symbols": [
+      "EWA",
+      "EWC",
+      "EWG",
+      "EWH",
+      "EWJ",
+      "EWL",
+      "EWP",
+      "EWQ",
+      "EWS",
+      "EWU"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "country_equity_etfs",
+    "record_count": 960,
+    "seed": "47",
+    "sha256": "9d11c35907a5a357ae8aad57e6d4a596ebdb58bcefe0d51f534b5ac81e31b193",
+    "strategy": "learned_gbrt",
+    "symbols": [
+      "EWA",
+      "EWC",
+      "EWG",
+      "EWH",
+      "EWJ",
+      "EWL",
+      "EWP",
+      "EWQ",
+      "EWS",
+      "EWU"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "country_equity_etfs",
+    "record_count": 960,
+    "seed": "71",
+    "sha256": "f3047262af46f736e368ee4353a6d61d186431d0224cff2903e54435af056e6e",
+    "strategy": "learned_gbrt",
+    "symbols": [
+      "EWA",
+      "EWC",
+      "EWG",
+      "EWH",
+      "EWJ",
+      "EWL",
+      "EWP",
+      "EWQ",
+      "EWS",
+      "EWU"
+    ]
+  },
+  {
+    "decision_count": 96,
+    "panel": "country_equity_etfs",
+    "record_count": 960,
+    "seed": "97",
+    "sha256": "46d4b9944122a78505141ff6b2cfaac577ecf6f47ae8b1bed2afd903a499eb8e",
+    "strategy": "learned_gbrt",
+    "symbols": [
+      "EWA",
+      "EWC",
+      "EWG",
+      "EWH",
+      "EWJ",
+      "EWL",
+      "EWP",
+      "EWQ",
+      "EWS",
+      "EWU"
+    ]
+  }
+]

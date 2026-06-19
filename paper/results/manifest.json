@@ -1,17 +1,17 @@
 {
   "artifacts": {
-    "figures/accounting_summary.pdf": "83aea7fe6e6a97b55f8fe4b00218ae11972902947ed058d8281d40cb1d6e6f3c",
-    "figures/accounting_summary.png": "d7cf237467814941d9acb939df0cc4ba13a8ee12ebf792648db777438f786ad9",
-    "figures/audit_protocol.pdf": "a2a0284f9c0687ba6ff52b4a8077189d7a2ba21b63e5e77c4287639b6bbc23b4",
-    "figures/audit_protocol.png": "acf80aabaadc7cfef1222f9e86aac4f194e644d7229f8cd8f5fcd156b1ff0abb",
-    "figures/bootstrap_robustness.pdf": "de3901b50dba906bc418660a4de8983ad311a0d4ed12b946e4d12b104435e4e2",
-    "figures/bootstrap_robustness.png": "3df48e16eea06d664bab9a50c5f528d14313afa837f7c4b75d024e437f36344e",
-    "figures/engine_comparison.pdf": "35c9bc06689fdf884d4aaf09d23d934025c257921fb5fe49b7ed9da6ddb36436",
-    "figures/engine_comparison.png": "88cb5f1537fb8ee382a4cb6c39c9c6a8d433c2c921a8d9018f45b34e56d5447d",
-    "figures/return_attribution_and_protocol_switches.pdf": "6eb5380a36035e3c22ad7c1801551edcdc2ab57b5def122031113492e5725d03",
-    "figures/return_attribution_and_protocol_switches.png": "e394d5d68c57fd9b87bf5d251a11ba56fccbc9468dc51776731784855ee6207f",
-    "figures/sensitivity_and_ablation.pdf": "0b3c1296f6b747243ae74659ed0a1b2382ed7e5e2b291e803a514b83e38b0d38",
-    "figures/sensitivity_and_ablation.png": "bb8cd93e788f7b218eecfe8d59b7f5e014060c79a0bb6eef489359f685dc7dfb",
+    "figures/accounting_summary.pdf": "18608aa1250c4554b2e27b507211f764fdf1ec1fb8e4b9f09e080601505e2e3a",
+    "figures/accounting_summary.png": "56b902c5e735d20f98d9fe79a365849e7f2953868b828ccbee5c81ddf893100f",
+    "figures/audit_protocol.pdf": "6765f7d1f827577ba648af7545d006ef7f005f0091194605c6130100215ac18c",
+    "figures/audit_protocol.png": "20e148cf6cd5b5bb5d49b3e7c5508735ea67c87d535d691dcded6dd4360270ff",
+    "figures/bootstrap_robustness.pdf": "19df4c9eabe88add863ed4be4e9315aa0084b833be9deb4d5bb7633e769ced07",
+    "figures/bootstrap_robustness.png": "23e6b3169225657b1757e1de0005f200e69f5772cf3339c9c41a5e608a533d19",
+    "figures/engine_comparison.pdf": "270a23679216f411c796316ed4fd9061715fd3cbf89babdf2f86ec1c6dbb4eb5",
+    "figures/engine_comparison.png": "c5539c6f4f4a1d15ad35dc299bb3c4045a8157fd9d27861c099f879d69e12cc5",
+    "figures/return_attribution_and_protocol_switches.pdf": "0de9b97e871737e5d074562b89333ffabeb5a17b3ff8fa5da3e26bb365c57b23",
+    "figures/return_attribution_and_protocol_switches.png": "98470760a1e57a6bad977e2d98601f6a1c949a8542238014d3efcce6185bc3fb",
+    "figures/sensitivity_and_ablation.pdf": "98ac21b6817e152a0df0089e898c56d408ec29d544b0115ba0ca29e79db261c6",
+    "figures/sensitivity_and_ablation.png": "aa79435ba8682e29d9bbbfa35321b27bb3af5cdbc59b911cbf476de238b69fdf",
     "results/ablation.csv": "a75be6ff0a0279f87c20b00dbdd94a9f5d05525b0bf0ef501394d88b4dd6ac27",
     "results/ablation_uncertainty.csv": "b1768f4d86267ca318ce29b7ee5612dcadbe817ff5a69d2d7a4f0d42f54b6af0",
     "results/accounting.csv": "39e67c4ad06307116ed2e4e46172b227b63357ecf26101cb52f8a8e1bbcf9082",
@@ -20,7 +20,7 @@
     "results/cost_sensitivity.csv": "25b9969cf8ecdabd19e7761ad2973252c9f5b9f994b6dc147595a2a112c24d88",
     "results/engine_comparison.csv": "ea0322dcd2aa4a1eb3b5996045c3a4b2ed25a85684a578ee788b013b99b643cd",
     "results/evaluation_contract.json": "77ee05ce64622ef9ba1bfbd7dae85c4f6fd44f07db0b21feaf6b3e0e418673e7",
-    "results/generated_values.tex": "98611c031c54382859488367dc1f5474a283014e3db2867f8210dab49ac85f25",
+    "results/generated_values.tex": "c18f94e5566cfaf6336a01db507763dc48e8ce4a8fbec2cbdcd34555ae14fc37",
     "results/protocol_switches.csv": "20d5a0dc37e07a20c1f2772c8e9940ff6464ef1da98692edd5fdb06531bc2393",
     "results/return_decomposition.csv": "53a84aa9b91c92f0037e48dc09154807cbf003ccf0038f39da8406108bf709cc",
     "results/sharpe_uncertainty.csv": "aead873ced9b25c76c6944aa6e3ba0901ade65c784fa5cb8cc10ad1c6c01f136",
@@ -240,18 +240,18 @@
     "path": "results/evaluation_contract.json",
     "schema_version": 1
   },
-  "generated_at": "2026-06-18T22:06:35Z",
+  "generated_at": "2026-06-18T23:53:33Z",
   "generator": {
     "dependency_lock": {
       "path": "poetry.lock",
-      "sha256": "abce2cd132651851d81034dea085d7dbfbe5e44321f2e13997db69f46d7f080b"
+      "sha256": "c0fd02871263d959522bb3d3d4717cffa1b89bfa047f584c68b81c7ad7cbbb5b"
     },
     "git": {
-      "source_commit": "ef6e7e3414aed0ae9b77d50748a22823529486af",
+      "source_commit": "e0443b8f77cd23aee8f1fa64a2bc237e47626c47",
       "worktree_clean_at_start": true
     },
     "packages": {
-      "matplotlib": "3.10.9",
+      "matplotlib": "3.11.0",
       "numpy": "2.4.6",
       "pandas": "3.0.3",
       "scikit-learn": "1.9.0",
@@ -263,9 +263,9 @@
     "python": "3.14.4",
     "script_sha256": "922bf3c414e0eadca5c13ee831528347dd83a0cd174efbdf15a987b511845de5",
     "source_tree": {
-      "file_count": 110,
+      "file_count": 112,
       "files": {
-        "poetry.lock": "abce2cd132651851d81034dea085d7dbfbe5e44321f2e13997db69f46d7f080b",
+        "poetry.lock": "c0fd02871263d959522bb3d3d4717cffa1b89bfa047f584c68b81c7ad7cbbb5b",
         "pyproject.toml": "eaeeb454c28bf7f6d9e530002bb7e88624b56b6c3e1fcb71e6414045cb9c42a0",
         "quantcortex/__init__.py": "14bf1ebdacd054c3738e4704d33da6709a39206463df8b8ced5376da342c4036",
         "quantcortex/alpha/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -353,6 +353,8 @@
         "quantcortex/portfolio/mean_variance.py": "235a8917e107ab6274ee68891a489a130ae61fe36d359dc43e049d256453d80d",
         "quantcortex/portfolio/minimum_variance.py": "253a9d80fe6dc6e4c95219b76a8965230b408093d1521a72587505ae0ddfc739",
         "quantcortex/portfolio/risk_parity.py": "ed371437655ae980fabfc4ae450ca2100d90f304d9ce225c306f904ce1e32e91",
+        "quantcortex/research/__init__.py": "46e11b28979db5adfbe08f946e59b8e858de7d2a1feca714be5b0bd7cce1c32f",
+        "quantcortex/research/expansion.py": "a4cde375dcd650a1bd367d07da11e20e5b770a34496ccf3c82ba8e0c7467ed2a",
         "quantcortex/risk/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "quantcortex/risk/circuit_breaker.py": "65cf205e7303cff5ce4785a64fadc6b29ba8b85e31913e001330fb084e502ff1",
         "quantcortex/risk/factor_exposure.py": "5503426c590338b57512adf409e873751929464459d464f2b6940db8cadbf0ad",
@@ -373,10 +375,10 @@
         "quantcortex/timing/vix_scaler.py": "a3667424e5573fb289e63c26c69da6a68d6c943742359f0466d29b25c56e3686",
         "schemas/canonical_target_tape.schema.json": "4f1c0bf6d5360305d2982adea78de3f61c4bc1ebae9207cb2ba2bd4379b43d44",
         "schemas/evaluation_contract.schema.json": "970f24f587e669925306625d12c5a84dffd03ff5b222a59905849b2fa222784f",
-        "scripts/release_paper_artifacts.sh": "cf3de9434ab3991598e0c8d1d2c9346fde425fdf1eb792a6941fede0c66342e9",
+        "scripts/release_paper_artifacts.sh": "cbbde7be2dbe5fa51da153ded2d5f27a8e35a4844a5f658584fe527db5370fbd",
         "scripts/run_paper_experiments.py": "922bf3c414e0eadca5c13ee831528347dd83a0cd174efbdf15a987b511845de5"
       },
-      "sha256": "044c219b82295b187b92a7044757289faf91757d276206fe6abdec5d52252e60"
+      "sha256": "e5cbb756404c6776eb5945a1590664bb91b22dc7b0daea22efbf80a5be78c6b2"
     },
     "threadpools": [
       {

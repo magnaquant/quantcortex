@@ -1,18 +1,18 @@
 {
   "schema_version": 4,
-  "generated_at": "2026-06-18T22:06:35Z",
+  "generated_at": "2026-06-18T23:53:33Z",
   "generator": {
     "path": "scripts/generate_report.py",
     "script_sha256": "b536aa7fc5e4fe7df6c7ff28c0992629a489869eaec46486db7aff1cb946099b",
     "git": {
-      "source_commit": "ef6e7e3414aed0ae9b77d50748a22823529486af",
+      "source_commit": "e0443b8f77cd23aee8f1fa64a2bc237e47626c47",
       "worktree_clean_at_start": true
     },
     "source_tree": {
-      "sha256": "f964d653b5e645e1efe97889e8acb43fbb0c2c8ddeb0835803f07c299abff5a0",
-      "file_count": 107,
+      "sha256": "441586b7f43e68245a94a797d291fa80f51bb413c3174651d2e3dada17f56d3a",
+      "file_count": 109,
       "files": {
-        "poetry.lock": "abce2cd132651851d81034dea085d7dbfbe5e44321f2e13997db69f46d7f080b",
+        "poetry.lock": "c0fd02871263d959522bb3d3d4717cffa1b89bfa047f584c68b81c7ad7cbbb5b",
         "pyproject.toml": "eaeeb454c28bf7f6d9e530002bb7e88624b56b6c3e1fcb71e6414045cb9c42a0",
         "quantcortex/__init__.py": "14bf1ebdacd054c3738e4704d33da6709a39206463df8b8ced5376da342c4036",
         "quantcortex/alpha/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -100,6 +100,8 @@
         "quantcortex/portfolio/mean_variance.py": "235a8917e107ab6274ee68891a489a130ae61fe36d359dc43e049d256453d80d",
         "quantcortex/portfolio/minimum_variance.py": "253a9d80fe6dc6e4c95219b76a8965230b408093d1521a72587505ae0ddfc739",
         "quantcortex/portfolio/risk_parity.py": "ed371437655ae980fabfc4ae450ca2100d90f304d9ce225c306f904ce1e32e91",
+        "quantcortex/research/__init__.py": "46e11b28979db5adfbe08f946e59b8e858de7d2a1feca714be5b0bd7cce1c32f",
+        "quantcortex/research/expansion.py": "a4cde375dcd650a1bd367d07da11e20e5b770a34496ccf3c82ba8e0c7467ed2a",
         "quantcortex/risk/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "quantcortex/risk/circuit_breaker.py": "65cf205e7303cff5ce4785a64fadc6b29ba8b85e31913e001330fb084e502ff1",
         "quantcortex/risk/factor_exposure.py": "5503426c590338b57512adf409e873751929464459d464f2b6940db8cadbf0ad",
@@ -128,7 +130,7 @@
       "pandas": "3.0.3",
       "scipy": "1.17.1",
       "scikit-learn": "1.9.0",
-      "matplotlib": "3.10.9",
+      "matplotlib": "3.11.0",
       "threadpoolctl": "3.6.0",
       "yfinance": "1.4.1"
     }
@@ -231,15 +233,15 @@
     "exposure_matched_equal_weight_cash_excess_sharpe_gross": 0.7984966497852871
   },
   "artifacts": {
-    "allocation_and_exposure.png": "4f88060765153f436a0fb54bbd7399a9a82117acc84497bee7495b6398ba72cc",
-    "drawdown.png": "5a4f8e7c4f8a5a1fa3f18b9916f47015582323d66697344216846f8992dc10f2",
-    "equity_vs_benchmarks.png": "d94d2afc0502a6b061324637bf80312f5ff243384471c06d00f16bfcfe770350",
-    "monthly_returns.png": "abcb5de3ba5cbb9acf2caf5996564547d8398841b23f4edd2ae2834b3d9d61ad",
-    "performance_attribution.png": "ab1113f4645d2a7e70eb7bbf4ee432e76430a3d3fbf3d06189114fe62127bb30",
-    "report_overview.png": "18f4548523b2ed6bfb520c7b5cdc764641b93f9e87d3f4e544ad8a47bc02e892",
-    "return_distribution.png": "7c40d473e63c8b5a54e8aba7ac8c048e1fe77a9d741020d58281315970dc3fb5",
-    "rolling_risk.png": "e8a97664c425f341d340e590f290e5464be679cc9294f58fb23eace0dde4bd36",
-    "rolling_sharpe.png": "a1b4fa535aa12185763fd7ef8f6b77e5b83644a02b6f945474f53ca9fa4d2ff0",
-    "turnover_and_costs.png": "a405e4b8231b8183c2e66c652afb8208fd60c0a092fe7cb6a91e2f97d79c7f57"
+    "allocation_and_exposure.png": "e310e33a2fe36793eb1724e09cd7132de9cee64e171005b12dc1dce674c84d7a",
+    "drawdown.png": "277868c7b4b59fe5bddf29005e8707d028ee97440c7f23c96ecf83142da1ea1f",
+    "equity_vs_benchmarks.png": "61794487a4649c4747a05c6c3990b176668c8205ccbe957923875a41eb089d15",
+    "monthly_returns.png": "18d04ab0f2a16ecd48780cddb4849c5c034a3093262c88b48d173801580ca9bc",
+    "performance_attribution.png": "ef13a1714481f52712e0038eb025d10a30ce0ff1031296355d2ab7165e362f20",
+    "report_overview.png": "f06aa32a4c2b51c9b32a0513caeea4edca16429f222938254f068241af5330ea",
+    "return_distribution.png": "6cfa64dfeb0051478e85264db720ed1121c05bf00ebed5931a827e0a856b8ecf",
+    "rolling_risk.png": "257b9a1a1706a8d52b3bdb707a3149b1c60b4f779fa530950b80acec3ef10f8b",
+    "rolling_sharpe.png": "8dbbabb64f9e049155f9e5cfd3fed083eb2e71a3662b5092c0847e26418ade89",
+    "turnover_and_costs.png": "f4034abbaacb2a04c852f2cf4f36d0794a9e048490ca96f4e1eb2b80215836d2"
   }
 }

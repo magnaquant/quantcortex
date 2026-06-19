@@ -287,6 +287,7 @@ before using production capital. Security reporting is documented in
 - [docs/data-source-due-diligence.md](docs/data-source-due-diligence.md): publication-data acceptance rules
 - [docs/production-readiness.md](docs/production-readiness.md): external release gates
 - [paper/README.md](paper/README.md): paper reproduction and submission constraints
+- [paper/COMPUTE.md](paper/COMPUTE.md): reviewed host and release wall times
 - [paper/preregistration.md](paper/preregistration.md): repository-frozen expansion protocol; not an external registry entry
 - [local_data/README.md](local_data/README.md): accepted local-data schemas and provenance
 - [CONTRIBUTING.md](CONTRIBUTING.md): contribution workflow

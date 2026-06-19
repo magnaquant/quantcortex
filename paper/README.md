@@ -30,6 +30,8 @@ checks that body text does not spill past the nine-page NeurIPS limit;
 both PDF checksum files and `build_manifest.json`.
 It also writes `quantcortex_audit_neurips2026.sources.sha256`, which binds the
 tracked PDF to the current LaTeX, bibliography, generated values, and figures.
+Reviewed host details and measured wrapper wall times are in
+[`COMPUTE.md`](COMPUTE.md).
 
 Release the fixed experiment from a committed source revision with an
 authorized local adjusted-close matrix:

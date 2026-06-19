@@ -40,6 +40,7 @@ DOCUMENTATION_FILES = [
     "local_data/README.md",
     "docs/architecture.md",
     "docs/production-readiness.md",
+    "paper/COMPUTE.md",
     "paper/README.md",
 ]
 

@@ -1,0 +1,11 @@
+panel,seed,first_training_rows,minimum_training_rows,maximum_training_rows,minimum_training_months,maximum_training_months
+us_sector_etfs,11,315,315,540,35,60
+us_sector_etfs,29,315,315,540,35,60
+us_sector_etfs,47,315,315,540,35,60
+us_sector_etfs,71,315,315,540,35,60
+us_sector_etfs,97,315,315,540,35,60
+country_equity_etfs,11,350,350,600,35,60
+country_equity_etfs,29,350,350,600,35,60
+country_equity_etfs,47,350,350,600,35,60
+country_equity_etfs,71,350,350,600,35,60
+country_equity_etfs,97,350,350,600,35,60

@@ -1,18 +1,18 @@
 {
   "anonymous_pdf": {
     "path": "quantcortex_audit_anonymous.pdf",
-    "sha256": "3bf902d420224032fa11492ddb4f8d3b636972f4a3d7740e4b7aef4bbf8484ff"
+    "sha256": "cbcee2583ea2da700b259c108d9991061033a17dd97c11d0aab676396eabef7b"
   },
   "pdf": {
     "path": "quantcortex_audit_neurips2026.pdf",
-    "sha256": "59fcd30467d449984118d746417d810757d32fbceb72af25d0d4a84a65203000"
+    "sha256": "9bf806b296b6bade747de580142545a9825e2d3107c6a55531ea1456932ad2a5"
   },
   "schema_version": 1,
-  "source_commit": "ef6e7e3414aed0ae9b77d50748a22823529486af",
-  "source_date_epoch": 1781820388,
+  "source_commit": "e0443b8f77cd23aee8f1fa64a2bc237e47626c47",
+  "source_date_epoch": 1781826790,
   "source_manifest": {
     "path": "quantcortex_audit_neurips2026.sources.sha256",
-    "sha256": "ffd76bc58b7b0dd3499cb934a33abd613477478b3fb1fadabb16d5b47b5cbbde"
+    "sha256": "51039d9c9da79353f3a26298189881f1669252496cf6dcf2e186bee5e94e9f22"
   },
   "tectonic_bundle": {
     "name": "default_bundle_v33.tar",
