@@ -33,17 +33,17 @@ ml = [
 rl = [
     "stable-baselines3[extra]>=2.2",
     "gymnasium>=0.29",
-    "torch>=2.12",
+    "torch>=2.12.1",
 ]
 regime = ["hmmlearn>=0.3"]
 nlp = [
     "transformers>=4.38",
-    "torch>=2.12",
+    "torch>=2.12.1",
 ]
 brokers = [
     "alpaca-py>=0.43.4,<0.44",
     "ib-async>=2.1,<2.2",
-    "ccxt>=4.2",
+    "ccxt>=4.5.59",
 ]
 providers = [
     "yfinance>=0.2.37",
@@ -64,10 +64,10 @@ all = [
     "gymnasium>=0.29",
     "hmmlearn>=0.3",
     "transformers>=4.38",
-    "torch>=2.12",
+    "torch>=2.12.1",
     "alpaca-py>=0.43.4,<0.44",
     "ib-async>=2.1,<2.2",
-    "ccxt>=4.2",
+    "ccxt>=4.5.59",
     "yfinance>=0.2.37",
     "polygon-api-client>=1.13",
     "fredapi>=0.5",
@@ -88,9 +88,9 @@ poetry-plugin-export = ">=1.10,<1.11"
 [tool.poetry.group.test.dependencies]
 jsonschema = { version = ">=4.20,<5", extras = ["format-nongpl"] }
 packaging = ">=24"
-pytest = ">=8.0"
+pytest = ">=9.1.1"
 pytest-cov = ">=4.1"
-ruff = ">=0.3"
+ruff = ">=0.15.18"
 
 [tool.poetry.group.dev.dependencies]
 jupyter = ">=1.0"
