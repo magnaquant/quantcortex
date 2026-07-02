@@ -20,7 +20,7 @@
     "results/cost_sensitivity.csv": "25b9969cf8ecdabd19e7761ad2973252c9f5b9f994b6dc147595a2a112c24d88",
     "results/engine_comparison.csv": "ea0322dcd2aa4a1eb3b5996045c3a4b2ed25a85684a578ee788b013b99b643cd",
     "results/evaluation_contract.json": "77ee05ce64622ef9ba1bfbd7dae85c4f6fd44f07db0b21feaf6b3e0e418673e7",
-    "results/generated_values.tex": "4cee7de114227526d83abaae47a0c647451a864056955e91d099f846dfc4dfc4",
+    "results/generated_values.tex": "004720fada6d46dd1fb4a8877b297f89f44caba3c8a914c295b1fba8779bcc4c",
     "results/protocol_switches.csv": "20d5a0dc37e07a20c1f2772c8e9940ff6464ef1da98692edd5fdb06531bc2393",
     "results/return_decomposition.csv": "53a84aa9b91c92f0037e48dc09154807cbf003ccf0038f39da8406108bf709cc",
     "results/sharpe_uncertainty.csv": "aead873ced9b25c76c6944aa6e3ba0901ade65c784fa5cb8cc10ad1c6c01f136",
@@ -240,14 +240,14 @@
     "path": "results/evaluation_contract.json",
     "schema_version": 1
   },
-  "generated_at": "2026-07-02T06:57:57Z",
+  "generated_at": "2026-07-02T08:06:29Z",
   "generator": {
     "dependency_lock": {
       "path": "poetry.lock",
-      "sha256": "d4e2e756f8ba3ca67ca0e7592c56d1e3c42303fd8b5af06dd52f25658d9e6ceb"
+      "sha256": "33a3d2cf42b5068cac47961fa13e819a1b5167614cc5ea6984b3ee0dcace1688"
     },
     "git": {
-      "source_commit": "34096ad11c1ae33531186a86961a9e2e883d60a9",
+      "source_commit": "881176debe1573e1154c011eead6aae20bb05232",
       "worktree_clean_at_start": true
     },
     "packages": {
@@ -265,7 +265,7 @@
     "source_tree": {
       "file_count": 112,
       "files": {
-        "poetry.lock": "d4e2e756f8ba3ca67ca0e7592c56d1e3c42303fd8b5af06dd52f25658d9e6ceb",
+        "poetry.lock": "33a3d2cf42b5068cac47961fa13e819a1b5167614cc5ea6984b3ee0dcace1688",
         "pyproject.toml": "eaeeb454c28bf7f6d9e530002bb7e88624b56b6c3e1fcb71e6414045cb9c42a0",
         "quantcortex/__init__.py": "14bf1ebdacd054c3738e4704d33da6709a39206463df8b8ced5376da342c4036",
         "quantcortex/alpha/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -378,7 +378,7 @@
         "scripts/release_paper_artifacts.sh": "fbf68e79be2479e089e638d88923de3aa675dacbfc1e180ffe75b2a05eaecf39",
         "scripts/run_paper_experiments.py": "25010ce7302d1113e48fb7095dabf1e0bb5b283ba9270455cdbf55382718530e"
       },
-      "sha256": "1c05d00cea1d0e9acc5118c3e9302fc50111a327ed15c48e25019a40cecec5b8"
+      "sha256": "7dfddd78bc3d88c01b39666be0157aa9e5cb728c9def9bd8f911ce03f4716e27"
     },
     "threadpools": [
       {
