@@ -10,11 +10,13 @@ if [[ ! -x "${python_bin}" ]]; then
   exit 1
 fi
 
-# Generation runs from a detached worktree at the source commit, so only
-# uncommitted changes to release-critical source can corrupt a release.
-# Scoping the cleanliness check to those paths lets the paper release run
-# after the expansion wrapper has deposited regenerated artifacts in the
-# working tree, which the documented dual-release flow requires.
+# Generation runs from a detached worktree at the source commit, so
+# uncommitted changes outside release-critical source cannot alter what is
+# generated. Scoping the cleanliness check to those paths lets the paper
+# release run after the expansion wrapper has deposited regenerated artifacts
+# in the working tree, which the documented dual-release flow requires. The
+# expansion artifacts that this release republishes are separately verified
+# against the expansion manifest below before they are copied.
 release_source_paths=(
   quantcortex
   schemas
@@ -250,6 +252,16 @@ if [[ "${expansion_source_commit}" != "${source_commit}" ]]; then
     "expansion source: ${expansion_source_commit}" >&2
   exit 1
 fi
+# The copied expansion artifacts are republished inside the built PDFs, so
+# verify every file against the expansion manifest before copying. A tampered
+# or unexpected expansion output must fail the release, not flow into print.
+PYTHONPATH="${repo_root}" "${python_bin}" - "${repo_root}/paper/expansion" <<'PY'
+import sys
+
+from scripts.run_paper_experiments import verify_expansion_artifacts
+
+verify_expansion_artifacts(sys.argv[1])
+PY
 rm -rf "${source_worktree}/paper/expansion/results" \
        "${source_worktree}/paper/expansion/figures"
 cp -R "${repo_root}/paper/expansion/results" \

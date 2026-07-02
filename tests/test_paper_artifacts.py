@@ -8,7 +8,13 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from scripts.run_paper_experiments import _json_sha256, source_tree_manifest
+import pytest
+
+from scripts.run_paper_experiments import (
+    _json_sha256,
+    source_tree_manifest,
+    verify_expansion_artifacts,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PAPER_ROOT = REPO_ROOT / "paper"
@@ -446,3 +452,101 @@ def test_paper_citations_are_defined_used_and_unique():
 
     for eprint in eprints:
         assert f"https://arxiv.org/abs/{eprint}" in bibliography
+
+
+def _build_expansion_fixture(root: Path) -> Path:
+    """Create a minimal valid expansion artifact tree with a correct manifest."""
+    expansion = root / "expansion"
+    (expansion / "results").mkdir(parents=True)
+    (expansion / "figures").mkdir()
+    (expansion / "results" / "summary.csv").write_text("a,b\n1,2\n", encoding="ascii")
+    (expansion / "figures" / "plot.pdf").write_bytes(b"%PDF-1.4 fixture")
+    artifacts = {
+        "results/summary.csv": _sha256(expansion / "results" / "summary.csv"),
+        "figures/plot.pdf": _sha256(expansion / "figures" / "plot.pdf"),
+    }
+    manifest = {"git": {"source_commit": "0" * 40}, "artifacts": artifacts}
+    (expansion / "results" / "manifest.json").write_text(
+        json.dumps(manifest), encoding="ascii"
+    )
+    return expansion
+
+
+def test_verify_expansion_artifacts_accepts_valid_tree(tmp_path):
+    expansion = _build_expansion_fixture(tmp_path)
+    verify_expansion_artifacts(expansion)
+
+
+def test_verify_expansion_artifacts_rejects_tampered_artifact(tmp_path):
+    # Regression: the paper release once copied expansion artifacts into the
+    # built PDFs after checking only the manifest's source commit, so a
+    # tampered aggregate (for example an edited generated value) was published
+    # without any digest failure.
+    expansion = _build_expansion_fixture(tmp_path)
+    (expansion / "results" / "summary.csv").write_text("a,b\n9,9\n", encoding="ascii")
+    with pytest.raises(SystemExit, match="digest mismatch"):
+        verify_expansion_artifacts(expansion)
+
+
+def test_verify_expansion_artifacts_rejects_missing_artifact(tmp_path):
+    expansion = _build_expansion_fixture(tmp_path)
+    (expansion / "figures" / "plot.pdf").unlink()
+    with pytest.raises(SystemExit, match="missing"):
+        verify_expansion_artifacts(expansion)
+
+
+def test_verify_expansion_artifacts_rejects_unexpected_file(tmp_path):
+    expansion = _build_expansion_fixture(tmp_path)
+    (expansion / "results" / "extra.csv").write_text("x\n", encoding="ascii")
+    with pytest.raises(SystemExit, match="unexpected expansion artifact"):
+        verify_expansion_artifacts(expansion)
+
+
+def test_verify_expansion_artifacts_rejects_symlink(tmp_path):
+    expansion = _build_expansion_fixture(tmp_path)
+    target = expansion / "results" / "summary.csv"
+    link = expansion / "figures" / "plot.pdf"
+    link.unlink()
+    link.symlink_to(target)
+    with pytest.raises(SystemExit, match="symlink"):
+        verify_expansion_artifacts(expansion)
+
+
+def test_verify_expansion_artifacts_rejects_unsafe_manifest_paths(tmp_path):
+    expansion = _build_expansion_fixture(tmp_path)
+    manifest_path = expansion / "results" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="ascii"))
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("leak\n", encoding="ascii")
+    for unsafe in ("../outside.txt", str(outside)):
+        tampered = dict(manifest)
+        tampered["artifacts"] = dict(manifest["artifacts"])
+        tampered["artifacts"][unsafe] = _sha256(outside)
+        manifest_path.write_text(json.dumps(tampered), encoding="ascii")
+        with pytest.raises(SystemExit, match="unsafe"):
+            verify_expansion_artifacts(expansion)
+
+
+def test_verify_expansion_artifacts_rejects_empty_manifest(tmp_path):
+    expansion = _build_expansion_fixture(tmp_path)
+    manifest_path = expansion / "results" / "manifest.json"
+    manifest_path.write_text(json.dumps({"artifacts": {}}), encoding="ascii")
+    with pytest.raises(SystemExit, match="lists no artifacts"):
+        verify_expansion_artifacts(expansion)
+
+
+def test_release_wrapper_verifies_expansion_artifacts_before_copying():
+    release_script = (REPO_ROOT / "scripts" / "release_paper_artifacts.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "verify_expansion_artifacts" in release_script
+    # The verification must run before the expansion artifacts are copied into
+    # the detached build worktree.
+    assert release_script.index("verify_expansion_artifacts") < release_script.index(
+        'cp -R "${repo_root}/paper/expansion/results"'
+    )
+
+
+def test_committed_expansion_artifacts_validate():
+    verify_expansion_artifacts(PAPER_ROOT / "expansion")

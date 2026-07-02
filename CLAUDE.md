@@ -18,7 +18,11 @@ the development lock with `pip install -r requirements/dev.lock`, then run
 - Lint: `.venv/bin/ruff check .` (CI enforces this; must stay clean). Auto-fix: `ruff check . --fix`.
 - Dependency changes: edit `pyproject.toml`, then run
   `scripts/update_dependency_locks.sh`; commit `poetry.lock` and every changed
-  export under `requirements/`.
+  export under `requirements/`. Because `pyproject.toml` and `poetry.lock` are
+  release-critical fingerprinted inputs, a dependency change also requires
+  regenerating both artifact releases from the new clean source commit
+  (expansion wrapper first, then the paper wrapper); Dependabot lock-only PRs
+  therefore cannot pass CI and are handled through this coordinated flow.
 - Operational scripts import `quantcortex.*`, so run them with the root on the
   path: `PYTHONPATH=. .venv/bin/python scripts/<name>.py`
   (validate_performance, generate_report, survivorship_demo, verify_brokers,

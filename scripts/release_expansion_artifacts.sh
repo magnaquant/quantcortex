@@ -9,10 +9,12 @@ if [[ ! -x "${python_bin}" ]]; then
   printf '%s\n' "Python environment not found: ${python_bin}" >&2
   exit 1
 fi
-# Generation runs from a detached worktree at the source commit, so only
-# uncommitted changes to release-critical source can corrupt a release.
-# Scoping the cleanliness check to those paths keeps the wrapper rerunnable
-# while regenerated artifacts sit uncommitted in the working tree.
+# Generation runs from a detached worktree at the source commit, so
+# uncommitted changes outside release-critical source cannot alter what is
+# generated here. Scoping the cleanliness check to those paths keeps the
+# wrapper rerunnable while regenerated artifacts sit uncommitted in the
+# working tree; the paper wrapper independently verifies those artifacts
+# against this release's manifest before republishing them.
 release_source_paths=(
   quantcortex
   schemas/canonical_target_tape.schema.json

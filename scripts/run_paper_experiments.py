@@ -203,6 +203,61 @@ def _json_sha256(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def verify_expansion_artifacts(expansion_root: Path) -> None:
+    """Fail closed unless the expansion artifact tree matches its manifest.
+
+    The paper release republishes ``paper/expansion/results`` and
+    ``paper/expansion/figures`` inside the built PDFs, so every file it copies
+    must be exactly the file the expansion manifest recorded. Rejects absolute
+    or parent-traversing manifest paths, symlinks, missing files, digest
+    mismatches, and files present on disk that the manifest does not list
+    (``results/manifest.json`` itself is the only exception, because it cannot
+    record its own hash).
+    """
+    expansion_root = Path(expansion_root)
+    manifest_path = expansion_root / "results" / "manifest.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise SystemExit(f"expansion manifest missing: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict) or not artifacts:
+        raise SystemExit("expansion manifest lists no artifacts")
+
+    resolved_root = expansion_root.resolve()
+    for relative, expected in artifacts.items():
+        candidate = Path(relative)
+        if candidate.is_absolute() or ".." in candidate.parts:
+            raise SystemExit(f"unsafe expansion artifact path: {relative}")
+        artifact = expansion_root / candidate
+        if artifact.is_symlink():
+            raise SystemExit(f"expansion artifact is a symlink: {relative}")
+        if not artifact.is_file():
+            raise SystemExit(f"expansion artifact missing: {relative}")
+        if not artifact.resolve().is_relative_to(resolved_root):
+            raise SystemExit(f"unsafe expansion artifact path: {relative}")
+        if _sha256(artifact) != expected:
+            raise SystemExit(f"expansion artifact digest mismatch: {relative}")
+
+    allowed = {Path(relative) for relative in artifacts}
+    allowed.add(Path("results/manifest.json"))
+    for subdirectory in ("results", "figures"):
+        directory = expansion_root / subdirectory
+        if not directory.is_dir():
+            raise SystemExit(f"expansion directory missing: {subdirectory}")
+        for found in sorted(directory.rglob("*")):
+            if found.is_symlink():
+                raise SystemExit(
+                    "unexpected symlink under expansion artifacts: "
+                    f"{found.relative_to(expansion_root)}"
+                )
+            if found.is_file():
+                relative_found = found.relative_to(expansion_root)
+                if relative_found not in allowed:
+                    raise SystemExit(
+                        f"unexpected expansion artifact: {relative_found}"
+                    )
+
+
 def _threadpool_environment() -> list[dict[str, object]]:
     """Return stable BLAS/OpenMP metadata without machine-specific paths."""
     try:
