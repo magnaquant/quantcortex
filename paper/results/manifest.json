@@ -20,7 +20,7 @@
     "results/cost_sensitivity.csv": "25b9969cf8ecdabd19e7761ad2973252c9f5b9f994b6dc147595a2a112c24d88",
     "results/engine_comparison.csv": "ea0322dcd2aa4a1eb3b5996045c3a4b2ed25a85684a578ee788b013b99b643cd",
     "results/evaluation_contract.json": "77ee05ce64622ef9ba1bfbd7dae85c4f6fd44f07db0b21feaf6b3e0e418673e7",
-    "results/generated_values.tex": "32e1a703329d6767d4184a940009c158a723738ba53c7de0ecc57bfac861da9b",
+    "results/generated_values.tex": "4cee7de114227526d83abaae47a0c647451a864056955e91d099f846dfc4dfc4",
     "results/protocol_switches.csv": "20d5a0dc37e07a20c1f2772c8e9940ff6464ef1da98692edd5fdb06531bc2393",
     "results/return_decomposition.csv": "53a84aa9b91c92f0037e48dc09154807cbf003ccf0038f39da8406108bf709cc",
     "results/sharpe_uncertainty.csv": "aead873ced9b25c76c6944aa6e3ba0901ade65c784fa5cb8cc10ad1c6c01f136",
@@ -240,14 +240,14 @@
     "path": "results/evaluation_contract.json",
     "schema_version": 1
   },
-  "generated_at": "2026-07-02T05:47:22Z",
+  "generated_at": "2026-07-02T06:57:57Z",
   "generator": {
     "dependency_lock": {
       "path": "poetry.lock",
       "sha256": "d4e2e756f8ba3ca67ca0e7592c56d1e3c42303fd8b5af06dd52f25658d9e6ceb"
     },
     "git": {
-      "source_commit": "dddead6351d956223e2c7aecf959dd2d93388be9",
+      "source_commit": "34096ad11c1ae33531186a86961a9e2e883d60a9",
       "worktree_clean_at_start": true
     },
     "packages": {
@@ -261,7 +261,7 @@
     "path": "scripts/run_paper_experiments.py",
     "platform": "macOS-26.4-arm64-arm-64bit-Mach-O",
     "python": "3.14.4",
-    "script_sha256": "922bf3c414e0eadca5c13ee831528347dd83a0cd174efbdf15a987b511845de5",
+    "script_sha256": "25010ce7302d1113e48fb7095dabf1e0bb5b283ba9270455cdbf55382718530e",
     "source_tree": {
       "file_count": 112,
       "files": {
@@ -375,10 +375,10 @@
         "quantcortex/timing/vix_scaler.py": "a3667424e5573fb289e63c26c69da6a68d6c943742359f0466d29b25c56e3686",
         "schemas/canonical_target_tape.schema.json": "4f1c0bf6d5360305d2982adea78de3f61c4bc1ebae9207cb2ba2bd4379b43d44",
         "schemas/evaluation_contract.schema.json": "970f24f587e669925306625d12c5a84dffd03ff5b222a59905849b2fa222784f",
-        "scripts/release_paper_artifacts.sh": "410b1f444ce242b94fa9ba7bcf5868fcc74ad664f2c24f9503d4f3a230e8b38c",
-        "scripts/run_paper_experiments.py": "922bf3c414e0eadca5c13ee831528347dd83a0cd174efbdf15a987b511845de5"
+        "scripts/release_paper_artifacts.sh": "fbf68e79be2479e089e638d88923de3aa675dacbfc1e180ffe75b2a05eaecf39",
+        "scripts/run_paper_experiments.py": "25010ce7302d1113e48fb7095dabf1e0bb5b283ba9270455cdbf55382718530e"
       },
-      "sha256": "5bf7019e1a5f23262701fa5d8e02780c9f274a9b12821a4323818fd282efd295"
+      "sha256": "1c05d00cea1d0e9acc5118c3e9302fc50111a327ed15c48e25019a40cecec5b8"
     },
     "threadpools": [
       {

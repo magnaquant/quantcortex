@@ -163,9 +163,9 @@
       }
     ]
   },
-  "generated_at": "2026-07-02T05:40:12Z",
+  "generated_at": "2026-07-02T06:54:51Z",
   "git": {
-    "source_commit": "dddead6351d956223e2c7aecf959dd2d93388be9",
+    "source_commit": "34096ad11c1ae33531186a86961a9e2e883d60a9",
     "tracked_worktree_clean_at_start": true
   },
   "protocol": {
@@ -290,9 +290,9 @@
       "quantcortex/timing/vix_scaler.py": "a3667424e5573fb289e63c26c69da6a68d6c943742359f0466d29b25c56e3686",
       "schemas/canonical_target_tape.schema.json": "4f1c0bf6d5360305d2982adea78de3f61c4bc1ebae9207cb2ba2bd4379b43d44",
       "scripts/fetch_expansion_data.py": "678b5c7fcc1b89e333fc5298b1fdaeb8994de713bc7b2b5ed461e1ec1eb94403",
-      "scripts/release_expansion_artifacts.sh": "c66de150012bc2ad4ea06f65e2f8993a564c003c717e3b220cf6c2f665d363e0",
+      "scripts/release_expansion_artifacts.sh": "727e7b9c023df48550481f38887624e5c6154217e279af2d4e77da11b93c7400",
       "scripts/run_expansion_experiments.py": "df9932dc67a1e1151faebc5dfd742f0aa622dfcf8093ce5ef9c55d9be4fbaf59"
     },
-    "sha256": "3aeaab12c2c63f8022700be3a45978b4ca4f429703fde4566877eb4f2c830f0f"
+    "sha256": "3cea145651a58cdbb70509df5f53c56ff22d6ddf07c3bbe282280940d918777f"
   }
 }

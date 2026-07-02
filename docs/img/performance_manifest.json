@@ -1,11 +1,11 @@
 {
   "schema_version": 4,
-  "generated_at": "2026-07-02T05:47:22Z",
+  "generated_at": "2026-07-02T06:57:57Z",
   "generator": {
     "path": "scripts/generate_report.py",
     "script_sha256": "b536aa7fc5e4fe7df6c7ff28c0992629a489869eaec46486db7aff1cb946099b",
     "git": {
-      "source_commit": "dddead6351d956223e2c7aecf959dd2d93388be9",
+      "source_commit": "34096ad11c1ae33531186a86961a9e2e883d60a9",
       "worktree_clean_at_start": true
     },
     "source_tree": {
