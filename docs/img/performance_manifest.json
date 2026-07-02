@@ -1,18 +1,18 @@
 {
   "schema_version": 4,
-  "generated_at": "2026-06-18T23:53:33Z",
+  "generated_at": "2026-07-02T05:47:22Z",
   "generator": {
     "path": "scripts/generate_report.py",
     "script_sha256": "b536aa7fc5e4fe7df6c7ff28c0992629a489869eaec46486db7aff1cb946099b",
     "git": {
-      "source_commit": "e0443b8f77cd23aee8f1fa64a2bc237e47626c47",
+      "source_commit": "dddead6351d956223e2c7aecf959dd2d93388be9",
       "worktree_clean_at_start": true
     },
     "source_tree": {
-      "sha256": "441586b7f43e68245a94a797d291fa80f51bb413c3174651d2e3dada17f56d3a",
+      "sha256": "d0f255e6b88db78b61480a90312e6074b323eca8dd3456dd2a3ec275612f224e",
       "file_count": 109,
       "files": {
-        "poetry.lock": "c0fd02871263d959522bb3d3d4717cffa1b89bfa047f584c68b81c7ad7cbbb5b",
+        "poetry.lock": "d4e2e756f8ba3ca67ca0e7592c56d1e3c42303fd8b5af06dd52f25658d9e6ceb",
         "pyproject.toml": "eaeeb454c28bf7f6d9e530002bb7e88624b56b6c3e1fcb71e6414045cb9c42a0",
         "quantcortex/__init__.py": "14bf1ebdacd054c3738e4704d33da6709a39206463df8b8ced5376da342c4036",
         "quantcortex/alpha/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",

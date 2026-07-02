@@ -163,9 +163,9 @@
       }
     ]
   },
-  "generated_at": "2026-06-18T23:53:33Z",
+  "generated_at": "2026-07-02T05:40:12Z",
   "git": {
-    "source_commit": "e0443b8f77cd23aee8f1fa64a2bc237e47626c47",
+    "source_commit": "dddead6351d956223e2c7aecf959dd2d93388be9",
     "tracked_worktree_clean_at_start": true
   },
   "protocol": {
@@ -180,7 +180,7 @@
     "files": {
       "paper/expansion/protocol.json": "e49e41a12a19fa5404a573ba5e21eb8a2888e616985f8c610d9652866923315c",
       "paper/preregistration.md": "06f4407daed7bcd594e00bbf2751e7bd32c5d00eae530b2a6b2f66625b864162",
-      "poetry.lock": "c0fd02871263d959522bb3d3d4717cffa1b89bfa047f584c68b81c7ad7cbbb5b",
+      "poetry.lock": "d4e2e756f8ba3ca67ca0e7592c56d1e3c42303fd8b5af06dd52f25658d9e6ceb",
       "pyproject.toml": "eaeeb454c28bf7f6d9e530002bb7e88624b56b6c3e1fcb71e6414045cb9c42a0",
       "quantcortex/__init__.py": "14bf1ebdacd054c3738e4704d33da6709a39206463df8b8ced5376da342c4036",
       "quantcortex/alpha/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -290,9 +290,9 @@
       "quantcortex/timing/vix_scaler.py": "a3667424e5573fb289e63c26c69da6a68d6c943742359f0466d29b25c56e3686",
       "schemas/canonical_target_tape.schema.json": "4f1c0bf6d5360305d2982adea78de3f61c4bc1ebae9207cb2ba2bd4379b43d44",
       "scripts/fetch_expansion_data.py": "678b5c7fcc1b89e333fc5298b1fdaeb8994de713bc7b2b5ed461e1ec1eb94403",
-      "scripts/release_expansion_artifacts.sh": "6d5da5f2a3c744d248f388249a0e956ec12c4f99995c3872238bdd3bf4472ae5",
+      "scripts/release_expansion_artifacts.sh": "c66de150012bc2ad4ea06f65e2f8993a564c003c717e3b220cf6c2f665d363e0",
       "scripts/run_expansion_experiments.py": "df9932dc67a1e1151faebc5dfd742f0aa622dfcf8093ce5ef9c55d9be4fbaf59"
     },
-    "sha256": "91c1957542d9397c0478985389ba2236d94eaa78f81c31c517c298e92fcd733d"
+    "sha256": "3aeaab12c2c63f8022700be3a45978b4ca4f429703fde4566877eb4f2c830f0f"
   }
 }
