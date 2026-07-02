@@ -9,10 +9,25 @@ if [[ ! -x "${python_bin}" ]]; then
   printf '%s\n' "Python environment not found: ${python_bin}" >&2
   exit 1
 fi
-if ! git -C "${repo_root}" diff --quiet || \
-   ! git -C "${repo_root}" diff --cached --quiet; then
+# Generation runs from a detached worktree at the source commit, so only
+# uncommitted changes to release-critical source can corrupt a release.
+# Scoping the cleanliness check to those paths keeps the wrapper rerunnable
+# while regenerated artifacts sit uncommitted in the working tree.
+release_source_paths=(
+  quantcortex
+  schemas/canonical_target_tape.schema.json
+  pyproject.toml
+  poetry.lock
+  paper/preregistration.md
+  paper/expansion/protocol.json
+  scripts/fetch_expansion_data.py
+  scripts/release_expansion_artifacts.sh
+  scripts/run_expansion_experiments.py
+)
+if ! git -C "${repo_root}" diff --quiet -- "${release_source_paths[@]}" || \
+   ! git -C "${repo_root}" diff --cached --quiet -- "${release_source_paths[@]}"; then
   printf '%s\n' \
-    "commit tracked source changes before releasing expansion artifacts" >&2
+    "commit release-critical source changes before releasing expansion artifacts" >&2
   exit 1
 fi
 
@@ -36,17 +51,6 @@ done
 
 current_commit="$(git -C "${repo_root}" rev-parse HEAD)"
 reviewed_manifest="${repo_root}/paper/expansion/results/manifest.json"
-release_source_paths=(
-  quantcortex
-  schemas/canonical_target_tape.schema.json
-  pyproject.toml
-  poetry.lock
-  paper/preregistration.md
-  paper/expansion/protocol.json
-  scripts/fetch_expansion_data.py
-  scripts/release_expansion_artifacts.sh
-  scripts/run_expansion_experiments.py
-)
 
 if [[ -n "${QUANTCORTEX_EXPANSION_GENERATED_AT:-}" ]]; then
   source_commit="${current_commit}"

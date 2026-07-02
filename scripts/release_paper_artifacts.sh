@@ -9,10 +9,36 @@ if [[ ! -x "${python_bin}" ]]; then
   printf '%s\n' "Python environment not found: ${python_bin}" >&2
   exit 1
 fi
-if ! git -C "${repo_root}" diff --quiet || \
-   ! git -C "${repo_root}" diff --cached --quiet; then
+
+# Generation runs from a detached worktree at the source commit, so only
+# uncommitted changes to release-critical source can corrupt a release.
+# Scoping the cleanliness check to those paths lets the paper release run
+# after the expansion wrapper has deposited regenerated artifacts in the
+# working tree, which the documented dual-release flow requires.
+release_source_paths=(
+  quantcortex
+  schemas
+  pyproject.toml
+  poetry.lock
+  scripts/build_paper.sh
+  scripts/generate_report.py
+  scripts/fetch_expansion_data.py
+  scripts/release_expansion_artifacts.sh
+  scripts/release_paper_artifacts.sh
+  scripts/run_expansion_experiments.py
+  scripts/run_paper_experiments.py
+  paper/main.tex
+  paper/anonymous.tex
+  paper/checklist.tex
+  paper/references.bib
+  paper/neurips_2026.sty
+  paper/preregistration.md
+  paper/expansion/protocol.json
+)
+if ! git -C "${repo_root}" diff --quiet -- "${release_source_paths[@]}" || \
+   ! git -C "${repo_root}" diff --cached --quiet -- "${release_source_paths[@]}"; then
   printf '%s\n' \
-    "commit tracked source changes before releasing paper artifacts" >&2
+    "commit release-critical source changes before releasing paper artifacts" >&2
   exit 1
 fi
 
@@ -88,26 +114,6 @@ else
     printf '%s\n' "reviewed source commit is unavailable" >&2
     exit 1
   fi
-  release_source_paths=(
-    quantcortex
-    schemas
-    pyproject.toml
-    poetry.lock
-    scripts/build_paper.sh
-    scripts/generate_report.py
-    scripts/fetch_expansion_data.py
-    scripts/release_expansion_artifacts.sh
-    scripts/release_paper_artifacts.sh
-    scripts/run_expansion_experiments.py
-    scripts/run_paper_experiments.py
-    paper/main.tex
-    paper/anonymous.tex
-    paper/checklist.tex
-    paper/references.bib
-    paper/neurips_2026.sty
-    paper/preregistration.md
-    paper/expansion/protocol.json
-  )
   if ! git -C "${repo_root}" diff --quiet \
     "${reviewed_source_commit}" "${current_commit}" -- \
     "${release_source_paths[@]}"; then
